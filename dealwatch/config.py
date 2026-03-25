@@ -5,7 +5,7 @@ from datetime import datetime
 class ConditionEnum(str, Enum):
     new = 'new'
     used = 'used'
-    refurbished = 'redfurbished'
+    refurbished = 'refurbished'
     open_box = 'open box'
 
 class CurrencyEnum(str, Enum):

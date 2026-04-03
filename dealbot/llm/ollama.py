@@ -8,18 +8,52 @@ import httpx
 
 from .base import LLMClient, LLMResponse, ToolCall
 
-# Models that support OpenAI-spec native tool calling via Ollama
+# Models confirmed to support OpenAI-spec native tool calling via Ollama.
+# Source: https://ollama.com/search?c=tools (verified April 2026)
 SUPPORTS_NATIVE_TOOLS: set[str] = {
+    # Llama 3.x family
     "llama3.1",
     "llama3.1:8b",
     "llama3.1:70b",
+    "llama3.2",
+    "llama3.2:1b",
+    "llama3.2:3b",
+    "llama3.3",
+    "llama3.3:70b",
+    # Mistral family
     "mistral-nemo",
+    "mistral-small",
+    "mistral-small:22b",
+    # Qwen3 family
+    "qwen3",
+    "qwen3:0.6b",
+    "qwen3:1.7b",
+    "qwen3:4b",
+    "qwen3:8b",
+    "qwen3:14b",
+    "qwen3:32b",
+    # Phi-4
+    "phi4-mini",
+    "phi4-mini:3.8b",
+    # IBM Granite
+    "granite3-dense",
+    "granite3-dense:2b",
+    "granite3-dense:8b",
+    "granite3-moe",
 }
 
 MODEL_REGISTRY: dict[str, dict[str, Any]] = {
-    "llama3.1": {"supports_native_tools": True, "context_window": 128_000},
-    "llama3.1:8b": {"supports_native_tools": True, "context_window": 128_000},
-    "mistral-nemo": {"supports_native_tools": True, "context_window": 128_000},
+    "llama3.1":         {"supports_native_tools": True, "context_window": 128_000},
+    "llama3.1:8b":      {"supports_native_tools": True, "context_window": 128_000},
+    "llama3.1:70b":     {"supports_native_tools": True, "context_window": 128_000},
+    "llama3.2":         {"supports_native_tools": True, "context_window": 128_000},
+    "llama3.3":         {"supports_native_tools": True, "context_window": 128_000},
+    "mistral-nemo":     {"supports_native_tools": True, "context_window": 128_000},
+    "mistral-small":    {"supports_native_tools": True, "context_window": 128_000},
+    "qwen3":            {"supports_native_tools": True, "context_window": 128_000},
+    "qwen3:8b":         {"supports_native_tools": True, "context_window": 128_000},
+    "phi4-mini":        {"supports_native_tools": True, "context_window": 16_000},
+    "granite3-dense":   {"supports_native_tools": True, "context_window": 128_000},
 }
 
 

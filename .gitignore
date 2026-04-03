@@ -1,3 +1,9 @@
 venv
 .env
 CLAUDE.md
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/

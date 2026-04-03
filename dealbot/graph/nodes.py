@@ -46,11 +46,11 @@ def _ensure_db() -> sqlite3.Connection:
 async def ingest_node(state: PipelineState) -> PipelineState:
     """
     Validates the incoming DealRaw and passes it through.
+    Also ensures the DB table exists so persist_node can write regardless of routing.
     In Phase 2 this will pull from a Redis stream instead.
     """
     logger.info("ingest_node: deal=%s source=%s", state["deal"].title, state["deal"].source)
-    # DealRaw is already validated by Pydantic at construction time.
-    # This node is a hook for future Redis ingestion logic.
+    _ensure_db().close()
     return state
 
 

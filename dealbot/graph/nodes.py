@@ -11,6 +11,7 @@ from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
+from dealbot.worker.matching import run_matching
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,10 @@ async def persist_node(state: PipelineState) -> PipelineState:
 
     async with get_async_session() as session:
         try:
-            session.add(Deal(**values))
+            row = Deal(**values)
+            session.add(row)
+            await session.flush()  # get row.id without closing the session
+            await run_matching(row, session)
             await session.commit()
             logger.info("persist_node: saved deal '%s' with score %d", deal.title, score_result.score)
         except IntegrityError:

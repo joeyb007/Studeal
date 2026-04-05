@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -32,3 +32,70 @@ class Deal(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="deal")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    watchlists: Mapped[list[Watchlist]] = relationship("Watchlist", back_populates="user")
+    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="user")
+
+
+class Watchlist(Base):
+    __tablename__ = "watchlists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    min_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    alert_tier_threshold: Mapped[str] = mapped_column(String(16), nullable=False, default="digest")
+
+    user: Mapped[User] = relationship("User", back_populates="watchlists")
+    keywords: Mapped[list[WatchlistKeyword]] = relationship(
+        "WatchlistKeyword", back_populates="watchlist", cascade="all, delete-orphan"
+    )
+    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="watchlist")
+
+
+class WatchlistKeyword(Base):
+    __tablename__ = "watchlist_keywords"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    watchlist_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
+    )
+    keyword: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="keywords")
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+    __table_args__ = (UniqueConstraint("user_id", "deal_id", name="uq_alerts_user_deal"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), nullable=False)
+    watchlist_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="alerts")
+    deal: Mapped[Deal] = relationship("Deal", back_populates="alerts")
+    watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="alerts")

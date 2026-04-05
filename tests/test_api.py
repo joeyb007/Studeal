@@ -1,48 +1,17 @@
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from collections.abc import AsyncGenerator
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from dealbot.api.main import app
-from dealbot.api.routes.deals import router
-from dealbot.db.models import Base, Deal
-
-
-# --- In-memory DB fixture ----------------------------------------------------
-
-@pytest.fixture()
-async def db_factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-    yield factory
-    await engine.dispose()
-
-
-@pytest.fixture()
-def client(db_factory, monkeypatch):
-    """TestClient backed by an in-memory SQLite DB."""
-    factory = db_factory
-
-    @asynccontextmanager
-    async def _test_session() -> AsyncGenerator[AsyncSession, None]:
-        async with factory() as session:
-            yield session
-
-    monkeypatch.setattr("dealbot.api.routes.deals.get_async_session", _test_session)
-    return TestClient(app)
+from dealbot.db.models import Deal
 
 
 # --- Seed helper -------------------------------------------------------------
 
 async def _seed_deal(factory, **overrides) -> Deal:
+    from sqlalchemy.ext.asyncio import AsyncSession
     defaults = dict(
         title="Sony WH-1000XM5",
         source="slickdeals",

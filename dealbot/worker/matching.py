@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError  # raised by begin_nested on conflict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dealbot.db.models import Alert, Deal, Watchlist, WatchlistKeyword
@@ -41,19 +41,18 @@ async def run_matching(deal: Deal, session: AsyncSession) -> int:
             continue
 
         try:
-            session.add(Alert(
-                user_id=watchlist.user_id,
-                deal_id=deal.id,
-                watchlist_id=watchlist.id,
-            ))
-            await session.flush()
+            async with session.begin_nested():  # savepoint — only this insert rolls back on conflict
+                session.add(Alert(
+                    user_id=watchlist.user_id,
+                    deal_id=deal.id,
+                    watchlist_id=watchlist.id,
+                ))
             alerts_created += 1
             logger.info(
                 "matching: alert created user_id=%d deal_id=%d watchlist='%s'",
                 watchlist.user_id, deal.id, watchlist.name,
             )
         except IntegrityError:
-            await session.rollback()
             logger.debug("matching: duplicate alert skipped user_id=%d deal_id=%d", watchlist.user_id, deal.id)
 
     if alerts_created:

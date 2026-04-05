@@ -10,7 +10,7 @@ app = Celery(
     "dealbot",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["dealbot.worker.tasks"],
+    include=["dealbot.worker.tasks", "dealbot.worker.digest"],
 )
 
 app.conf.update(
@@ -19,11 +19,14 @@ app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
-    # Run the scraper every 15 minutes
     beat_schedule={
         "scrape-slickdeals": {
             "task": "dealbot.worker.tasks.scrape_slickdeals",
-            "schedule": 900,  # seconds
+            "schedule": 86400,  # once daily
+        },
+        "send-daily-digest": {
+            "task": "dealbot.worker.digest.send_daily_digest",
+            "schedule": 86400,  # once daily
         },
     },
 )

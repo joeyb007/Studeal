@@ -13,6 +13,16 @@ from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
 from dealbot.worker.matching import run_matching
 
+# Replace with your Amazon Associates tag at deploy time
+AMAZON_AFFILIATE_TAG = "dealbot-20"
+
+
+def _affiliate_url(url: str, asin: str | None) -> str:
+    """Rewrite Amazon product URLs to include the affiliate tag."""
+    if asin:
+        return f"https://www.amazon.com/dp/{asin}?tag={AMAZON_AFFILIATE_TAG}"
+    return url
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +72,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
     values = dict(
         title=deal.title,
         source=deal.source,
-        url=deal.url,
+        url=_affiliate_url(deal.url, deal.asin),
         listed_price=deal.listed_price,
         sale_price=deal.sale_price,
         asin=deal.asin,

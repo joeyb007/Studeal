@@ -21,6 +21,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "bcrypt>=4.0",
+    "anthropic>=0.25",
     "python-multipart>=0.0.9",
     "python-jose[cryptography]>=3.3",
 ]

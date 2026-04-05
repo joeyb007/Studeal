@@ -10,6 +10,7 @@ from dealbot.scrapers.slickdeals import SlickdealsAdapter
 from dealbot.graph.graph import build_graph
 from dealbot.llm.base import LLMClient
 from dealbot.llm.ollama import OllamaClient
+from dealbot.llm.anthropic import AnthropicClient
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,10 @@ def scrape_slickdeals(self) -> dict:
     Retries up to 3 times on failure with exponential backoff.
     """
     try:
-        return asyncio.run(_run_pipeline(SlickdealsAdapter(), OllamaClient()))
+        llm: LLMClient = (
+            AnthropicClient() if os.environ.get("LLM_BACKEND") == "anthropic" else OllamaClient()
+        )
+        return asyncio.run(_run_pipeline(SlickdealsAdapter(), llm))
     except Exception as exc:
         logger.exception("scrape_slickdeals task failed: %s", exc)
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)

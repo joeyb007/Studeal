@@ -24,6 +24,8 @@ dependencies = [
     "anthropic>=0.25",
     "python-multipart>=0.0.9",
     "python-jose[cryptography]>=3.3",
+    "pgvector>=0.3",
+    "ollama>=0.2",
 ]
 
 [project.optional-dependencies]

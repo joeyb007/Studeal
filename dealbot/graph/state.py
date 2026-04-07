@@ -10,4 +10,5 @@ class PipelineState(TypedDict):
 
     deal: DealRaw
     score_result: NotRequired[DealScore]
+    embedding: NotRequired[list[float]]
     error: NotRequired[str]

@@ -9,8 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
+from dealbot.db.rag import retrieve_similar_deals
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
+from dealbot.llm.embeddings import embed_text
 from dealbot.worker.matching import run_matching
 
 # Replace with your Amazon Associates tag at deploy time
@@ -22,6 +24,20 @@ def _affiliate_url(url: str, asin: str | None) -> str:
     if asin:
         return f"https://www.amazon.com/dp/{asin}?tag={AMAZON_AFFILIATE_TAG}"
     return url
+
+
+def _similar_deals_context(similar: list[Deal]) -> str | None:
+    """Format retrieved deals into a context string for the scorer's system prompt."""
+    if not similar:
+        return None
+    lines = ["Similar deals scored previously (use for market context):"]
+    for d in similar:
+        lines.append(
+            f"- {d.title}: score={d.score}, tier={d.alert_tier}, "
+            f"category={d.category}, sale_price=${d.sale_price:.2f}"
+        )
+    return "\n".join(lines)
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,27 +54,42 @@ async def ingest_node(state: PipelineState) -> PipelineState:
 
 
 async def score_node(state: PipelineState, llm: LLMClient) -> PipelineState:
-    """Runs ScorerAgent and writes the result into state."""
+    """Embeds the deal, retrieves similar deals via RAG, then runs ScorerAgent."""
     deal = state["deal"]
     logger.info("score_node: scoring '%s'", deal.title)
 
     try:
+        # 1. Generate embedding for this deal
+        deal_text = f"{deal.title} {deal.description or ''}".strip()
+        embedding = await embed_text(deal_text)
+
+        # 2. RAG: retrieve similar historical deals
+        similar: list[Deal] = []
+        if embedding:
+            async with get_async_session() as session:
+                similar = await retrieve_similar_deals(embedding, session)
+            logger.debug("score_node: retrieved %d similar deals", len(similar))
+
+        # 3. Score with context
         scorer = ScorerAgent(llm=llm)
-        score_result = await scorer.score(deal)
+        score_result = await scorer.score(
+            deal,
+            similar_context=_similar_deals_context(similar),
+        )
         logger.info(
             "score_node: score=%d tier=%s confidence=%s",
             score_result.score,
             score_result.alert_tier,
             score_result.confidence,
         )
-        return {**state, "score_result": score_result}
+        return {**state, "score_result": score_result, "embedding": embedding}
     except Exception as exc:
         logger.exception("score_node: failed to score deal '%s'", deal.title)
         return {**state, "error": str(exc)}
 
 
 async def persist_node(state: PipelineState) -> PipelineState:
-    """Writes DealScore to Postgres via SQLAlchemy. Skipped silently if error is set."""
+    """Writes DealScore + embedding to Postgres via SQLAlchemy. Skipped silently if error is set."""
     if "error" in state:
         logger.warning("persist_node: skipping due to upstream error: %s", state["error"])
         return state
@@ -69,6 +100,8 @@ async def persist_node(state: PipelineState) -> PipelineState:
         return state
 
     deal = score_result.deal
+    embedding = state.get("embedding") or None
+
     values = dict(
         title=deal.title,
         source=deal.source,
@@ -82,6 +115,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
         tags=json.dumps(score_result.tags),
         confidence=score_result.confidence,
         real_discount_pct=score_result.real_discount_pct,
+        embedding=embedding,
         scraped_at=datetime.now(timezone.utc),
     )
 

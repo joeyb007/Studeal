@@ -75,9 +75,17 @@ class ScorerAgent:
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
-    async def score(self, deal: DealRaw) -> DealScore:
+    async def score(
+        self,
+        deal: DealRaw,
+        similar_context: str | None = None,
+    ) -> DealScore:
+        system = SYSTEM_PROMPT
+        if similar_context:
+            system = system + "\n\n" + similar_context
+
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             {"role": "user", "content": _deal_to_text(deal)},
         ]
 

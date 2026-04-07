@@ -1,22 +1,39 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import select
 
+from dealbot.agents.keyword_extractor import extract_keywords
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.db.models import User, Watchlist, WatchlistKeyword
+from dealbot.llm.anthropic import AnthropicClient
+from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
+from dealbot.llm.ollama import OllamaClient
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 
+def _get_llm() -> LLMClient:
+    return AnthropicClient() if os.environ.get("LLM_BACKEND") == "anthropic" else OllamaClient()
+
+
 class WatchlistCreate(BaseModel):
     name: str
-    keywords: list[str]
+    description: str | None = None   # natural language — LLM extracts keywords
+    keywords: list[str] = []         # explicit keywords (used if description is absent)
     min_score: int = 50
     alert_tier_threshold: str = "digest"
+
+    @model_validator(mode="after")
+    def require_description_or_keywords(self) -> "WatchlistCreate":
+        if not self.description and not self.keywords:
+            raise ValueError("Provide either a description or at least one keyword.")
+        return self
 
 
 class WatchlistResponse(BaseModel):
@@ -32,6 +49,12 @@ async def create_watchlist(
     body: WatchlistCreate,
     current_user: User = Depends(get_current_user),
 ) -> WatchlistResponse:
+    # Resolve keywords — extract from description if not explicitly provided
+    if body.description and not body.keywords:
+        keywords = await extract_keywords(body.description, _get_llm())
+    else:
+        keywords = [kw.lower().strip() for kw in body.keywords]
+
     async with get_async_session() as session:
         watchlist = Watchlist(
             user_id=current_user.id,
@@ -42,12 +65,11 @@ async def create_watchlist(
         session.add(watchlist)
         await session.flush()  # get watchlist.id before adding keywords
 
-        for kw in body.keywords:
-            cleaned = kw.lower().strip()
-            embedding = await embed_text(cleaned)
+        for kw in keywords:
+            embedding = await embed_text(kw)
             session.add(WatchlistKeyword(
                 watchlist_id=watchlist.id,
-                keyword=cleaned,
+                keyword=kw,
                 embedding=embedding or None,
             ))
 
@@ -57,7 +79,7 @@ async def create_watchlist(
     return WatchlistResponse(
         id=watchlist.id,
         name=watchlist.name,
-        keywords=body.keywords,
+        keywords=keywords,
         min_score=watchlist.min_score,
         alert_tier_threshold=watchlist.alert_tier_threshold,
     )

@@ -79,6 +79,7 @@ class WatchlistKeyword(Base):
         ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
     )
     keyword: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
 
     watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="keywords")
 

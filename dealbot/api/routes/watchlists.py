@@ -7,6 +7,7 @@ from sqlalchemy import select
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.db.models import User, Watchlist, WatchlistKeyword
+from dealbot.llm.embeddings import embed_text
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
@@ -42,7 +43,13 @@ async def create_watchlist(
         await session.flush()  # get watchlist.id before adding keywords
 
         for kw in body.keywords:
-            session.add(WatchlistKeyword(watchlist_id=watchlist.id, keyword=kw.lower().strip()))
+            cleaned = kw.lower().strip()
+            embedding = await embed_text(cleaned)
+            session.add(WatchlistKeyword(
+                watchlist_id=watchlist.id,
+                keyword=cleaned,
+                embedding=embedding or None,
+            ))
 
         await session.commit()
         await session.refresh(watchlist)

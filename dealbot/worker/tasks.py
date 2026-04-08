@@ -10,7 +10,7 @@ from dealbot.scrapers.slickdeals import SlickdealsAdapter
 from dealbot.graph.graph import build_graph
 from dealbot.llm.base import LLMClient
 from dealbot.llm.ollama import OllamaClient
-from dealbot.llm.anthropic import AnthropicClient
+from dealbot.llm.vllm import vLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def scrape_slickdeals(self) -> dict:
     """
     try:
         llm: LLMClient = (
-            AnthropicClient() if os.environ.get("LLM_BACKEND") == "anthropic" else OllamaClient()
+            vLLMClient() if os.environ.get("LLM_BACKEND") == "vllm" else OllamaClient()
         )
         return asyncio.run(_run_pipeline(SlickdealsAdapter(), llm))
     except Exception as exc:

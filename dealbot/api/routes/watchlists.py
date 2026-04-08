@@ -10,16 +10,16 @@ from dealbot.agents.keyword_extractor import extract_keywords
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.db.models import User, Watchlist, WatchlistKeyword
-from dealbot.llm.anthropic import AnthropicClient
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.llm.ollama import OllamaClient
+from dealbot.llm.vllm import vLLMClient
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 
 def _get_llm() -> LLMClient:
-    return AnthropicClient() if os.environ.get("LLM_BACKEND") == "anthropic" else OllamaClient()
+    return vLLMClient() if os.environ.get("LLM_BACKEND") == "vllm" else OllamaClient()
 
 
 class WatchlistCreate(BaseModel):

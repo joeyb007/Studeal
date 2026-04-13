@@ -9,6 +9,35 @@ from dealbot.search.client import FetchedPage
 
 logger = logging.getLogger(__name__)
 
+_MAX_DISCOUNT_PCT = 95.0
+
+
+def _price_grounded(price: float, text: str) -> bool:
+    """Return True if the price string appears literally in the source text."""
+    candidates = [
+        f"{price:.2f}",
+        f"{price:.0f}",
+        f"${price:.2f}",
+        f"${price:.0f}",
+    ]
+    return any(c in text for c in candidates)
+
+
+def _prices_valid(listed: float, sale: float, text: str) -> bool:
+    if sale <= 0 or listed <= 0:
+        return False
+    if sale > listed:
+        return False
+    discount_pct = (listed - sale) / listed * 100
+    if discount_pct > _MAX_DISCOUNT_PCT:
+        return False
+    if not _price_grounded(sale, text):
+        return False
+    if not _price_grounded(listed, text):
+        return False
+    return True
+
+
 _SYSTEM_PROMPT = """\
 You are a product deal extractor. Given the text content of a webpage, extract deal information if present.
 
@@ -51,12 +80,19 @@ class ExtractorAgent:
             if data is None:
                 return None
 
+            listed = float(data["listed_price"])
+            sale = float(data["sale_price"])
+
+            if not _prices_valid(listed, sale, page.text):
+                logger.debug("ExtractorAgent: prices failed grounding check for %s", page.url)
+                return None
+
             return DealRaw(
                 source=data["source"],
                 title=data["title"],
                 url=page.url,
-                listed_price=float(data["listed_price"]),
-                sale_price=float(data["sale_price"]),
+                listed_price=listed,
+                sale_price=sale,
                 description=data.get("description"),
             )
         except Exception:

@@ -25,6 +25,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3",
     "pgvector>=0.3",
     "ollama>=0.2",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]

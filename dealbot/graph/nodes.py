@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
+import httpx
+from bs4 import BeautifulSoup
 from sqlalchemy.exc import IntegrityError
 
+from dealbot.agents.extractor import ExtractorAgent
+from dealbot.agents.query_gen import QueryGenAgent
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
@@ -13,7 +19,13 @@ from dealbot.db.rag import retrieve_similar_deals
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
+from dealbot.search.brave import BraveSearchClient
+from dealbot.search.client import FetchedPage, SearchResult
 from dealbot.worker.matching import run_matching
+
+_BRAVE_N = int(os.environ.get("BRAVE_SEARCH_N", "10"))
+_FETCH_TIMEOUT = 10  # seconds per page
+_MAX_TEXT_CHARS = 4000
 
 # Replace with your Amazon Associates tag at deploy time
 AMAZON_AFFILIATE_TAG = "dealbot-20"
@@ -42,7 +54,81 @@ def _similar_deals_context(similar: list[Deal]) -> str | None:
 logger = logging.getLogger(__name__)
 
 
+# --- Helpers ----------------------------------------------------------------
+
+async def _fetch_page(result: SearchResult) -> FetchedPage | None:
+    """Fetch a URL and return stripped plain text, or None on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(result.url, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            html = resp.text
+
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            tag.decompose()
+
+        text = soup.get_text(separator=" ", strip=True)[:_MAX_TEXT_CHARS]
+        return FetchedPage(url=result.url, text=text)
+    except Exception:
+        logger.debug("fetch_page: failed to fetch %s", result.url)
+        return None
+
+
 # --- Nodes ------------------------------------------------------------------
+
+async def query_gen_node(state: PipelineState, llm: LLMClient) -> PipelineState:
+    """Generate search query variants for a watchlist keyword."""
+    keyword = state["keyword"]
+    logger.info("query_gen_node: keyword=%r", keyword)
+    agent = QueryGenAgent(llm=llm)
+    queries = await agent.generate(keyword)
+    logger.info("query_gen_node: generated %d queries", len(queries))
+    return {**state, "queries": queries}
+
+
+async def hunt_node(state: PipelineState) -> PipelineState:
+    """Search Brave for each query variant, deduplicate results by URL."""
+    queries = state.get("queries", [])
+    client = BraveSearchClient()
+    seen_urls: set[str] = set()
+    all_results: list[SearchResult] = []
+
+    for query in queries:
+        results = await client.search(query, n=_BRAVE_N)
+        for r in results:
+            if r.url not in seen_urls:
+                seen_urls.add(r.url)
+                all_results.append(r)
+
+    logger.info("hunt_node: %d unique results across %d queries", len(all_results), len(queries))
+    return {**state, "search_results": all_results}
+
+
+async def fetch_node(state: PipelineState) -> PipelineState:
+    """Fetch and strip HTML for each search result URL concurrently."""
+    search_results = state.get("search_results", [])
+    pages_or_none = await asyncio.gather(
+        *[_fetch_page(r) for r in search_results],
+        return_exceptions=False,
+    )
+    fetched = [p for p in pages_or_none if p is not None]
+    logger.info("fetch_node: fetched %d/%d pages", len(fetched), len(search_results))
+    return {**state, "fetched_pages": fetched}
+
+
+async def extract_node(state: PipelineState, llm: LLMClient) -> PipelineState:
+    """Run ExtractorAgent over each fetched page concurrently, drop failures."""
+    pages = state.get("fetched_pages", [])
+    agent = ExtractorAgent(llm=llm)
+    results = await asyncio.gather(
+        *[agent.extract(p) for p in pages],
+        return_exceptions=False,
+    )
+    candidates = [r for r in results if r is not None]
+    logger.info("extract_node: extracted %d candidates from %d pages", len(candidates), len(pages))
+    return {**state, "candidates": candidates}
+
 
 async def ingest_node(state: PipelineState) -> PipelineState:
     """

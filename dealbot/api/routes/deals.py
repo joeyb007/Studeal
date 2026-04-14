@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -57,7 +58,13 @@ async def list_deals(
     offset: int = Query(0, ge=0),
 ) -> list[DealResponse]:
     async with get_async_session() as session:
-        stmt = select(Deal).order_by(Deal.scraped_at.desc()).offset(offset).limit(limit)
+        stmt = (
+            select(Deal)
+            .where(Deal.hunt_date == date.today())
+            .order_by(Deal.scraped_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
         if tier is not None:
             stmt = stmt.where(Deal.alert_tier == tier)
         result = await session.execute(stmt)

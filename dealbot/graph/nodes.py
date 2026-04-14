@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 from bs4 import BeautifulSoup
@@ -202,6 +202,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
         confidence=score_result.confidence,
         real_discount_pct=score_result.real_discount_pct,
         embedding=embedding,
+        hunt_date=date.today(),
         scraped_at=datetime.now(timezone.utc),
     )
 

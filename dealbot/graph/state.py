@@ -21,3 +21,6 @@ class PipelineState(TypedDict):
     search_results: NotRequired[list[SearchResult]]
     fetched_pages: NotRequired[list[FetchedPage]]
     candidates: NotRequired[list[DealRaw]]
+
+    # --- Phase 8: keyword dedup ---
+    keyword_covered: NotRequired[bool]

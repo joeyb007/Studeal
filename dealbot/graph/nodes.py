@@ -15,7 +15,7 @@ from dealbot.agents.query_gen import QueryGenAgent
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
-from dealbot.db.rag import retrieve_similar_deals
+from dealbot.db.rag import keyword_covered_today, retrieve_similar_deals
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
@@ -76,6 +76,21 @@ async def _fetch_page(result: SearchResult) -> FetchedPage | None:
 
 
 # --- Nodes ------------------------------------------------------------------
+
+async def keyword_dedup_node(state: PipelineState) -> PipelineState:
+    """Skip the hunt if a semantically similar keyword was already searched today."""
+    keyword = state.get("keyword", "")
+    embedding = await embed_text(keyword)
+    if not embedding:
+        return {**state, "keyword_covered": False}
+
+    async with get_async_session() as session:
+        covered = await keyword_covered_today(embedding, session)
+
+    if covered:
+        logger.info("keyword_dedup_node: '%s' already covered today, skipping", keyword)
+    return {**state, "keyword_covered": covered}
+
 
 async def query_gen_node(state: PipelineState, llm: LLMClient) -> PipelineState:
     """Generate search query variants for a watchlist keyword."""

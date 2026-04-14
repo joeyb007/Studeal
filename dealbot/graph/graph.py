@@ -10,6 +10,7 @@ from dealbot.graph.nodes import (
     fetch_node,
     hunt_node,
     ingest_node,
+    keyword_dedup_node,
     persist_node,
     query_gen_node,
     score_node,
@@ -24,6 +25,13 @@ def _route_after_score(state: PipelineState) -> str:
     if "error" in state:
         return END
     return "persist"
+
+
+def _route_after_dedup(state: PipelineState) -> str:
+    """Skip the rest of the pipeline if this keyword was already covered today."""
+    if state.get("keyword_covered"):
+        return END
+    return "query_gen"
 
 
 def _fan_out_to_score(state: PipelineState) -> list[Send]:
@@ -70,6 +78,7 @@ def build_hunter_graph(llm: LLMClient) -> StateGraph:
 
     graph = StateGraph(PipelineState)
 
+    graph.add_node("keyword_dedup", keyword_dedup_node)
     graph.add_node("query_gen", bound_query_gen)
     graph.add_node("hunt", hunt_node)
     graph.add_node("fetch", fetch_node)
@@ -77,7 +86,8 @@ def build_hunter_graph(llm: LLMClient) -> StateGraph:
     graph.add_node("score", bound_score)
     graph.add_node("persist", persist_node)
 
-    graph.add_edge(START, "query_gen")
+    graph.add_edge(START, "keyword_dedup")
+    graph.add_conditional_edges("keyword_dedup", _route_after_dedup, {"query_gen": "query_gen", END: END})
     graph.add_edge("query_gen", "hunt")
     graph.add_edge("hunt", "fetch")
     graph.add_edge("fetch", "extract")

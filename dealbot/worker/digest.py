@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import select
 
 from dealbot.db.database import get_async_session
@@ -13,9 +14,36 @@ from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
-# Swap for real SendGrid/Resend call at deploy time
-def _send_email(to: str, subject: str, body: str) -> None:
-    logger.info("EMAIL to=%s subject=%r body_length=%d", to, subject, len(body))
+_RESEND_API_URL = "https://api.resend.com/emails"
+_FROM_ADDRESS = os.environ.get("RESEND_FROM", "DealBot <alerts@dealbot.app>")
+
+
+async def _send_email(to: str, subject: str, body: str) -> None:
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    if not api_key:
+        logger.warning("RESEND_API_KEY not set — skipping email to %s", to)
+        return
+
+    payload = {
+        "from": _FROM_ADDRESS,
+        "to": [to],
+        "subject": subject,
+        "text": body,
+    }
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            resp = await client.post(
+                _RESEND_API_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            resp.raise_for_status()
+            logger.info("digest: sent email to %s (id=%s)", to, resp.json().get("id"))
+        except httpx.HTTPStatusError as exc:
+            logger.error("digest: Resend API error %d for %s — %s", exc.response.status_code, to, exc.response.text)
+        except Exception:
+            logger.exception("digest: failed to send email to %s", to)
 
 
 def _build_digest(user_email: str, alerts: list[tuple[Alert, Deal]]) -> str:
@@ -29,7 +57,7 @@ def _build_digest(user_email: str, alerts: list[tuple[Alert, Deal]]) -> str:
             f"  Score: {deal.score}/100 | ${deal.sale_price:.2f}\n"
             f"  {deal.url}\n"
         )
-    lines.append("\nManage your watchlists at dealbot.app")
+    lines.append("\nManage your watchlists at studeal.site")
     return "\n".join(lines)
 
 
@@ -39,11 +67,9 @@ async def _send_digests() -> dict:
     skipped = 0
 
     async with get_async_session() as session:
-        # Load all users
         users = (await session.execute(select(User))).scalars().all()
 
         for user in users:
-            # Find alerts created in the last 24 hours for this user
             result = await session.execute(
                 select(Alert, Deal)
                 .join(Deal, Alert.deal_id == Deal.id)
@@ -66,7 +92,7 @@ async def _send_digests() -> dict:
                 continue
 
             body = _build_digest(user.email, rows)
-            _send_email(
+            await _send_email(
                 to=user.email,
                 subject=f"Your DealBot digest — {len(rows)} deal{'s' if len(rows) != 1 else ''}",
                 body=body,

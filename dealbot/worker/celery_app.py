@@ -20,8 +20,8 @@ app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
-        "scrape-slickdeals": {
-            "task": "dealbot.worker.tasks.scrape_slickdeals",
+        "hunt-deals": {
+            "task": "dealbot.worker.tasks.hunt_deals",
             "schedule": 86400,  # once daily
         },
         "send-daily-digest": {

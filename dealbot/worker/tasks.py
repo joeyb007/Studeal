@@ -4,52 +4,57 @@ import asyncio
 import logging
 import os
 
-from dealbot.worker.celery_app import app
-from dealbot.scrapers.base import BaseAdapter
-from dealbot.scrapers.slickdeals import SlickdealsAdapter
-from dealbot.graph.graph import build_graph
+from sqlalchemy import select
+
+from dealbot.db.database import get_async_session
+from dealbot.db.models import WatchlistKeyword
+from dealbot.graph.graph import build_hunter_graph
 from dealbot.llm.base import LLMClient
 from dealbot.llm.ollama import OllamaClient
 from dealbot.llm.vllm import vLLMClient
+from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
 
-@app.task(name="dealbot.worker.tasks.scrape_slickdeals", bind=True, max_retries=3)
-def scrape_slickdeals(self) -> dict:
+def _get_llm() -> LLMClient:
+    return vLLMClient() if os.environ.get("LLM_BACKEND") == "vllm" else OllamaClient()
+
+
+@app.task(name="dealbot.worker.tasks.hunt_deals", bind=True, max_retries=3)
+def hunt_deals(self) -> dict:
     """
-    Celery task: fetch Slickdeals RSS, score each deal, persist to DB.
-    Retries up to 3 times on failure with exponential backoff.
+    Celery task: run the hunter pipeline for every watchlist keyword.
+    Fires once daily via Celery Beat.
     """
     try:
-        llm: LLMClient = (
-            vLLMClient() if os.environ.get("LLM_BACKEND") == "vllm" else OllamaClient()
-        )
-        return asyncio.run(_run_pipeline(SlickdealsAdapter(), llm))
+        llm = _get_llm()
+        return asyncio.run(_run_hunter(llm))
     except Exception as exc:
-        logger.exception("scrape_slickdeals task failed: %s", exc)
+        logger.exception("hunt_deals task failed: %s", exc)
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 
 
-async def _run_pipeline(adapter: BaseAdapter, llm: LLMClient) -> dict:
-    graph = build_graph(llm)
+async def _run_hunter(llm: LLMClient) -> dict:
+    graph = build_hunter_graph(llm)
 
-    deals = await adapter.fetch()
-    logger.info("pipeline: fetched %d deals from %s", len(deals), type(adapter).__name__)
+    async with get_async_session() as session:
+        result = await session.execute(select(WatchlistKeyword))
+        keywords = result.scalars().all()
 
-    results = {"scored": 0, "errors": 0}
+    logger.info("hunt_deals: %d keywords to process", len(keywords))
+    results = {"processed": 0, "skipped": 0, "errors": 0}
 
-    for deal in deals:
+    for kw in keywords:
         try:
-            final_state = await graph.ainvoke({"deal": deal})
-            if "error" in final_state:
-                logger.warning("pipeline error for '%s': %s", deal.title, final_state["error"])
-                results["errors"] += 1
+            final_state = await graph.ainvoke({"keyword": kw.keyword})
+            if final_state.get("keyword_covered"):
+                results["skipped"] += 1
             else:
-                results["scored"] += 1
+                results["processed"] += 1
         except Exception:
-            logger.exception("unhandled error scoring deal '%s'", deal.title)
+            logger.exception("hunt_deals: unhandled error for keyword '%s'", kw.keyword)
             results["errors"] += 1
 
-    logger.info("pipeline: done — %s", results)
+    logger.info("hunt_deals: done — %s", results)
     return results

@@ -69,7 +69,21 @@ async def _fetch_page(result: SearchResult) -> FetchedPage | None:
             tag.decompose()
 
         text = soup.get_text(separator=" ", strip=True)[:_MAX_TEXT_CHARS]
-        return FetchedPage(url=result.url, text=text)
+
+        # Extract absolute hrefs for ReAct navigation
+        base_url = str(resp.url)
+        links: list[str] = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if href.startswith("http"):
+                links.append(href)
+            elif href.startswith("/"):
+                from urllib.parse import urlparse
+                parsed = urlparse(base_url)
+                links.append(f"{parsed.scheme}://{parsed.netloc}{href}")
+        links = list(dict.fromkeys(links))[:20]  # dedup, cap at 20
+
+        return FetchedPage(url=result.url, text=text, links=links)
     except Exception:
         logger.debug("fetch_page: failed to fetch %s", result.url)
         return None

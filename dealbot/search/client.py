@@ -19,6 +19,7 @@ class FetchedPage(BaseModel):
 
     url: str
     text: str  # scripts/styles/nav stripped, truncated to 4000 chars
+    links: list[str] = []  # absolute hrefs extracted from <a> tags
 
 
 class SearchClient(ABC):

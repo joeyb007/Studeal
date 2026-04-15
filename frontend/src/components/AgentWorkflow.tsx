@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
 import styles from "./AgentWorkflow.module.css";
 
-const STAGE_DURATION = 4000;
+const STAGE_DURATION = 10000;
 
 const STAGES = [
   { icon: "⌕", label: "Search" },
@@ -251,7 +251,7 @@ export default function AgentWorkflow({ started = false }: AgentWorkflowProps) {
     <div className={styles.wrapper}>
       {/* Side stat popup — left of card */}
       {started && tick >= 2 && (
-        <div className={styles.statPopup} key={`${activeNode}-${Math.floor(tick / 2)}`}>
+        <div className={styles.statPopup} key={activeNode}>
           <span className={styles.statValue}>{stat.getValue(tick)}</span>
           <span className={styles.statLabel}>{stat.label}</span>
         </div>

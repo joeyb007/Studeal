@@ -338,7 +338,7 @@
   background: rgba(26, 47, 94, 0.06);
   border: 1px solid rgba(26, 47, 94, 0.1);
   width: fit-content;
-  animation: toolCallAnim 0.55s ease forwards;
+  animation: toolCallAnim 1.2s ease forwards;
 }
 
 @keyframes toolCallAnim {

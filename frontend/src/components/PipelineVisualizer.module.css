@@ -1,0 +1,77 @@
+.pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  justify-content: center;
+}
+
+.stageWrapper {
+  display: flex;
+  align-items: center;
+}
+
+.node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+}
+
+.node.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px var(--accent-glow);
+  background: rgba(124, 107, 255, 0.08);
+}
+
+.node.done {
+  border-color: var(--success);
+  background: rgba(74, 222, 128, 0.06);
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  transition: color 0.3s ease;
+}
+
+.node.active .label {
+  color: var(--accent);
+}
+
+.node.done .label {
+  color: var(--success);
+}
+
+.pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  opacity: 0;
+  animation: pulse 1.5s ease-out infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.8; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.2); }
+}
+
+.connector {
+  width: 32px;
+  height: 1px;
+  background: var(--border);
+  transition: background 0.3s ease;
+}
+
+.connector.connectorDone {
+  background: var(--success);
+}

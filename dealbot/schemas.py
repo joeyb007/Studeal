@@ -22,6 +22,7 @@ class DealRaw(BaseModel):
     sale_price: float
     asin: Optional[str] = None
     description: Optional[str] = None
+    student_eligible: bool = False  # True if page content confirms student pricing/discount
 
 
 class DealScore(BaseModel):

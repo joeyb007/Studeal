@@ -15,6 +15,7 @@ interface Deal {
   score: number;
   alert_tier: string;
   real_discount_pct: number | null;
+  student_eligible: boolean;
 }
 
 type Phase = "idle" | "running" | "done";
@@ -197,13 +198,18 @@ export default function Home() {
                 >
                   <div className={styles.dealHeader}>
                     <span className={styles.dealSource}>{deal.source}</span>
-                    <span className={[
-                      styles.dealTier,
-                      deal.alert_tier === "push" ? styles.tierPush : "",
-                      deal.alert_tier === "digest" ? styles.tierDigest : "",
-                    ].join(" ")}>
-                      {deal.alert_tier}
-                    </span>
+                    <div className={styles.dealBadges}>
+                      {deal.student_eligible && (
+                        <span className={styles.tierStudent}>student</span>
+                      )}
+                      <span className={[
+                        styles.dealTier,
+                        deal.alert_tier === "push" ? styles.tierPush : "",
+                        deal.alert_tier === "digest" ? styles.tierDigest : "",
+                      ].join(" ")}>
+                        {deal.alert_tier}
+                      </span>
+                    </div>
                   </div>
                   <p className={styles.dealTitle}>{deal.title}</p>
                   <div className={styles.dealPricing}>

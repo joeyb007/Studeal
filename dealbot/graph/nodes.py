@@ -230,6 +230,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
         tags=json.dumps(score_result.tags),
         confidence=score_result.confidence,
         real_discount_pct=score_result.real_discount_pct,
+        student_eligible=deal.student_eligible,
         embedding=embedding,
         hunt_date=date.today(),
         scraped_at=datetime.now(timezone.utc),

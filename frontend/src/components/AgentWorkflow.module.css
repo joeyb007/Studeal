@@ -58,6 +58,13 @@
   font-weight: 800;
   color: var(--accent);
   letter-spacing: -0.3px;
+  display: inline-block;
+  animation: bumpUp 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes bumpUp {
+  0%   { transform: translateY(4px); opacity: 0.4; }
+  100% { transform: translateY(0);   opacity: 1; }
 }
 
 .statLabel {
@@ -113,7 +120,7 @@
 /* Pipeline nodes */
 .pipeline {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   align-items: center;
   position: relative;
 }
@@ -127,9 +134,9 @@
 
 .node {
   position: relative;
-  width: 62px;
-  height: 62px;
-  border-radius: 16px;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
   border: 1.5px solid var(--border);
   background: var(--bg);
   display: flex;
@@ -175,8 +182,8 @@
 
 .nodePulse {
   position: absolute;
-  inset: -7px;
-  border-radius: 20px;
+  inset: -6px;
+  border-radius: 18px;
   border: 1.5px solid var(--accent);
   opacity: 0;
   animation: pulse 1.6s ease-out infinite;
@@ -189,9 +196,9 @@
 
 .connector {
   position: absolute;
-  top: 31px;
-  left: calc(50% + 31px);
-  width: calc(100% - 62px);
+  top: 26px;
+  left: calc(50% + 26px);
+  width: calc(100% - 52px);
   height: 1.5px;
   background: var(--border);
   transition: background 0.5s;

@@ -4,13 +4,14 @@ import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
 import styles from "./AgentWorkflow.module.css";
 
-const STAGE_DURATION = 10000;
+const STAGE_DURATION = 6000;
 
 const STAGES = [
   { icon: "⌕", label: "Search" },
   { icon: "↓", label: "Fetch" },
   { icon: "◈", label: "Extract" },
   { icon: "◎", label: "Score" },
+  { icon: "✦", label: "Verify" },
 ];
 
 const TOOL_CALLS: string[][] = [
@@ -18,6 +19,7 @@ const TOOL_CALLS: string[][] = [
   ["fetch_page(url)", "extract_links(html)"],
   ["verify_discount(price)", "parse_deal(html)"],
   ["fetch_price_history()", "check_deal_threshold()"],
+  ["brave_search(student_query)", "tag_student_eligible()"],
 ];
 
 const THOUGHTS = [
@@ -25,6 +27,7 @@ const THOUGHTS = [
   "parsing HTML · extracting product metadata from 5 domains...",
   "discount 24% · verifying against 90-day price floor $201...",
   "score = 0.4×discount + 0.3×history + 0.3×recency → 84",
+  "re-querying brave with student_query · tagging eligible deals...",
 ];
 
 const SEARCH_URLS = [
@@ -59,11 +62,19 @@ const SCORE_STEPS = [
   "Computing final score...",
 ];
 
+const VERIFY_ITEMS = [
+  { label: "UNiDAYS eligible", found: true },
+  { label: ".edu pricing available", found: true },
+  { label: "Student Beans verified", found: false },
+  { label: "Apple Education Store", found: true },
+];
+
 const STAGE_STATS = [
   { label: "sources found", getValue: (tick: number) => `${Math.min(tick, SEARCH_URLS.length)} / ${SEARCH_URLS.length}` },
   { label: "pages fetched", getValue: (tick: number) => `${Math.min(tick, FETCH_PAGES.filter(p => p.done).length)} / ${FETCH_PAGES.length}` },
   { label: "candidates", getValue: (tick: number) => `${Math.min(tick, EXTRACT_ITEMS.filter(i => i.good).length)} strong matches` },
   { label: "deal score", getValue: (tick: number) => `${Math.round(Math.min((tick / SCORE_STEPS.length) * 84, 84))} / 100` },
+  { label: "student discounts", getValue: (tick: number) => `${Math.min(tick, VERIFY_ITEMS.filter(v => v.found).length)} verified` },
 ];
 
 function faviconUrl(domain: string) {
@@ -183,7 +194,7 @@ function ScorePanel({ tick, stage }: { tick: number; stage: number }) {
           </div>
         ))}
       </div>
-      {tick >= 2 && (
+      {tick >= 4 && (
         <div className={styles.scoreBar}>
           <div className={styles.scoreBarTrack}>
             <div className={styles.scoreBarFill} style={{ width: `${progress}%` }} />
@@ -196,6 +207,31 @@ function ScorePanel({ tick, stage }: { tick: number; stage: number }) {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+function VerifyPanel({ tick, stage }: { tick: number; stage: number }) {
+  const visible = Math.min(tick, VERIFY_ITEMS.length);
+  return (
+    <>
+      <p className={styles.panelTitle}>Verifying student eligibility</p>
+      <ToolCallFlash key={`tool-${stage}-${tick}`} stage={stage} tick={tick} />
+      <div className={styles.extractList}>
+        {VERIFY_ITEMS.slice(0, visible).map((item, i) => (
+          <div key={i} className={[
+            styles.extractRow,
+            item.found ? styles.extractGood : styles.extractMuted,
+          ].join(" ")}>
+            <span className={styles.extractDot}>{item.found ? "●" : "○"}</span>
+            <span className={styles.extractTitle}>{item.label}</span>
+            <span className={[
+              styles.confidenceBadge,
+              item.found ? styles.confidenceHigh : styles.confidenceLow,
+            ].join(" ")}>{item.found ? "✓" : "✗"}</span>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
@@ -242,17 +278,55 @@ export default function AgentWorkflow({ started = false }: AgentWorkflowProps) {
       case 1: return <FetchPanel tick={tick} stage={1} />;
       case 2: return <ExtractPanel tick={tick} stage={2} />;
       case 3: return <ScorePanel tick={tick} stage={3} />;
+      case 4: return <VerifyPanel tick={tick} stage={4} />;
     }
   };
 
   const stat = STAGE_STATS[activeNode];
+  const statValue = stat.getValue(tick);
+
+  // Animate the leading number counting up when the value increases
+  const [displayValue, setDisplayValue] = useState(statValue);
+  const prevValueRef = useRef(statValue);
+  const rafRef = useRef<number>(0);
+  useEffect(() => {
+    const prev = prevValueRef.current;
+    prevValueRef.current = statValue;
+    if (prev === statValue) return;
+
+    cancelAnimationFrame(rafRef.current);
+
+    const match = statValue.match(/^(\d+)/);
+    const prevMatch = prev.match(/^(\d+)/);
+    if (!match || !prevMatch) {
+      rafRef.current = requestAnimationFrame(() => setDisplayValue(statValue));
+      return;
+    }
+
+    const target = parseInt(match[1]);
+    const start = parseInt(prevMatch[1]);
+    if (start >= target) {
+      rafRef.current = requestAnimationFrame(() => setDisplayValue(statValue));
+      return;
+    }
+
+    let current = start;
+    const step = () => {
+      current += 1;
+      setDisplayValue(statValue.replace(/^\d+/, String(current)));
+      if (current < target) rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [statValue]);
 
   return (
     <div className={styles.wrapper}>
       {/* Side stat popup — left of card */}
       {started && tick >= 2 && (
         <div className={styles.statPopup} key={activeNode}>
-          <span className={styles.statValue}>{stat.getValue(tick)}</span>
+          <span className={styles.statValue} key={displayValue}>{displayValue}</span>
           <span className={styles.statLabel}>{stat.label}</span>
         </div>
       )}

@@ -54,7 +54,8 @@ When you have found a product with pricing, return ONLY a JSON object with these
   "sale_price": 69.99,
   "url": "https://...",
   "source": "domain name e.g. amazon.com",
-  "description": "one sentence description or null"
+  "description": "one sentence description or null",
+  "student_eligible": false
 }
 
 Rules:
@@ -62,7 +63,9 @@ Rules:
 - If only one price is shown with no clear discount, set both listed_price and sale_price to that value
 - If no product with pricing information is found, return null
 - Return null for review articles, blog posts, or pages with no purchasable product
-- Numbers only for prices, no currency symbols"""
+- Numbers only for prices, no currency symbols
+- Set student_eligible to true only if the page explicitly mentions student pricing, \
+a student discount programme (UNiDAYS, Student Beans, .edu), or requires student verification"""
 
 
 def _price_grounded(price: float, text: str) -> bool:
@@ -161,6 +164,7 @@ def _parse_deal(content: str, page: FetchedPage) -> DealRaw | None:
         listed_price=listed,
         sale_price=sale,
         description=data.get("description"),
+        student_eligible=bool(data.get("student_eligible", False)),
     )
 
 

@@ -28,6 +28,7 @@ class Deal(Base):
     tags: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
     confidence: Mapped[str] = mapped_column(String(8), nullable=False)
     real_discount_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    student_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     hunt_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     scraped_at: Mapped[datetime] = mapped_column(

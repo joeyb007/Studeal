@@ -82,13 +82,16 @@ function faviconUrl(domain: string) {
 }
 
 function ToolCallFlash({ stage, tick }: { stage: number; tick: number }) {
-  if (tick < 1 || tick > 3) return null;
   const calls = TOOL_CALLS[stage];
-  const call = calls[(tick - 1) % calls.length];
+  if (tick < 1) return <div className={styles.toolCallSlot} />;
+  const callIndex = Math.min(Math.floor((tick - 1) / 3), calls.length - 1);
+  const call = calls[callIndex];
   return (
-    <div className={styles.toolCall}>
-      <span className={styles.toolCallPrefix}>▶</span>
-      <code className={styles.toolCallText}>calling {call}</code>
+    <div className={styles.toolCallSlot}>
+      <div className={styles.toolCall} key={`${stage}-${callIndex}`}>
+        <span className={styles.toolCallPrefix}>▶</span>
+        <code className={styles.toolCallText}>{call}</code>
+      </div>
     </div>
   );
 }
@@ -98,7 +101,7 @@ function SearchPanel({ tick, stage }: { tick: number; stage: number }) {
   return (
     <>
       <p className={styles.panelTitle}>Aggregating the web</p>
-      <ToolCallFlash key={`tool-${stage}-${tick}`} stage={stage} tick={tick} />
+      <ToolCallFlash stage={stage} tick={tick} />
       <div className={styles.urlList}>
         {SEARCH_URLS.slice(0, visible).map((url, i) => (
           <div key={i} className={styles.urlRow}>
@@ -122,7 +125,7 @@ function FetchPanel({ tick, stage }: { tick: number; stage: number }) {
   return (
     <>
       <p className={styles.panelTitle}>Fetching pages</p>
-      <ToolCallFlash key={`tool-${stage}-${tick}`} stage={stage} tick={tick} />
+      <ToolCallFlash stage={stage} tick={tick} />
       <div className={styles.fetchList}>
         {FETCH_PAGES.slice(0, visible).map((page, i) => (
           <div key={i} className={styles.fetchRow}>
@@ -151,7 +154,7 @@ function ExtractPanel({ tick, stage }: { tick: number; stage: number }) {
   return (
     <>
       <p className={styles.panelTitle}>Extracting candidates</p>
-      <ToolCallFlash key={`tool-${stage}-${tick}`} stage={stage} tick={tick} />
+      <ToolCallFlash stage={stage} tick={tick} />
       <div className={styles.extractList}>
         {EXTRACT_ITEMS.slice(0, visible).map((item, i) => (
           <div key={i} className={[
@@ -175,10 +178,21 @@ function ExtractPanel({ tick, stage }: { tick: number; stage: number }) {
 function ScorePanel({ tick, stage }: { tick: number; stage: number }) {
   const progress = Math.min((tick / SCORE_STEPS.length) * 84, 84);
   const visibleSteps = Math.min(tick, SCORE_STEPS.length);
+  const rounded = Math.round(progress);
+
+  // Animate bar from 0 on first mount by starting at 0 then setting real width
+  const [barWidth, setBarWidth] = useState(0);
+  useEffect(() => {
+    if (tick < 4) return;
+    // One frame delay so the CSS transition fires from 0
+    const id = requestAnimationFrame(() => setBarWidth(progress));
+    return () => cancelAnimationFrame(id);
+  }, [progress, tick]);
+
   return (
     <>
       <p className={styles.panelTitle}>Scoring best deal</p>
-      <ToolCallFlash key={`tool-${stage}-${tick}`} stage={stage} tick={tick} />
+      <ToolCallFlash stage={stage} tick={tick} />
       <div className={styles.scoreTop}>
         <div className={styles.productThumb} />
         <div className={styles.scoreTopText}>
@@ -197,10 +211,13 @@ function ScorePanel({ tick, stage }: { tick: number; stage: number }) {
       {tick >= 4 && (
         <div className={styles.scoreBar}>
           <div className={styles.scoreBarTrack}>
-            <div className={styles.scoreBarFill} style={{ width: `${progress}%` }} />
+            <div className={styles.scoreBarFill} style={{ width: `${barWidth}%` }} />
           </div>
           <div className={styles.scoreNumbers}>
-            <span className={styles.scoreValue}>{Math.round(progress)}/100</span>
+            <span className={styles.scoreValue}>
+              {rounded}/100
+              <span className={styles.scorePct}> · {rounded}%</span>
+            </span>
             {tick >= SCORE_STEPS.length && (
               <span className={styles.scoreBadge}>push alert</span>
             )}
@@ -216,7 +233,7 @@ function VerifyPanel({ tick, stage }: { tick: number; stage: number }) {
   return (
     <>
       <p className={styles.panelTitle}>Verifying student eligibility</p>
-      <ToolCallFlash key={`tool-${stage}-${tick}`} stage={stage} tick={tick} />
+      <ToolCallFlash stage={stage} tick={tick} />
       <div className={styles.extractList}>
         {VERIFY_ITEMS.slice(0, visible).map((item, i) => (
           <div key={i} className={[

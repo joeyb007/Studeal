@@ -1,0 +1,26 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+import styles from "./Nav.module.css";
+
+export default function Nav() {
+  const { logout } = useAuth();
+  const pathname = usePathname();
+
+  return (
+    <nav className={styles.nav}>
+      <Link href="/" className={styles.logo}>studeal</Link>
+      <div className={styles.links}>
+        <Link href="/dashboard" className={[styles.link, pathname === "/dashboard" ? styles.active : ""].join(" ")}>
+          Deals
+        </Link>
+        <Link href="/watchlists" className={[styles.link, pathname === "/watchlists" ? styles.active : ""].join(" ")}>
+          Watchlists
+        </Link>
+        <button className={styles.logoutBtn} onClick={logout}>Log out</button>
+      </div>
+    </nav>
+  );
+}

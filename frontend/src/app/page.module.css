@@ -6,17 +6,18 @@
   flex-direction: column;
 }
 
-/* Entrance transitions */
+/* Entrance animations — CSS-driven, no JS dependency */
+@keyframes enterAnim {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .enterStart {
-  opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 0.55s ease, transform 0.55s ease;
+  animation: enterAnim 0.55s ease both;
 }
 
 .enterDone {
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 0.55s ease, transform 0.55s ease;
+  animation: enterAnim 0.55s ease both;
 }
 
 /* Nav */

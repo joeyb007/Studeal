@@ -1,0 +1,337 @@
+/* Backdrop */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(245, 240, 232, 0.55);
+  backdrop-filter: blur(6px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.backdropOut {
+  animation: fadeOut 0.22s ease forwards;
+}
+
+/* Aurora orbs */
+.orb1, .orb2, .orb3 {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.orb1 {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, #a8c4f0 0%, transparent 70%);
+  top: -100px;
+  left: -80px;
+  animation: drift1 12s ease-in-out infinite alternate;
+}
+
+.orb2 {
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, #d4b8f0 0%, transparent 70%);
+  bottom: -60px;
+  right: -60px;
+  animation: drift2 15s ease-in-out infinite alternate;
+}
+
+.orb3 {
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, #f0d4a8 0%, transparent 70%);
+  top: 40%;
+  left: 55%;
+  animation: drift3 10s ease-in-out infinite alternate;
+}
+
+@keyframes drift1 {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(60px, 80px) scale(1.1); }
+}
+
+@keyframes drift2 {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-50px, -60px) scale(1.15); }
+}
+
+@keyframes drift3 {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-40px, 50px) scale(0.9); }
+}
+
+/* Card */
+.card {
+  position: relative;
+  width: 420px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(26, 47, 94, 0.1);
+  border-radius: 24px;
+  padding: 36px 32px 28px;
+  box-shadow: 0 8px 48px rgba(26, 47, 94, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: slideUp 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes slideDown {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(12px) scale(0.97); }
+}
+
+.cardOut {
+  animation: slideDown 0.2s ease forwards;
+}
+
+.closeBtn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(26, 47, 94, 0.07);
+  color: var(--text-secondary);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.closeBtn:hover {
+  background: rgba(26, 47, 94, 0.13);
+}
+
+/* Logo */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.logoIcon {
+  height: 20px;
+  width: auto;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(26, 47, 94, 0.06);
+  border-radius: 10px;
+  padding: 3px;
+  width: fit-content;
+}
+
+.tab {
+  padding: 6px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.tabActive {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(26, 47, 94, 0.1);
+}
+
+/* Slide transition */
+.slideWrap {
+  /* extra horizontal room so the sliding content isn't clipped at the edges */
+  overflow: hidden;
+  margin: 0 -12px;
+  padding: 0 12px;
+}
+
+.slideContent {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@keyframes slideInFromRight {
+  from { opacity: 0; transform: translateX(36px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInFromLeft {
+  from { opacity: 0; transform: translateX(-36px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.slideFromRight {
+  animation: slideInFromRight 0.32s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+.slideFromLeft {
+  animation: slideInFromLeft 0.32s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+/* Heading */
+.heading {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.4px;
+  margin-top: -4px;
+}
+
+/* Form */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+.input {
+  width: 100%;
+  padding: 11px 14px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(26, 47, 94, 0.15);
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(26, 47, 94, 0.08);
+}
+
+.error {
+  font-size: 12px;
+  color: #dc2626;
+  padding: 7px 10px;
+  background: rgba(220, 38, 38, 0.06);
+  border-radius: 8px;
+}
+
+.submit {
+  width: 100%;
+  padding: 12px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-top: 4px;
+  transition: opacity 0.2s;
+}
+
+.submit:disabled { opacity: 0.6; }
+.submit:not(:disabled):hover { opacity: 0.88; }
+
+/* Divider */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(26, 47, 94, 0.1);
+}
+
+.dividerText {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+/* OAuth */
+.oauthRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.oauthBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(26, 47, 94, 0.12);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: background 0.15s;
+}
+
+.oauthBtn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.oauthBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Footer */
+.footer {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.switchLink {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+}

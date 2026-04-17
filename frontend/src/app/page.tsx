@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import AgentWorkflow from "@/components/AgentWorkflow";
 import PipelineVisualizer from "@/components/PipelineVisualizer";
+import AuthModal from "@/components/AuthModal";
 import styles from "./page.module.css";
 
 interface Deal {
@@ -80,16 +81,14 @@ export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [activeStage, setActiveStage] = useState(-1);
   const [deals, setDeals] = useState<Deal[]>([]);
-  const [mounted, setMounted] = useState(false);
   const [workflowStarted, setWorkflowStarted] = useState(false);
+  const [authModal, setAuthModal] = useState<{ open: boolean; tab: "login" | "signup" }>({ open: false, tab: "login" });
   const inputRef = useRef<HTMLInputElement>(null);
   const placeholder = useTypingPlaceholder(phase === "idle" && query === "");
 
   useEffect(() => {
-    // One frame delay so CSS transition triggers after first paint
-    const t1 = requestAnimationFrame(() => setMounted(true));
-    const t2 = setTimeout(() => setWorkflowStarted(true), ENTER_DURATION);
-    return () => { cancelAnimationFrame(t1); clearTimeout(t2); };
+    const t = setTimeout(() => setWorkflowStarted(true), ENTER_DURATION);
+    return () => clearTimeout(t);
   }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -121,38 +120,39 @@ export default function Home() {
   };
 
   return (
+    <>
     <main className={styles.main}>
-        <nav className={[styles.nav, mounted ? styles.enterDone : styles.enterStart].join(" ")}
-          style={{ transitionDelay: "0ms" }}>
+        <nav className={[styles.nav, styles.enterDone].join(" ")}
+          style={{ animationDelay: "0ms" }}>
           <div className={styles.wordmark}>
             <img src="/logo.svg" alt="" className={styles.logoIcon} />
             studeal
           </div>
           <div className={styles.navLinks}>
-            <a href="/login" className={styles.navLink}>Log in</a>
-            <a href="/signup" className={styles.navSignup}>Sign up</a>
+            <button className={styles.navLink} onClick={() => setAuthModal({ open: true, tab: "login" })}>Log in</button>
+            <button className={styles.navSignup} onClick={() => setAuthModal({ open: true, tab: "signup" })}>Sign up</button>
           </div>
         </nav>
 
         <section className={styles.hero}>
           <div className={styles.heroLeft}>
-          <p className={[styles.eyebrow, mounted ? styles.enterDone : styles.enterStart].join(" ")}
-            style={{ transitionDelay: "80ms" }}>
+          <p className={[styles.eyebrow, styles.enterDone].join(" ")}
+            style={{ animationDelay: "80ms" }}>
             AI deal hunting for students
           </p>
-          <h1 className={[styles.headline, mounted ? styles.enterDone : styles.enterStart].join(" ")}
-            style={{ transitionDelay: "160ms" }}>
+          <h1 className={[styles.headline, styles.enterDone].join(" ")}
+            style={{ animationDelay: "160ms" }}>
             Never overpay<br />
             for <em className={styles.headlineItalic}>anything.</em>
           </h1>
-          <p className={[styles.subline, mounted ? styles.enterDone : styles.enterStart].join(" ")}
-            style={{ transitionDelay: "240ms" }}>
+          <p className={[styles.subline, styles.enterDone].join(" ")}
+            style={{ animationDelay: "240ms" }}>
             Tell us what you want. We watch the internet and alert you when the price is right.
           </p>
 
           <form onSubmit={handleSearch}
-            className={[styles.searchForm, mounted ? styles.enterDone : styles.enterStart].join(" ")}
-            style={{ transitionDelay: "320ms" }}>
+            className={[styles.searchForm, styles.enterDone].join(" ")}
+            style={{ animationDelay: "320ms" }}>
             <input
               ref={inputRef}
               type="text"
@@ -179,8 +179,8 @@ export default function Home() {
           )}
           </div>
 
-          <div className={[styles.heroRight, mounted ? styles.enterDone : styles.enterStart].join(" ")}
-            style={{ transitionDelay: "420ms" }}>
+          <div className={[styles.heroRight, styles.enterDone].join(" ")}
+            style={{ animationDelay: "420ms" }}>
             <AgentWorkflow started={workflowStarted} />
           </div>
         </section>
@@ -233,7 +233,7 @@ export default function Home() {
 
             <div className={styles.cta}>
               <p className={styles.ctaText}>Save this watchlist and get daily alerts</p>
-              <a href="/signup" className={styles.ctaBtn}>Create free account →</a>
+              <button className={styles.ctaBtn} onClick={() => setAuthModal({ open: true, tab: "signup" })}>Create free account →</button>
             </div>
           </section>
         )}
@@ -244,5 +244,12 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      <AuthModal
+        isOpen={authModal.open}
+        defaultTab={authModal.tab}
+        onClose={() => setAuthModal(v => ({ ...v, open: false }))}
+      />
+    </>
   );
 }

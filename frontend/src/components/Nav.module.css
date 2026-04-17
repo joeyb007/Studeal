@@ -13,12 +13,18 @@
 }
 
 .logo {
-  font-family: var(--font-serif);
-  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 20px;
   font-weight: 700;
-  color: var(--accent);
-  letter-spacing: -0.3px;
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
+}
+
+.logoIcon {
+  height: 22px;
+  width: auto;
 }
 
 .links {

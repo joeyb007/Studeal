@@ -11,7 +11,10 @@ export default function Nav() {
 
   return (
     <nav className={styles.nav}>
-      <Link href="/" className={styles.logo}>studeal</Link>
+      <Link href="/" className={styles.logo}>
+        <img src="/logo.svg" alt="" className={styles.logoIcon} />
+        studeal
+      </Link>
       <div className={styles.links}>
         <Link href="/dashboard" className={[styles.link, pathname === "/dashboard" ? styles.active : ""].join(" ")}>
           Deals

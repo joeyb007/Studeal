@@ -38,7 +38,10 @@ export default function SignupPage() {
     <main className={styles.main}>
       <div className={styles.card}>
         <div className={styles.header}>
-          <Link href="/" className={styles.logo}>studeal</Link>
+          <Link href="/" className={styles.logo}>
+            <img src="/logo.svg" alt="" className={styles.logoIcon} />
+            studeal
+          </Link>
           <p className={styles.subtitle}>Start saving on everything</p>
         </div>
 

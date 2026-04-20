@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -68,7 +67,6 @@ async def list_deals(
     async with get_async_session() as session:
         stmt = (
             select(Deal)
-            .where(Deal.hunt_date == date.today())
             .order_by(Deal.scraped_at.desc())
             .offset(offset)
             .limit(limit)

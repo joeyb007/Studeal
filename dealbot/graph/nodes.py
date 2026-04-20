@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 
 import httpx
 from bs4 import BeautifulSoup
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from dealbot.agents.extractor import ExtractorAgent
 from dealbot.agents.query_gen import QueryGenAgent
@@ -238,14 +238,30 @@ async def persist_node(state: PipelineState) -> PipelineState:
     )
 
     async with get_async_session() as session:
-        try:
-            row = Deal(**values)
-            session.add(row)
-            await session.flush()  # get row.id without closing the session
-            await run_matching(row, session)
-            await session.commit()
-            logger.info("persist_node: saved deal '%s' with score %d", deal.title, score_result.score)
-        except IntegrityError:
-            await session.rollback()
-            logger.info("persist_node: duplicate skipped '%s'", deal.url)
+        stmt = (
+            pg_insert(Deal)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=["url"],
+                set_={
+                    "title": values["title"],
+                    "listed_price": values["listed_price"],
+                    "sale_price": values["sale_price"],
+                    "score": values["score"],
+                    "alert_tier": values["alert_tier"],
+                    "real_discount_pct": values["real_discount_pct"],
+                    "student_eligible": values["student_eligible"],
+                    "condition": values["condition"],
+                    "embedding": values["embedding"],
+                    "scraped_at": values["scraped_at"],
+                },
+            )
+            .returning(Deal.id)
+        )
+        result = await session.execute(stmt)
+        deal_id = result.scalar_one()
+        deal_row = await session.get(Deal, deal_id)
+        await run_matching(deal_row, session)
+        await session.commit()
+        logger.info("persist_node: upserted deal '%s' id=%d score=%d", deal.title, deal_id, score_result.score)
     return state

@@ -28,8 +28,15 @@ and no other text:
   "category": <normalised slug e.g. "electronics/audio" or "home/kitchen">,
   "tags": [<short tag strings>],
   "real_discount_pct": <float or null>,
-  "confidence": "high"
+  "confidence": "high",
+  "condition": <"new" | "used" | "refurb" | "unknown">
 }
+
+Condition:
+- "new": sold as new, sealed, never opened
+- "used": pre-owned, second-hand, open-box without refurbishment
+- "refurb": certified/manufacturer/seller refurbished, or "like new"
+- "unknown": condition not mentioned — use this when the extractor did not determine it
 
 Scoring rubric:
 - 0-30:  weak — small discount or inflated original price

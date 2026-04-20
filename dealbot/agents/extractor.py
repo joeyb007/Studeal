@@ -55,7 +55,8 @@ When you have found a product with pricing, return ONLY a JSON object with these
   "url": "https://...",
   "source": "domain name e.g. amazon.com",
   "description": "one sentence description or null",
-  "student_eligible": false
+  "student_eligible": false,
+  "condition": "new"
 }
 
 Rules:
@@ -65,7 +66,12 @@ Rules:
 - Return null for review articles, blog posts, or pages with no purchasable product
 - Numbers only for prices, no currency symbols
 - Set student_eligible to true only if the page explicitly mentions student pricing, \
-a student discount programme (UNiDAYS, Student Beans, .edu), or requires student verification"""
+a student discount programme (UNiDAYS, Student Beans, .edu), or requires student verification
+- condition must be one of: "new", "used", "refurb", "unknown"
+  - "new": sold as new, sealed, never opened
+  - "used": explicitly described as used, pre-owned, second-hand, or open-box without refurbishment
+  - "refurb": certified refurbished, manufacturer refurbished, seller refurbished, or "like new"
+  - "unknown": condition not mentioned or ambiguous"""
 
 
 def _price_grounded(price: float, text: str) -> bool:
@@ -165,6 +171,7 @@ def _parse_deal(content: str, page: FetchedPage) -> DealRaw | None:
         sale_price=sale,
         description=data.get("description"),
         student_eligible=bool(data.get("student_eligible", False)),
+        condition=data.get("condition", "unknown"),  # Pydantic coerces str → Condition enum
     )
 
 

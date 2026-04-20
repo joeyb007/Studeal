@@ -23,6 +23,7 @@ class DealRaw(BaseModel):
     asin: Optional[str] = None
     description: Optional[str] = None
     student_eligible: bool = False  # True if page content confirms student pricing/discount
+    condition: str = "unknown"  # "new" | "used" | "refurb" | "unknown"
 
 
 class DealScore(BaseModel):
@@ -35,3 +36,4 @@ class DealScore(BaseModel):
     tags: list[str]
     real_discount_pct: Optional[float] = None
     confidence: str = "high"  # "high" | "low" (low if max iterations hit)
+    condition: str = "unknown"  # "new" | "used" | "refurb" | "unknown"

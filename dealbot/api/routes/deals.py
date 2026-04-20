@@ -28,6 +28,7 @@ class DealResponse(BaseModel):
     confidence: str
     real_discount_pct: Optional[float]
     student_eligible: bool
+    condition: str
     scraped_at: str
 
     model_config = {"from_attributes": True}
@@ -49,6 +50,7 @@ def _to_response(deal: Deal) -> DealResponse:
         confidence=deal.confidence,
         real_discount_pct=deal.real_discount_pct,
         student_eligible=deal.student_eligible,
+        condition=deal.condition,
         scraped_at=deal.scraped_at.isoformat(),
     )
 

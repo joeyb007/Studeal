@@ -29,6 +29,7 @@ class Deal(Base):
     confidence: Mapped[str] = mapped_column(String(8), nullable=False)
     real_discount_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     student_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    condition: Mapped[str] = mapped_column(String(8), nullable=False, default="unknown")
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     hunt_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     scraped_at: Mapped[datetime] = mapped_column(
@@ -47,6 +48,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
     hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
     is_pro: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    secondhand_searches_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -65,6 +69,7 @@ class Watchlist(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     min_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     alert_tier_threshold: Mapped[str] = mapped_column(String(16), nullable=False, default="digest")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="watchlists")
     keywords: Mapped[list[WatchlistKeyword]] = relationship(

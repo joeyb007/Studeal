@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from dealbot.db.database import get_async_session
-from dealbot.db.models import WatchlistKeyword
+from dealbot.db.models import Watchlist, WatchlistKeyword
 from dealbot.graph.graph import build_hunter_graph
 from dealbot.llm.base import LLMClient
 from dealbot.llm.ollama import OllamaClient
@@ -35,10 +36,28 @@ def hunt_deals(self) -> dict:
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 
 
+async def _purge_expired_watchlists(session) -> int:
+    """Delete watchlists past their expires_at. Cascades to keywords and alerts."""
+    now = datetime.now(timezone.utc)
+    result = await session.execute(
+        delete(Watchlist)
+        .where(Watchlist.expires_at != None, Watchlist.expires_at <= now)  # noqa: E711
+        .returning(Watchlist.id)
+    )
+    deleted = len(result.fetchall())
+    if deleted:
+        logger.info("hunt_deals: purged %d expired watchlist(s)", deleted)
+    return deleted
+
+
 async def _run_hunter(llm: LLMClient) -> dict:
     graph = build_hunter_graph(llm)
 
     async with get_async_session() as session:
+        await _purge_expired_watchlists(session)
+        await session.commit()
+
+        # Only fetch keywords from active watchlists (expired ones just purged)
         result = await session.execute(select(WatchlistKeyword))
         keywords = result.scalars().all()
 

@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import AgentWorkflow from "@/components/AgentWorkflow";
 import PipelineVisualizer from "@/components/PipelineVisualizer";
 import AuthModal from "@/components/AuthModal";
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import styles from "./page.module.css";
 
 interface Deal {
@@ -128,8 +128,18 @@ export default function Home() {
             studeal
           </div>
           <div className={styles.navLinks}>
-            <button className={styles.navLink} onClick={() => setAuthModal({ open: true, tab: "login" })}>Log in</button>
-            <button className={styles.navSignup} onClick={() => setAuthModal({ open: true, tab: "signup" })}>Sign up</button>
+            {isLoggedIn ? (
+              <>
+                <a href="/dashboard" className={styles.navLink}>Daily Drops</a>
+                <a href="/watchlists" className={styles.navLink}>Watchlists</a>
+                <button className={styles.navLink} onClick={() => signOut({ callbackUrl: "/" })}>Log out</button>
+              </>
+            ) : (
+              <>
+                <button className={styles.navLink} onClick={() => setAuthModal({ open: true, tab: "login" })}>Log in</button>
+                <button className={styles.navSignup} onClick={() => setAuthModal({ open: true, tab: "signup" })}>Sign up</button>
+              </>
+            )}
           </div>
         </nav>
 

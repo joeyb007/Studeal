@@ -294,9 +294,7 @@
 
 /* OAuth */
 .oauthRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  display: flex;
 }
 
 .oauthBtn {
@@ -305,6 +303,7 @@
   justify-content: center;
   gap: 8px;
   padding: 10px;
+  width: 100%;
   border-radius: 10px;
   border: 1px solid rgba(26, 47, 94, 0.12);
   background: rgba(255, 255, 255, 0.7);

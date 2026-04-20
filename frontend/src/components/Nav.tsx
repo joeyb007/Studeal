@@ -16,7 +16,7 @@ export default function Nav() {
       </Link>
       <div className={styles.links}>
         <Link href="/dashboard" className={[styles.link, pathname === "/dashboard" ? styles.active : ""].join(" ")}>
-          Deals
+          Daily Drops
         </Link>
         <Link href="/watchlists" className={[styles.link, pathname === "/watchlists" ? styles.active : ""].join(" ")}>
           Watchlists

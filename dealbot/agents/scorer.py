@@ -6,7 +6,7 @@ from typing import Any
 
 from dealbot.agents.tools import TOOL_DEFINITIONS, TOOL_REGISTRY
 from dealbot.llm.base import LLMClient
-from dealbot.schemas import AlertTier, DealRaw, DealScore
+from dealbot.schemas import AlertTier, Category, DealRaw, DealScore
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ and no other text:
 {
   "score": <integer 0-100>,
   "alert_tier": <"none" | "digest" | "push">,
-  "category": <normalised slug e.g. "electronics/audio" or "home/kitchen">,
+  "category": <one of: "Electronics" | "Laptops" | "Tablets" | "Phones" | "Audio" | "Gaming" | "Accessories" | "Software" | "Books" | "Clothing" | "Food & Drink" | "Travel" | "Home" | "Other">,
   "tags": [<short tag strings>],
   "real_discount_pct": <float or null>,
   "confidence": "high",
@@ -71,7 +71,7 @@ def _low_confidence_score(deal: DealRaw) -> DealScore:
         deal=deal,
         score=30,
         alert_tier=AlertTier.none,
-        category="unknown",
+        category=Category.other,
         tags=[],
         real_discount_pct=None,
         confidence="low",

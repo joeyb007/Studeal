@@ -226,7 +226,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
         asin=deal.asin,
         score=score_result.score,
         alert_tier=score_result.alert_tier.value,
-        category=score_result.category,
+        category=score_result.category.value,
         tags=json.dumps(score_result.tags),
         confidence=score_result.confidence,
         real_discount_pct=score_result.real_discount_pct,

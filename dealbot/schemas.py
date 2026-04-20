@@ -19,6 +19,23 @@ class Condition(str, Enum):
     unknown = "unknown"
 
 
+class Category(str, Enum):
+    electronics = "Electronics"
+    laptops = "Laptops"
+    tablets = "Tablets"
+    phones = "Phones"
+    audio = "Audio"
+    gaming = "Gaming"
+    accessories = "Accessories"
+    software = "Software"
+    books = "Books"
+    clothing = "Clothing"
+    food_drink = "Food & Drink"
+    travel = "Travel"
+    home = "Home"
+    other = "Other"
+
+
 class DealRaw(BaseModel):
     """Normalised deal data produced by the ScraperAgent."""
 
@@ -39,7 +56,7 @@ class DealScore(BaseModel):
     deal: DealRaw
     score: int  # 0-100
     alert_tier: AlertTier
-    category: str
+    category: Category
     tags: list[str]
     real_discount_pct: Optional[float] = None
     confidence: str = "high"  # "high" | "low" (low if max iterations hit)

@@ -43,10 +43,10 @@ function pct(listed: number, sale: number) {
   return Math.round(((listed - sale) / listed) * 100);
 }
 
-function DealCard({ deal }: { deal: Deal }) {
+function DealCard({ deal, index = 0 }: { deal: Deal; index?: number }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
   return (
-    <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.card}>
+    <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.card} style={{ animationDelay: `${index * 50}ms` }}>
       <div className={styles.discountBadge}>−{discount}%</div>
       <div className={styles.cardBody}>
         <div className={styles.cardMeta}>
@@ -87,6 +87,7 @@ export default function CatalogPage() {
   const token = session?.accessToken;
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dealsReady, setDealsReady] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
   const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
@@ -97,7 +98,13 @@ export default function CatalogPage() {
     let active = true;
     fetch("/api/deals")
       .then(r => r.json())
-      .then(data => { if (active) { setDeals(Array.isArray(data) ? data : []); setLoading(false); } })
+      .then(data => {
+        if (active) {
+          setDeals(Array.isArray(data) ? data : []);
+          setLoading(false);
+          setTimeout(() => { if (active) setDealsReady(true); }, 300);
+        }
+      })
       .catch(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [token]);
@@ -124,7 +131,7 @@ export default function CatalogPage() {
   return (
     <>
       <Nav />
-      <div className={styles.layout}>
+      <div className={`${styles.layout} pageEnter`}>
         <aside className={styles.sidebar}>
           <div className={styles.sidebarSection}>
             <h3 className={styles.sidebarTitle}>Category</h3>
@@ -187,8 +194,8 @@ export default function CatalogPage() {
           ) : filtered.length === 0 ? (
             <div className={styles.empty}>No deals match your filters.</div>
           ) : (
-            <div className={styles.grid}>
-              {filtered.map(deal => <DealCard key={deal.id} deal={deal} />)}
+            <div className={[styles.grid, dealsReady ? styles.gridReady : ""].join(" ")}>
+              {filtered.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
             </div>
           )}
         </main>

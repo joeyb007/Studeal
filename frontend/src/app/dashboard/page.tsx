@@ -22,6 +22,10 @@ interface Deal {
   scraped_at: string;
 }
 
+const CATEGORIES = ["Electronics", "Laptops", "Tablets", "Phones", "Audio", "Gaming", "Accessories", "Software", "Books", "Clothing", "Food & Drink", "Travel", "Home", "Other"];
+const CONDITIONS = ["new", "used", "refurb"];
+const TIERS = ["push", "digest", "none"];
+
 const CONDITION_LABELS: Record<string, string> = { new: "New", used: "Used", refurb: "Refurb" };
 const CONDITION_CLASS: Record<string, string> = {
   new: styles.condNew,
@@ -138,9 +142,17 @@ export default function DashboardPage() {
   const [feed, setFeed] = useState<Deal[]>([]);
   // phase: 'idle' | 'fading' | 'shifted'
   const [phase, setPhase] = useState<"idle" | "fading" | "shifted">("idle");
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
+  const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
+  const [studentOnly, setStudentOnly] = useState(false);
   const phaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function toggleSet<T>(set: T[], val: T): T[] {
+    return set.includes(val) ? set.filter(v => v !== val) : [...set, val];
+  }
 
   useEffect(() => {
     fetch("/api/deals")
@@ -226,8 +238,16 @@ export default function DashboardPage() {
 
   const isFading = phase === "fading";
   const isShifted = phase === "shifted";
+
+  const filtered = deals
+    .filter(d => selectedCategories.length === 0 || selectedCategories.includes(d.category))
+    .filter(d => selectedConditions.length === 0 || selectedConditions.includes(d.condition))
+    .filter(d => selectedTiers.length === 0 || selectedTiers.includes(d.alert_tier))
+    .filter(d => !studentOnly || d.student_eligible);
+
   const hasResults = hasSearched && deals.length > 0;
   const isEmpty = hasSearched && deals.length === 0 && !searching;
+  const hasFilters = selectedCategories.length > 0 || selectedConditions.length > 0 || selectedTiers.length > 0 || studentOnly;
 
   return (
     <>
@@ -236,6 +256,51 @@ export default function DashboardPage() {
 
         {/* Search hero */}
         <div className={[styles.hero, isShifted ? styles.heroShifted : ""].join(" ")}>
+
+          {/* Sidebar — slides in from left when shifted */}
+          <aside className={[styles.sidebar, isShifted ? styles.sidebarOpen : ""].join(" ")}>
+            <div className={styles.sidebarSection}>
+              <h3 className={styles.sidebarTitle}>Category</h3>
+              {CATEGORIES.map(cat => (
+                <label key={cat} className={styles.checkLabel}>
+                  <input type="checkbox" className={styles.checkbox} checked={selectedCategories.includes(cat)} onChange={() => setSelectedCategories(prev => toggleSet(prev, cat))} />
+                  {cat}
+                </label>
+              ))}
+            </div>
+            <div className={styles.sidebarSection}>
+              <h3 className={styles.sidebarTitle}>Condition</h3>
+              {CONDITIONS.map(c => (
+                <label key={c} className={styles.checkLabel}>
+                  <input type="checkbox" className={styles.checkbox} checked={selectedConditions.includes(c)} onChange={() => setSelectedConditions(prev => toggleSet(prev, c))} />
+                  {CONDITION_LABELS[c]}
+                </label>
+              ))}
+            </div>
+            <div className={styles.sidebarSection}>
+              <h3 className={styles.sidebarTitle}>Deal Tier</h3>
+              {TIERS.map(t => (
+                <label key={t} className={styles.checkLabel}>
+                  <input type="checkbox" className={styles.checkbox} checked={selectedTiers.includes(t)} onChange={() => setSelectedTiers(prev => toggleSet(prev, t))} />
+                  {TIER_LABELS[t]}
+                </label>
+              ))}
+            </div>
+            <div className={styles.sidebarSection}>
+              <label className={styles.toggleLabel}>
+                <span>Student only</span>
+                <div className={[styles.toggle, studentOnly ? styles.toggleOn : ""].join(" ")} onClick={() => setStudentOnly(v => !v)}>
+                  <div className={styles.toggleThumb} />
+                </div>
+              </label>
+            </div>
+            {hasFilters && (
+              <button className={styles.clearBtn} onClick={() => { setSelectedCategories([]); setSelectedConditions([]); setSelectedTiers([]); setStudentOnly(false); }}>
+                Clear filters
+              </button>
+            )}
+          </aside>
+
           <div className={styles.heroInner}>
             <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
               <h1 className={styles.heading}>Daily Drops</h1>
@@ -265,10 +330,13 @@ export default function DashboardPage() {
                 ))}
               </div>
               <CarouselStrip feed={feed} />
+              <div className={styles.catalogLink}>
+                <Link href="/catalog">Browse all deals →</Link>
+              </div>
             </div>
             {searching && <p className={styles.searching}>Finding deals…</p>}
 
-            {/* Fixed results panel — always in flow, slides in when active */}
+            {/* Fixed results panel */}
             <div className={[styles.resultsPanel, isShifted ? styles.resultsPanelOpen : ""].join(" ")}>
               {isEmpty && (
                 <div className={styles.empty}>Nothing matched — try describing what you need differently.</div>
@@ -276,12 +344,12 @@ export default function DashboardPage() {
               {hasResults && (
                 <>
                   <div className={styles.resultsHeader}>
-                    <span className={styles.resultsCount}>{deals.length} deals found</span>
+                    <span className={styles.resultsCount}>{filtered.length} of {deals.length} deals</span>
                     <Link href="/catalog" className={styles.catalogInline}>Browse all →</Link>
                   </div>
                   <div className={styles.resultsScroll}>
                     <div className={styles.grid}>
-                      {deals.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
+                      {filtered.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
                     </div>
                   </div>
                 </>

@@ -4,11 +4,13 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
+from dealbot.llm.embeddings import embed_text
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
@@ -73,6 +75,39 @@ async def list_deals(
             stmt = stmt.where(Deal.alert_tier == tier)
         result = await session.execute(stmt)
         deals = result.scalars().all()
+    return [_to_response(d) for d in deals]
+
+
+@router.get("/search", response_model=list[DealResponse])
+async def search_deals(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=100),
+) -> list[DealResponse]:
+    embedding = await embed_text(q)
+
+    async with get_async_session() as session:
+        if embedding:
+            # Semantic search via cosine similarity
+            result = await session.execute(
+                text(
+                    "SELECT * FROM deals WHERE embedding IS NOT NULL "
+                    "ORDER BY embedding <=> CAST(:emb AS vector) "
+                    "LIMIT :limit"
+                ),
+                {"emb": str(embedding), "limit": limit},
+            )
+            rows = result.mappings().all()
+            deals = [Deal(**dict(row)) for row in rows]
+        else:
+            # Fallback: title keyword search
+            result = await session.execute(
+                select(Deal)
+                .where(Deal.title.ilike(f"%{q}%"))
+                .order_by(Deal.score.desc())
+                .limit(limit)
+            )
+            deals = list(result.scalars().all())
+
     return [_to_response(d) for d in deals]
 
 

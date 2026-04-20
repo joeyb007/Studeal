@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
@@ -21,33 +22,26 @@ interface Deal {
   scraped_at: string;
 }
 
-const CONDITION_LABELS: Record<string, string> = {
-  new: "New",
-  used: "Used",
-  refurb: "Refurb",
-};
-
+const CONDITION_LABELS: Record<string, string> = { new: "New", used: "Used", refurb: "Refurb" };
 const CONDITION_CLASS: Record<string, string> = {
   new: styles.condNew,
   used: styles.condUsed,
   refurb: styles.condRefurb,
 };
-
-const TIER_LABELS: Record<string, string> = {
-  push: "Hot",
-  digest: "Good",
-  none: "Mild",
-};
-
+const TIER_LABELS: Record<string, string> = { push: "Hot", digest: "Good", none: "Mild" };
 const TIER_CLASS: Record<string, string> = {
   push: styles.tierPush,
   digest: styles.tierDigest,
   none: styles.tierNone,
 };
 
-const CATEGORIES = ["Electronics", "Laptops", "Tablets", "Phones", "Audio", "Gaming", "Accessories", "Software", "Books", "Clothing", "Food & Drink", "Travel", "Home", "Other"];
-const CONDITIONS = ["new", "used", "refurb"];
-const TIERS = ["push", "digest", "none"];
+const PLACEHOLDERS = [
+  "noise cancelling headphones under $100",
+  "affordable laptop for college",
+  "gaming gear on sale",
+  "iPad deal for students",
+  "mechanical keyboard cheap",
+];
 
 function pct(listed: number, sale: number) {
   return Math.round(((listed - sale) / listed) * 100);
@@ -58,26 +52,20 @@ function DealCard({ deal }: { deal: Deal }) {
   return (
     <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.card}>
       <div className={styles.discountBadge}>−{discount}%</div>
-
       <div className={styles.cardBody}>
         <div className={styles.cardMeta}>
           <span className={styles.source}>{deal.source}</span>
           <span className={styles.category}>{deal.category}</span>
         </div>
-
         <p className={styles.title}>{deal.title}</p>
-
         <div className={styles.prices}>
           <span className={styles.salePrice}>${deal.sale_price.toFixed(2)}</span>
           <span className={styles.listedPrice}>${deal.listed_price.toFixed(2)}</span>
         </div>
       </div>
-
       <div className={styles.cardFooter}>
         <div className={styles.badges}>
-          {deal.student_eligible && (
-            <span className={styles.studentBadge}>Student</span>
-          )}
+          {deal.student_eligible && <span className={styles.studentBadge}>Student</span>}
           {deal.condition && deal.condition !== "unknown" && (
             <span className={[styles.condBadge, CONDITION_CLASS[deal.condition] ?? ""].join(" ")}>
               {CONDITION_LABELS[deal.condition] ?? deal.condition}
@@ -101,144 +89,105 @@ function DealCard({ deal }: { deal: Deal }) {
 export default function DashboardPage() {
   const { data: session } = useSession();
   const token = session?.accessToken;
+  const [query, setQuery] = useState("");
   const [deals, setDeals] = useState<Deal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
-  const [studentOnly, setStudentOnly] = useState(false);
-  const [sort, setSort] = useState<"score" | "discount" | "price">("score");
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [placeholderIdx, setPlaceholderIdx] = useState(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
+  // Rotate placeholder
   useEffect(() => {
-    let active = true;
-    fetch("/api/deals")
-      .then(r => r.json())
-      .then(data => { if (active) { setDeals(Array.isArray(data) ? data : []); setLoading(false); } })
-      .catch(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [token]);
+    const id = setInterval(() => {
+      setPlaceholderIdx(i => (i + 1) % PLACEHOLDERS.length);
+    }, 3000);
+    return () => clearInterval(id);
+  }, []);
 
-  function toggleSet<T>(set: T[], val: T): T[] {
-    return set.includes(val) ? set.filter(v => v !== val) : [...set, val];
-  }
-
-  const filtered = deals
-    .filter(d => selectedCategories.length === 0 || selectedCategories.includes(d.category))
-    .filter(d => selectedConditions.length === 0 || selectedConditions.includes(d.condition))
-    .filter(d => selectedTiers.length === 0 || selectedTiers.includes(d.alert_tier))
-    .filter(d => !studentOnly || d.student_eligible)
-    .sort((a, b) => {
-      if (sort === "score") return b.score - a.score;
-      if (sort === "discount") {
-        const da = a.real_discount_pct ?? pct(a.listed_price, a.sale_price);
-        const db = b.real_discount_pct ?? pct(b.listed_price, b.sale_price);
-        return db - da;
+  // Debounced search
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      if (!query.trim()) {
+        setDeals([]);
+        setHasSearched(false);
+        return;
       }
-      return a.sale_price - b.sale_price;
-    });
+      setSearching(true);
+      fetch(`/api/deals/search?q=${encodeURIComponent(query.trim())}`)
+        .then(r => r.json())
+        .then(data => {
+          setDeals(Array.isArray(data) ? data : []);
+          setHasSearched(true);
+          setSearching(false);
+        })
+        .catch(() => setSearching(false));
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, token]);
+
+  const hasResults = hasSearched && deals.length > 0;
+  const isEmpty = hasSearched && deals.length === 0 && !searching;
 
   return (
     <>
       <Nav />
-      <div className={styles.layout}>
-        {/* Sidebar */}
-        <aside className={styles.sidebar}>
-          <div className={styles.sidebarSection}>
-            <h3 className={styles.sidebarTitle}>Category</h3>
-            {CATEGORIES.map(cat => (
-              <label key={cat} className={styles.checkLabel}>
-                <input
-                  type="checkbox"
-                  className={styles.checkbox}
-                  checked={selectedCategories.includes(cat)}
-                  onChange={() => setSelectedCategories(prev => toggleSet(prev, cat))}
-                />
-                {cat}
-              </label>
-            ))}
-          </div>
+      <main className={[styles.main, hasResults ? styles.mainShifted : ""].join(" ")}>
 
-          <div className={styles.sidebarSection}>
-            <h3 className={styles.sidebarTitle}>Condition</h3>
-            {CONDITIONS.map(c => (
-              <label key={c} className={styles.checkLabel}>
-                <input
-                  type="checkbox"
-                  className={styles.checkbox}
-                  checked={selectedConditions.includes(c)}
-                  onChange={() => setSelectedConditions(prev => toggleSet(prev, c))}
-                />
-                {CONDITION_LABELS[c]}
-              </label>
-            ))}
-          </div>
-
-          <div className={styles.sidebarSection}>
-            <h3 className={styles.sidebarTitle}>Deal Tier</h3>
-            {TIERS.map(t => (
-              <label key={t} className={styles.checkLabel}>
-                <input
-                  type="checkbox"
-                  className={styles.checkbox}
-                  checked={selectedTiers.includes(t)}
-                  onChange={() => setSelectedTiers(prev => toggleSet(prev, t))}
-                />
-                {TIER_LABELS[t]}
-              </label>
-            ))}
-          </div>
-
-          <div className={styles.sidebarSection}>
-            <label className={styles.toggleLabel}>
-              <span>Student deals only</span>
-              <div
-                className={[styles.toggle, studentOnly ? styles.toggleOn : ""].join(" ")}
-                onClick={() => setStudentOnly(v => !v)}
-              >
-                <div className={styles.toggleThumb} />
-              </div>
-            </label>
-          </div>
-
-          {(selectedCategories.length > 0 || selectedConditions.length > 0 || selectedTiers.length > 0 || studentOnly) && (
-            <button
-              className={styles.clearBtn}
-              onClick={() => { setSelectedCategories([]); setSelectedConditions([]); setSelectedTiers([]); setStudentOnly(false); }}
-            >
-              Clear filters
-            </button>
-          )}
-        </aside>
-
-        {/* Main */}
-        <main className={styles.main}>
-          <div className={styles.topBar}>
-            <div>
+        {/* Search hero */}
+        <div className={[styles.hero, hasResults ? styles.heroTop : ""].join(" ")}>
+          {!hasResults && (
+            <>
               <h1 className={styles.heading}>Daily Drops</h1>
-              <span className={styles.count}>{filtered.length} deals</span>
-            </div>
-            <select
-              className={styles.sortSelect}
-              value={sort}
-              onChange={e => setSort(e.target.value as typeof sort)}
-            >
-              <option value="score">Best Score</option>
-              <option value="discount">Biggest Discount</option>
-              <option value="price">Lowest Price</option>
-            </select>
-          </div>
-
-          {loading ? (
-            <div className={styles.empty}>Loading deals...</div>
-          ) : filtered.length === 0 ? (
-            <div className={styles.empty}>No deals match your filters.</div>
-          ) : (
-            <div className={styles.grid}>
-              {filtered.map(deal => <DealCard key={deal.id} deal={deal} />)}
-            </div>
+              <p className={styles.subheading}>Describe what you&apos;re looking for</p>
+            </>
           )}
-        </main>
-      </div>
+          <div className={styles.searchWrap}>
+            <svg className={styles.searchIcon} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input
+              ref={inputRef}
+              className={styles.searchInput}
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={`Try: ${PLACEHOLDERS[placeholderIdx]}`}
+              autoFocus
+            />
+            {query && (
+              <button className={styles.clearSearch} onClick={() => setQuery("")}>✕</button>
+            )}
+          </div>
+          {searching && <p className={styles.searching}>Finding deals…</p>}
+        </div>
+
+        {/* Results */}
+        {hasResults && (
+          <div className={styles.results}>
+            <div className={styles.resultsHeader}>
+              <span className={styles.resultsCount}>{deals.length} deals found</span>
+            </div>
+            <div className={styles.grid}>
+              {deals.map(deal => <DealCard key={deal.id} deal={deal} />)}
+            </div>
+            <div className={styles.catalogLink}>
+              <Link href="/catalog">Browse all deals →</Link>
+            </div>
+          </div>
+        )}
+
+        {isEmpty && (
+          <div className={styles.empty}>
+            Nothing matched — try describing what you need differently.
+          </div>
+        )}
+
+        {!hasSearched && !searching && (
+          <div className={styles.catalogLink}>
+            <Link href="/catalog">Browse all deals →</Link>
+          </div>
+        )}
+      </main>
     </>
   );
 }

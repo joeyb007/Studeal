@@ -43,14 +43,55 @@ const PLACEHOLDERS = [
   "mechanical keyboard cheap",
 ];
 
+const SUGGESTIONS = [
+  "Laptops under $500",
+  "AirPods deals",
+  "Student textbooks",
+  "Gaming headsets",
+  "Monitors on sale",
+  "Mechanical keyboards",
+  "iPad + tablet",
+  "Refurbished MacBooks",
+];
+
+function CarouselStrip({ feed }: { feed: Deal[] }) {
+  if (feed.length === 0) return null;
+  const doubled = [...feed, ...feed];
+  return (
+    <div className={styles.carousel}>
+      <div className={styles.carouselLabel}>Live deals</div>
+      <div className={styles.carouselViewport}>
+        <div className={styles.carouselTrack}>
+          {doubled.map((deal, i) => {
+            const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
+            return (
+              <a key={`${deal.id}-${i}`} href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.miniCard}>
+                <span className={styles.miniDiscount}>−{discount}%</span>
+                <span className={styles.miniTitle}>{deal.title}</span>
+                <span className={styles.miniPrice}>${deal.sale_price.toFixed(2)}</span>
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function pct(listed: number, sale: number) {
   return Math.round(((listed - sale) / listed) * 100);
 }
 
-function DealCard({ deal }: { deal: Deal }) {
+function DealCard({ deal, index }: { deal: Deal; index: number }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
   return (
-    <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.card}>
+    <a
+      href={deal.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={styles.card}
+      style={{ animationDelay: `${index * 60}ms` }}
+    >
       <div className={styles.discountBadge}>−{discount}%</div>
       <div className={styles.cardBody}>
         <div className={styles.cardMeta}>
@@ -93,17 +134,67 @@ export default function DashboardPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [placeholderIdx, setPlaceholderIdx] = useState(0);
+  const [typedPlaceholder, setTypedPlaceholder] = useState("");
+  const [feed, setFeed] = useState<Deal[]>([]);
+  // phase: 'idle' | 'fading' | 'shifted'
+  const [phase, setPhase] = useState<"idle" | "fading" | "shifted">("idle");
+  const phaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Rotate placeholder
   useEffect(() => {
-    const id = setInterval(() => {
-      setPlaceholderIdx(i => (i + 1) % PLACEHOLDERS.length);
-    }, 3000);
-    return () => clearInterval(id);
+    fetch("/api/deals")
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setFeed(data.slice(0, 20)); })
+      .catch(() => {});
   }, []);
+
+  // Typewriter placeholder
+  useEffect(() => {
+    let idx = 0;
+    let charIdx = 0;
+    let deleting = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    function tick() {
+      const word = "Try: " + PLACEHOLDERS[idx];
+      if (!deleting) {
+        charIdx++;
+        setTypedPlaceholder(word.slice(0, charIdx));
+        if (charIdx === word.length) {
+          deleting = true;
+          timeoutId = setTimeout(tick, 1800);
+        } else {
+          timeoutId = setTimeout(tick, 55);
+        }
+      } else {
+        charIdx--;
+        setTypedPlaceholder(word.slice(0, charIdx));
+        if (charIdx === 0) {
+          deleting = false;
+          idx = (idx + 1) % PLACEHOLDERS.length;
+          timeoutId = setTimeout(tick, 400);
+        } else {
+          timeoutId = setTimeout(tick, 30);
+        }
+      }
+    }
+
+    timeoutId = setTimeout(tick, 600);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  // Phase sequencing: idle → fading → shifted
+  useEffect(() => {
+    if (phaseRef.current) clearTimeout(phaseRef.current);
+    if (query.length > 0) {
+      setPhase("fading");
+      phaseRef.current = setTimeout(() => setPhase("shifted"), 400);
+    } else {
+      setPhase("idle");
+    }
+    return () => { if (phaseRef.current) clearTimeout(phaseRef.current); };
+  }, [query.length > 0]);  // only re-run when empty↔non-empty changes
 
   // Debounced search
   useEffect(() => {
@@ -114,79 +205,90 @@ export default function DashboardPage() {
         setHasSearched(false);
         return;
       }
+      const searchStart = Date.now();
       setSearching(true);
       fetch(`/api/deals/search?q=${encodeURIComponent(query.trim())}`)
         .then(r => r.json())
         .then(data => {
-          setDeals(Array.isArray(data) ? data : []);
-          setHasSearched(true);
-          setSearching(false);
+          const elapsed = Date.now() - searchStart;
+          const minVisible = 1400;
+          const delay = Math.max(0, minVisible - elapsed);
+          setTimeout(() => {
+            setDeals(Array.isArray(data) ? data : []);
+            setHasSearched(true);
+            setSearching(false);
+          }, delay);
         })
         .catch(() => setSearching(false));
-    }, 400);
+    }, 900);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, token]);
 
+  const isFading = phase === "fading";
+  const isShifted = phase === "shifted";
   const hasResults = hasSearched && deals.length > 0;
   const isEmpty = hasSearched && deals.length === 0 && !searching;
 
   return (
     <>
       <Nav />
-      <main className={[styles.main, hasResults ? styles.mainShifted : ""].join(" ")}>
+      <main className={`${styles.main} pageEnter`}>
 
         {/* Search hero */}
-        <div className={[styles.hero, hasResults ? styles.heroTop : ""].join(" ")}>
-          {!hasResults && (
-            <>
+        <div className={[styles.hero, isShifted ? styles.heroShifted : ""].join(" ")}>
+          <div className={styles.heroInner}>
+            <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
               <h1 className={styles.heading}>Daily Drops</h1>
-              <p className={styles.subheading}>Describe what you&apos;re looking for</p>
-            </>
-          )}
-          <div className={styles.searchWrap}>
-            <svg className={styles.searchIcon} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input
-              ref={inputRef}
-              className={styles.searchInput}
-              type="text"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder={`Try: ${PLACEHOLDERS[placeholderIdx]}`}
-              autoFocus
-            />
-            {query && (
-              <button className={styles.clearSearch} onClick={() => setQuery("")}>✕</button>
-            )}
+              <p className={styles.subheading}>Every deal the internet has right now — just tell us what you need.</p>
+            </div>
+            <div className={styles.searchWrap}>
+              <svg className={styles.searchIcon} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input
+                ref={inputRef}
+                className={styles.searchInput}
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={typedPlaceholder}
+                autoFocus
+              />
+              {query && (
+                <button className={styles.clearSearch} onClick={() => setQuery("")}>✕</button>
+              )}
+            </div>
+            <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
+              <div className={styles.suggestions}>
+                {SUGGESTIONS.map(s => (
+                  <button key={s} className={styles.suggestionPill} onClick={() => setQuery(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <CarouselStrip feed={feed} />
+            </div>
+            {searching && <p className={styles.searching}>Finding deals…</p>}
+
+            {/* Fixed results panel — always in flow, slides in when active */}
+            <div className={[styles.resultsPanel, isShifted ? styles.resultsPanelOpen : ""].join(" ")}>
+              {isEmpty && (
+                <div className={styles.empty}>Nothing matched — try describing what you need differently.</div>
+              )}
+              {hasResults && (
+                <>
+                  <div className={styles.resultsHeader}>
+                    <span className={styles.resultsCount}>{deals.length} deals found</span>
+                    <Link href="/catalog" className={styles.catalogInline}>Browse all →</Link>
+                  </div>
+                  <div className={styles.resultsScroll}>
+                    <div className={styles.grid}>
+                      {deals.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-          {searching && <p className={styles.searching}>Finding deals…</p>}
         </div>
-
-        {/* Results */}
-        {hasResults && (
-          <div className={styles.results}>
-            <div className={styles.resultsHeader}>
-              <span className={styles.resultsCount}>{deals.length} deals found</span>
-            </div>
-            <div className={styles.grid}>
-              {deals.map(deal => <DealCard key={deal.id} deal={deal} />)}
-            </div>
-            <div className={styles.catalogLink}>
-              <Link href="/catalog">Browse all deals →</Link>
-            </div>
-          </div>
-        )}
-
-        {isEmpty && (
-          <div className={styles.empty}>
-            Nothing matched — try describing what you need differently.
-          </div>
-        )}
-
-        {!hasSearched && !searching && (
-          <div className={styles.catalogLink}>
-            <Link href="/catalog">Browse all deals →</Link>
-          </div>
-        )}
       </main>
     </>
   );

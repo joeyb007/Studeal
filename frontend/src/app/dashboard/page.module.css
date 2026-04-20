@@ -1,32 +1,61 @@
 .main {
-  max-width: 780px;
+  max-width: 680px;
   margin: 0 auto;
   padding: 0 24px 80px;
   position: relative;
   z-index: 1;
-  transition: max-width 0.4s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: calc(100vh - 60px);
 }
 
 .mainShifted {
   max-width: 1100px;
 }
 
-/* Hero — centered by default, shifts to top when results appear */
+/* Hero — centered via padding when idle, snaps to top when shifted */
 .hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-  text-align: center;
-  transition: all 0.4s ease;
-  padding-top: 0;
+  width: 100%;
+  padding-top: calc(50vh - 260px);
+  transition: padding-top 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.heroTop {
-  min-height: unset;
-  padding-top: 48px;
-  padding-bottom: 32px;
+.heroShifted {
+  padding-top: 72px;
+}
+
+/* heroInner / heroInnerActive no longer needed — kept for safety */
+.heroInner {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.heroInnerActive {}
+
+.idleContent {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 1;
+  max-height: 600px;
+  transition: opacity 0.35s ease, max-height 0.5s ease 0.15s;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.idleContentHidden {
+  opacity: 0;
+  max-height: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, max-height 0.4s ease 0.3s;
 }
 
 .heading {
@@ -50,6 +79,12 @@
   position: relative;
   width: 100%;
   max-width: 600px;
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.searchWrap:focus-within {
+  transform: translateY(-3px);
+  filter: drop-shadow(0 8px 24px rgba(26, 47, 94, 0.12));
 }
 
 .searchIcon {
@@ -78,7 +113,7 @@
 .searchInput:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 4px 28px rgba(26, 47, 94, 0.14);
+  box-shadow: 0 8px 40px rgba(26, 47, 94, 0.16);
 }
 
 .searchInput::placeholder {
@@ -100,56 +135,214 @@
   line-height: 1;
 }
 
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+  max-width: 600px;
+}
+
+.suggestionPill {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(26, 47, 94, 0.12);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.suggestionPill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.85);
+}
+
 .searching {
   font-size: 13px;
   color: var(--text-secondary);
   margin-top: 12px;
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: searchFadeIn 0.6s ease both, pulse 2s ease-in-out 0.6s infinite;
+}
+
+@keyframes searchFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0.35; }
 }
 
-/* Results */
-.results {
-  animation: fadeUp 0.35s ease;
+/* Results panel — fixed height box, slides in below search bar */
+.resultsPanel {
+  width: 100%;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  margin-top: 0;
+  transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.1s,
+              opacity 0.35s ease 0.15s,
+              margin-top 0.5s ease 0.1s;
 }
 
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+.resultsPanelOpen {
+  max-height: 520px;
+  opacity: 1;
+  margin-top: 16px;
 }
 
 .resultsHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+  padding: 0 2px;
 }
 
 .resultsCount {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
+.catalogInline {
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  text-decoration: none;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.catalogInline:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.resultsScroll {
+  height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.resultsScroll::-webkit-scrollbar { width: 4px; }
+.resultsScroll::-webkit-scrollbar-track { background: transparent; }
+.resultsScroll::-webkit-scrollbar-thumb { background: rgba(26, 47, 94, 0.15); border-radius: 2px; }
+
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
 }
 
 .empty {
   font-size: 14px;
   color: var(--text-secondary);
-  padding: 48px 0;
+  padding: 40px 0;
   text-align: center;
+  animation: searchFadeIn 0.6s ease both;
+}
+
+/* Carousel */
+.carousel {
+  width: 100%;
+  max-width: 600px;
+  margin-top: 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(26, 47, 94, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  padding: 14px 0 16px;
+  box-shadow: 0 2px 16px rgba(26, 47, 94, 0.05);
+}
+
+.carouselLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  padding: 0 16px 10px;
+}
+
+.carouselViewport {
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%);
+}
+
+.carouselTrack {
+  display: flex;
+  gap: 10px;
+  width: max-content;
+  padding: 0 16px;
+  animation: marquee 40s linear infinite;
+}
+
+.carouselTrack:hover {
+  animation-play-state: paused;
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.miniCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(26, 47, 94, 0.1);
+  background: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 0.15s, transform 0.15s;
+  flex-shrink: 0;
+}
+
+.miniCard:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.miniDiscount {
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  background: #dc2626;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.miniTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.miniPrice {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
 }
 
 .catalogLink {
   text-align: center;
-  margin-top: 32px;
+  margin-top: 14px;
   font-size: 13px;
 }
 
@@ -166,7 +359,13 @@
 }
 
 /* Deal card */
+@keyframes cardEnter {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .card {
+  animation: cardEnter 0.35s ease both;
   display: flex;
   flex-direction: column;
   background: rgba(255, 255, 255, 0.6);

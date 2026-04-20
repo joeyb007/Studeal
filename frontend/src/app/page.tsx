@@ -120,7 +120,7 @@ export default function Home() {
 
   return (
     <>
-    <main className={styles.main}>
+    <main className={`${styles.main} pageEnter`}>
         <nav className={[styles.nav, styles.enterDone].join(" ")}
           style={{ animationDelay: "0ms" }}>
           <div className={styles.wordmark}>

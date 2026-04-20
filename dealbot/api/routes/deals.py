@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel
 from sqlalchemy import select, text
 
+from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Deal
+from dealbot.db.models import Deal, User
 from dealbot.llm.embeddings import embed_text
 
 router = APIRouter(prefix="/deals", tags=["deals"])
@@ -62,6 +63,7 @@ async def list_deals(
     tier: Optional[str] = Query(None, description="Filter by alert tier: push, digest, none"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    _: User = Depends(get_current_user),
 ) -> list[DealResponse]:
     async with get_async_session() as session:
         stmt = (
@@ -82,6 +84,7 @@ async def list_deals(
 async def search_deals(
     q: str = Query(..., min_length=1),
     limit: int = Query(20, ge=1, le=100),
+    _: User = Depends(get_current_user),
 ) -> list[DealResponse]:
     embedding = await embed_text(q)
 
@@ -112,7 +115,7 @@ async def search_deals(
 
 
 @router.get("/{deal_id}", response_model=DealResponse)
-async def get_deal(deal_id: int) -> DealResponse:
+async def get_deal(deal_id: int, _: User = Depends(get_current_user)) -> DealResponse:
     async with get_async_session() as session:
         deal = await session.get(Deal, deal_id)
     if deal is None:

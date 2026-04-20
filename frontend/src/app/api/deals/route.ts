@@ -1,13 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 
 const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8000";
 
 export async function GET(req: NextRequest) {
+  const session = await auth();
+  if (!session?.accessToken) {
+    return NextResponse.redirect(new URL("/", req.url));
+  }
+
   const { searchParams } = new URL(req.url);
   const upstream = `${API_BASE}/deals?${searchParams.toString()}`;
 
   try {
-    const res = await fetch(upstream, { cache: "no-store" });
+    const res = await fetch(upstream, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+    });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch {

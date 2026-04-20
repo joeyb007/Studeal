@@ -3,10 +3,10 @@ import { auth } from "@/auth";
 
 const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8000";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.accessToken) {
-    return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
+    return NextResponse.redirect(new URL("/", req.url));
   }
 
   try {
@@ -24,7 +24,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.accessToken) {
-    return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
+    return NextResponse.redirect(new URL("/", req.url));
   }
 
   const body = await req.json();

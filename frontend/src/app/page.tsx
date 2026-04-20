@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import AgentWorkflow from "@/components/AgentWorkflow";
 import PipelineVisualizer from "@/components/PipelineVisualizer";
 import AuthModal from "@/components/AuthModal";
+import { useAuth } from "@/lib/auth";
 import styles from "./page.module.css";
 
 interface Deal {
@@ -77,6 +78,7 @@ function useTypingPlaceholder(active: boolean): string {
 const ENTER_DURATION = 800; // ms for entrance to complete before workflow starts
 
 export default function Home() {
+  const { isLoggedIn } = useAuth();
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [activeStage, setActiveStage] = useState(-1);
@@ -104,6 +106,14 @@ export default function Home() {
     });
 
     setTimeout(async () => {
+      setActiveStage(4);
+      setPhase("done");
+
+      if (!isLoggedIn) {
+        setAuthModal({ open: true, tab: "signup" });
+        return;
+      }
+
       try {
         const res = await fetch(`/api/deals?limit=6`);
         if (res.ok) {
@@ -112,9 +122,6 @@ export default function Home() {
         }
       } catch {
         // Show empty state gracefully
-      } finally {
-        setActiveStage(4);
-        setPhase("done");
       }
     }, 5500);
   };

@@ -22,9 +22,9 @@ EMBED_DIM = 768
 
 
 def upgrade() -> None:
-    # Enable pgvector extension (idempotent)
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    op.add_column("deals", sa.Column("embedding", Vector(EMBED_DIM), nullable=True))
+    # pgvector extension is a DB-level prerequisite — install it before running migrations:
+    #   docker exec <postgres-container> psql -U postgres -d dealbot -c "CREATE EXTENSION IF NOT EXISTS vector;"
+    op.execute(sa.text(f"ALTER TABLE deals ADD COLUMN IF NOT EXISTS embedding vector({EMBED_DIM})"))
 
 
 def downgrade() -> None:

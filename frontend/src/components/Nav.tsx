@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAuth } from "@/lib/auth";
+import { signOut } from "next-auth/react";
 import styles from "./Nav.module.css";
 
 export default function Nav() {
-  const { logout } = useAuth();
   const pathname = usePathname();
 
   return (
@@ -22,7 +21,7 @@ export default function Nav() {
         <Link href="/watchlists" className={[styles.link, pathname === "/watchlists" ? styles.active : ""].join(" ")}>
           Watchlists
         </Link>
-        <button className={styles.logoutBtn} onClick={logout}>Log out</button>
+        <button className={styles.logoutBtn} onClick={() => signOut({ callbackUrl: "/" })}>Log out</button>
       </div>
     </nav>
   );

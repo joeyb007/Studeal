@@ -48,6 +48,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
     hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
     is_pro: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    google_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     secondhand_searches_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

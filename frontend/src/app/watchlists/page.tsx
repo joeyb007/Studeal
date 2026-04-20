@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAuth } from "@/lib/auth";
+import { useSession } from "next-auth/react";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
@@ -33,7 +33,8 @@ function WatchlistCard({ watchlist }: { watchlist: Watchlist }) {
 }
 
 export default function WatchlistsPage() {
-  const { token } = useAuth();
+  const { data: session } = useSession();
+  const token = session?.accessToken;
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);

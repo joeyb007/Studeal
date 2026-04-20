@@ -23,10 +23,7 @@ EMBED_DIM = 768
 
 def upgrade() -> None:
     # vector extension already enabled by 0004
-    op.add_column(
-        "watchlist_keywords",
-        sa.Column("embedding", Vector(EMBED_DIM), nullable=True),
-    )
+    op.execute(sa.text(f"ALTER TABLE watchlist_keywords ADD COLUMN IF NOT EXISTS embedding vector({EMBED_DIM})"))
 
 
 def downgrade() -> None:

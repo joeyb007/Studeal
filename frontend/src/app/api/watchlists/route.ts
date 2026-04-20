@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 
 const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8000";
 
-export async function GET(req: NextRequest) {
-  const token = req.headers.get("authorization") ?? "";
+export async function GET() {
+  const session = await auth();
+  if (!session?.accessToken) {
+    return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const res = await fetch(`${API_BASE}/watchlists`, {
-      headers: { Authorization: token },
+      headers: { Authorization: `Bearer ${session.accessToken}` },
       cache: "no-store",
     });
     const data = await res.json();
@@ -17,14 +22,18 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const token = req.headers.get("authorization") ?? "";
+  const session = await auth();
+  if (!session?.accessToken) {
+    return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   try {
     const res = await fetch(`${API_BASE}/watchlists`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: token,
+        Authorization: `Bearer ${session.accessToken}`,
       },
       body: JSON.stringify(body),
     });

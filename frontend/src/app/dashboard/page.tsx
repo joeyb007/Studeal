@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAuth } from "@/lib/auth";
+import { useSession } from "next-auth/react";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
@@ -75,7 +75,8 @@ function DealCard({ deal }: { deal: Deal }) {
 }
 
 export default function DashboardPage() {
-  const { token } = useAuth();
+  const { data: session } = useSession();
+  const token = session?.accessToken;
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [tier, setTier] = useState<string>("all");

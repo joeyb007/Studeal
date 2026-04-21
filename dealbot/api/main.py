@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from dealbot.api.routes.alerts import router as alerts_router
 from dealbot.api.routes.auth import router as auth_router
 from dealbot.api.routes.deals import router as deals_router
 from dealbot.api.routes.watchlists import router as watchlists_router
@@ -12,7 +11,6 @@ app = FastAPI(title="DealBot API", version="0.1.0")
 app.include_router(auth_router)
 app.include_router(deals_router)
 app.include_router(watchlists_router)
-app.include_router(alerts_router)
 
 
 @app.get("/health")

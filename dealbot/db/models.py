@@ -32,13 +32,16 @@ class Deal(Base):
     condition: Mapped[str] = mapped_column(String(8), nullable=False, default="unknown")
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     hunt_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
     scraped_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
-
-    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="deal")
 
 
 class User(Base):
@@ -59,7 +62,6 @@ class User(Base):
     )
 
     watchlists: Mapped[list[Watchlist]] = relationship("Watchlist", back_populates="user")
-    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="user")
 
 
 class Watchlist(Base):
@@ -76,7 +78,6 @@ class Watchlist(Base):
     keywords: Mapped[list[WatchlistKeyword]] = relationship(
         "WatchlistKeyword", back_populates="watchlist", cascade="all, delete-orphan"
     )
-    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="watchlist")
 
 
 class WatchlistKeyword(Base):
@@ -92,22 +93,3 @@ class WatchlistKeyword(Base):
     watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="keywords")
 
 
-class Alert(Base):
-    __tablename__ = "alerts"
-    __table_args__ = (UniqueConstraint("user_id", "deal_id", name="uq_alerts_user_deal"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), nullable=False)
-    watchlist_id: Mapped[int] = mapped_column(
-        ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-    )
-
-    user: Mapped[User] = relationship("User", back_populates="alerts")
-    deal: Mapped[Deal] = relationship("Deal", back_populates="alerts")
-    watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="alerts")

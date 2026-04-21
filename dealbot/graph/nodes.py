@@ -21,7 +21,6 @@ from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.search.brave import BraveSearchClient
 from dealbot.search.client import FetchedPage, SearchResult
-from dealbot.worker.matching import run_matching
 
 _BRAVE_N = int(os.environ.get("BRAVE_SEARCH_N", "10"))
 _FETCH_TIMEOUT = 10  # seconds per page
@@ -217,6 +216,7 @@ async def persist_node(state: PipelineState) -> PipelineState:
     deal = score_result.deal
     embedding = state.get("embedding") or None
 
+    now = datetime.now(timezone.utc)
     values = dict(
         title=deal.title,
         source=deal.source,
@@ -234,7 +234,8 @@ async def persist_node(state: PipelineState) -> PipelineState:
         condition=score_result.condition.value,
         embedding=embedding,
         hunt_date=date.today(),
-        scraped_at=datetime.now(timezone.utc),
+        first_seen_at=now,  # only written on INSERT; excluded from DO UPDATE
+        scraped_at=now,
     )
 
     async with get_async_session() as session:
@@ -254,14 +255,13 @@ async def persist_node(state: PipelineState) -> PipelineState:
                     "condition": values["condition"],
                     "embedding": values["embedding"],
                     "scraped_at": values["scraped_at"],
+                    # first_seen_at intentionally omitted — never overwritten on re-scrape
                 },
             )
             .returning(Deal.id)
         )
         result = await session.execute(stmt)
         deal_id = result.scalar_one()
-        deal_row = await session.get(Deal, deal_id)
-        await run_matching(deal_row, session)
         await session.commit()
         logger.info("persist_node: upserted deal '%s' id=%d score=%d", deal.title, deal_id, score_result.score)
     return state

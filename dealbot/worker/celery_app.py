@@ -20,7 +20,7 @@ app = Celery(
         "dealbot.worker.tasks",
         "dealbot.worker.digest",
         "dealbot.worker.seed",
-        "dealbot.worker.celery_app",  # cleanup task defined below
+        "dealbot.worker.celery_app",
     ],
 )
 

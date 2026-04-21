@@ -9,7 +9,7 @@ import httpx
 from sqlalchemy import select, text
 
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Deal, User, Watchlist
+from dealbot.db.models import Deal, User
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -58,10 +58,8 @@ async def _matched_deals_for_user(session, user: User, since: datetime) -> list[
     Use pgvector <=> (cosine distance) to find fresh deals matching any of
     this user's watchlist keywords. All vector math runs in Postgres.
     """
-    tier_filter = "" if user.is_pro else "AND d.alert_tier != 'none'"
-
     result = await session.execute(
-        text(f"""
+        text("""
             SELECT DISTINCT ON (d.id)
                 d.*,
                 w.name AS watchlist_name,
@@ -74,7 +72,6 @@ async def _matched_deals_for_user(session, user: User, since: datetime) -> list[
               AND d.embedding IS NOT NULL
               AND wk.embedding IS NOT NULL
               AND (d.embedding <=> wk.embedding) <= :threshold
-              {tier_filter}
             ORDER BY d.id, d.score DESC
         """),
         {

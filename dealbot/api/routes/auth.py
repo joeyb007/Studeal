@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi import Depends
 from pydantic import BaseModel, EmailStr
@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from dealbot.api.auth import create_access_token, hash_password, verify_password
+from dealbot.api.limiter import limiter
 from dealbot.db.database import get_async_session
 from dealbot.db.models import User
 
@@ -32,7 +33,8 @@ class GoogleCallbackRequest(BaseModel):
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest) -> dict[str, str]:
+@limiter.limit("5/minute")
+async def register(request: Request, body: RegisterRequest) -> dict[str, str]:
     async with get_async_session() as session:
         try:
             user = User(email=body.email, hashed_password=hash_password(body.password))
@@ -45,7 +47,8 @@ async def register(body: RegisterRequest) -> dict[str, str]:
 
 
 @router.post("/token", response_model=TokenResponse)
-async def login(form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
+@limiter.limit("10/minute")
+async def login(request: Request, form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
     async with get_async_session() as session:
         result = await session.execute(select(User).where(User.email == form.username))
         user = result.scalar_one_or_none()
@@ -72,7 +75,8 @@ async def login(form: OAuth2PasswordRequestForm = Depends()) -> TokenResponse:
 
 
 @router.post("/google", response_model=TokenResponse)
-async def google_callback(body: GoogleCallbackRequest) -> TokenResponse:
+@limiter.limit("10/minute")
+async def google_callback(request: Request, body: GoogleCallbackRequest) -> TokenResponse:
     async with get_async_session() as session:
         # Find existing user by google_id or email
         result = await session.execute(

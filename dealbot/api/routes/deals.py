@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel
 from sqlalchemy import select, text
 
 from dealbot.api.auth import get_current_user
+from dealbot.api.limiter import limiter
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal, User
 from dealbot.llm.embeddings import embed_text
@@ -79,7 +80,9 @@ async def list_deals(
 
 
 @router.get("/search", response_model=list[DealResponse])
+@limiter.limit("30/minute")
 async def search_deals(
+    request: Request,
     q: str = Query(..., min_length=1),
     limit: int = Query(20, ge=1, le=100),
     _: User = Depends(get_current_user),

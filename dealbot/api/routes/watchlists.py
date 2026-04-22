@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from dealbot.agents.keyword_extractor import extract_keywords
 from dealbot.api.auth import get_current_user
@@ -20,6 +20,7 @@ from dealbot.llm.vllm import vLLMClient
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 WATCHLIST_TTL_DAYS = 60  # inactive watchlists expire after 60 days
+WATCHLIST_CAP = 3  # max active watchlists per user
 
 
 def _get_llm() -> LLMClient:
@@ -59,6 +60,19 @@ async def create_watchlist(
     current_user: User = Depends(get_current_user),
 ) -> WatchlistResponse:
     async with get_async_session() as session:
+        now = datetime.now(timezone.utc)
+        count_result = await session.execute(
+            select(func.count(Watchlist.id)).where(
+                Watchlist.user_id == current_user.id,
+                (Watchlist.expires_at == None) | (Watchlist.expires_at > now),  # noqa: E711
+            )
+        )
+        if count_result.scalar_one() >= WATCHLIST_CAP:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You can have up to {WATCHLIST_CAP} active watchlists. Delete one to create a new one.",
+            )
+
         if body.description and not body.keywords:
             keywords = await extract_keywords(body.description, _get_llm())
         else:

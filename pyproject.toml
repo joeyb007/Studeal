@@ -26,6 +26,7 @@ dependencies = [
     "pgvector>=0.3",
     "ollama>=0.2",
     "beautifulsoup4>=4.12",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]

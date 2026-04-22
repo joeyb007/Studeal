@@ -41,11 +41,11 @@ app.conf.update(
             "task": "dealbot.worker.tasks.hunt_deals",
             "schedule": crontab(hour=7, minute=0),
         },
-        # 08:00 UTC — send digest after hunting is complete
-        "send-daily-digest": {
-            "task": "dealbot.worker.digest.send_daily_digest",
-            "schedule": crontab(hour=8, minute=0),
-        },
+        # Digest disabled for v1 — re-engagement handled via watchlist page
+        # "send-daily-digest": {
+        #     "task": "dealbot.worker.digest.send_daily_digest",
+        #     "schedule": crontab(hour=8, minute=0),
+        # },
         # 05:00 UTC — clean up deals older than 3 days before the new seed run
         "cleanup-old-deals": {
             "task": "dealbot.worker.celery_app.cleanup_old_deals",

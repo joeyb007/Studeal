@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
@@ -35,6 +36,8 @@ function WatchlistCard({ watchlist }: { watchlist: Watchlist }) {
 export default function WatchlistsPage() {
   const { data: session } = useSession();
   const token = session?.accessToken;
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -44,6 +47,14 @@ export default function WatchlistsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [atCap, setAtCap] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
+  const [modal, setModal] = useState<{ type: "cancelled" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("checkout_cancelled") === "1") {
+      setModal({ type: "cancelled", message: "No worries — you can upgrade anytime." });
+      router.replace("/watchlists", { scroll: false });
+    }
+  }, []);
 
   const fetchWatchlists = () => {
     fetch("/api/watchlists", {
@@ -91,10 +102,16 @@ export default function WatchlistsPage() {
 
   async function handleUpgrade() {
     setUpgrading(true);
-    const res = await fetch("/api/billing/checkout", { method: "POST" });
-    if (res.ok) {
-      const { url } = await res.json();
-      window.location.href = url;
+    try {
+      const res = await fetch("/api/billing/checkout", { method: "POST" });
+      if (res.ok) {
+        const { url } = await res.json();
+        window.location.href = url;
+      } else {
+        setModal({ type: "error", message: "Couldn't start checkout. Please try again." });
+      }
+    } catch {
+      setModal({ type: "error", message: "Network error. Check your connection and try again." });
     }
     setUpgrading(false);
   }
@@ -102,6 +119,21 @@ export default function WatchlistsPage() {
   return (
     <>
       <Nav />
+
+      {modal && (
+        <div className={styles.modalOverlay} onClick={() => setModal(null)}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <div className={modal.type === "error" ? styles.modalIconError : styles.modalIconCancelled}>
+              {modal.type === "error" ? "✕" : "→"}
+            </div>
+            <p className={styles.modalTitle}>
+              {modal.type === "error" ? "Something went wrong" : "Checkout cancelled"}
+            </p>
+            <p className={styles.modalMessage}>{modal.message}</p>
+            <button className={styles.modalBtn} onClick={() => setModal(null)}>Got it</button>
+          </div>
+        </div>
+      )}
       <main className={styles.main}>
         <div className={styles.header}>
           <h1 className={styles.heading}>Watchlists</h1>

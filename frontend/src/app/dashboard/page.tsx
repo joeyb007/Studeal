@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
@@ -134,6 +135,16 @@ function DealCard({ deal, index }: { deal: Deal; index: number }) {
 export default function DashboardPage() {
   const { data: session } = useSession();
   const token = session?.accessToken;
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [upgraded, setUpgraded] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("upgraded") === "1") {
+      setUpgraded(true);
+      router.replace("/dashboard", { scroll: false });
+    }
+  }, []);
   const [query, setQuery] = useState("");
   const [deals, setDeals] = useState<Deal[]>([]);
   const [searching, setSearching] = useState(false);
@@ -253,6 +264,13 @@ export default function DashboardPage() {
     <>
       <Nav />
       <main className={`${styles.main} pageEnter`}>
+
+        {upgraded && (
+          <div className={styles.upgradedBanner}>
+            <span>You&apos;re now a Pro member — enjoy unlimited watchlists and email digests.</span>
+            <button onClick={() => setUpgraded(false)} className={styles.upgradedDismiss}>✕</button>
+          </div>
+        )}
 
         {/* Search hero */}
         <div className={[styles.hero, isShifted ? styles.heroShifted : ""].join(" ")}>

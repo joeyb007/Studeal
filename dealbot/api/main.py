@@ -8,6 +8,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from dealbot.api.limiter import limiter
 from dealbot.api.routes.auth import router as auth_router
+from dealbot.api.routes.billing import router as billing_router
 from dealbot.api.routes.deals import router as deals_router
 from dealbot.api.routes.watchlists import router as watchlists_router
 
@@ -18,6 +19,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(auth_router)
+app.include_router(billing_router)
 app.include_router(deals_router)
 app.include_router(watchlists_router)
 

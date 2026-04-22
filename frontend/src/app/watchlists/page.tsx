@@ -42,6 +42,8 @@ export default function WatchlistsPage() {
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [atCap, setAtCap] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
 
   const fetchWatchlists = () => {
     fetch("/api/watchlists", {
@@ -76,13 +78,25 @@ export default function WatchlistsPage() {
     const data = await res.json();
     setSubmitting(false);
     if (!res.ok) {
+      if (res.status === 403) setAtCap(true);
       setFormError(data.detail ?? "Failed to create watchlist");
       return;
     }
+    setAtCap(false);
     setWatchlists(prev => [...prev, data]);
     setName("");
     setDescription("");
     setShowForm(false);
+  }
+
+  async function handleUpgrade() {
+    setUpgrading(true);
+    const res = await fetch("/api/billing/checkout", { method: "POST" });
+    if (res.ok) {
+      const { url } = await res.json();
+      window.location.href = url;
+    }
+    setUpgrading(false);
   }
 
   return (
@@ -95,6 +109,15 @@ export default function WatchlistsPage() {
             {showForm ? "Cancel" : "+ New watchlist"}
           </button>
         </div>
+
+        {atCap && (
+          <div className={styles.upgradeBanner}>
+            <p>You&apos;ve hit your watchlist limit. Upgrade to Pro for up to 5 watchlists, email digests, and more.</p>
+            <button className={styles.upgradeBtn} onClick={handleUpgrade} disabled={upgrading}>
+              {upgrading ? "Redirecting..." : "Upgrade to Pro — $7.99/mo"}
+            </button>
+          </div>
+        )}
 
         {showForm && (
           <form className={styles.form} onSubmit={handleCreate}>

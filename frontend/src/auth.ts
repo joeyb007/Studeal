@@ -98,6 +98,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       session.accessToken = token.accessToken as string;
+
+      // Fetch is_pro from backend on each session refresh
+      if (token.accessToken) {
+        try {
+          const res = await fetch(`${API_BASE}/auth/me`, {
+            headers: { Authorization: `Bearer ${token.accessToken}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            token.isPro = data.is_pro ?? false;
+          }
+        } catch {
+          token.isPro = false;
+        }
+      }
+
+      session.isPro = (token.isPro as boolean) ?? false;
       return session;
     },
   },

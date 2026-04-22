@@ -74,6 +74,11 @@ async def login(request: Request, form: OAuth2PasswordRequestForm = Depends()) -
     return TokenResponse(access_token=create_access_token(user.id), user_id=user.id)
 
 
+@router.get("/me")
+async def me(current_user: User = Depends(get_current_user)) -> dict:
+    return {"id": current_user.id, "email": current_user.email, "is_pro": current_user.is_pro}
+
+
 @router.post("/google", response_model=TokenResponse)
 @limiter.limit("10/minute")
 async def google_callback(request: Request, body: GoogleCallbackRequest) -> TokenResponse:

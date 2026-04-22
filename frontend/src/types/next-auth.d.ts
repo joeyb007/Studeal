@@ -6,6 +6,7 @@ declare module "next-auth" {
       id: string;
     } & DefaultSession["user"];
     accessToken: string;
+    isPro: boolean;
   }
 }
 
@@ -13,5 +14,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     accessToken: string;
+    isPro: boolean;
   }
 }

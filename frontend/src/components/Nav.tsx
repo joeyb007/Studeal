@@ -2,11 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import styles from "./Nav.module.css";
 
 export default function Nav() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const isPro = session?.isPro ?? false;
+
+  async function handleManageBilling() {
+    const res = await fetch("/api/billing/portal", { method: "POST" });
+    if (res.ok) {
+      const { url } = await res.json();
+      window.location.href = url;
+    }
+  }
 
   return (
     <nav className={styles.nav}>
@@ -21,6 +31,9 @@ export default function Nav() {
         <Link href="/watchlists" className={[styles.link, pathname === "/watchlists" ? styles.active : ""].join(" ")}>
           Watchlists
         </Link>
+        {isPro && (
+          <button className={styles.link} onClick={handleManageBilling}>Manage plan</button>
+        )}
         <button className={styles.logoutBtn} onClick={() => signOut({ callbackUrl: "/" })}>Log out</button>
       </div>
     </nav>

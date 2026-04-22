@@ -189,3 +189,39 @@
   color: var(--text-secondary);
   border: 1px solid rgba(26, 47, 94, 0.1);
 }
+
+.upgradeBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(26, 47, 94, 0.05);
+  border: 1px solid rgba(26, 47, 94, 0.12);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+
+.upgradeBanner p {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.upgradeBtn {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.upgradeBtn:disabled { opacity: 0.6; cursor: default; }
+.upgradeBtn:not(:disabled):hover { opacity: 0.85; }

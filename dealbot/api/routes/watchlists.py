@@ -20,7 +20,8 @@ from dealbot.llm.vllm import vLLMClient
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
 WATCHLIST_TTL_DAYS = 60  # inactive watchlists expire after 60 days
-WATCHLIST_CAP = 3  # max active watchlists per user
+FREE_WATCHLIST_CAP = 1
+PRO_WATCHLIST_CAP = 5
 
 
 def _get_llm() -> LLMClient:
@@ -67,11 +68,14 @@ async def create_watchlist(
                 (Watchlist.expires_at == None) | (Watchlist.expires_at > now),  # noqa: E711
             )
         )
-        if count_result.scalar_one() >= WATCHLIST_CAP:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"You can have up to {WATCHLIST_CAP} active watchlists. Delete one to create a new one.",
+        cap = PRO_WATCHLIST_CAP if current_user.is_pro else FREE_WATCHLIST_CAP
+        if count_result.scalar_one() >= cap:
+            detail = (
+                f"Pro members can have up to {PRO_WATCHLIST_CAP} active watchlists. Delete one to create a new one."
+                if current_user.is_pro
+                else f"Free accounts are limited to {FREE_WATCHLIST_CAP} watchlist. Upgrade to pro for up to {PRO_WATCHLIST_CAP}."
             )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
         if body.description and not body.keywords:
             keywords = await extract_keywords(body.description, _get_llm())

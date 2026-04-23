@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from dealbot.api.auth import create_access_token, hash_password, verify_password
+from dealbot.api.auth import create_access_token, get_current_user, hash_password, verify_password
 from dealbot.api.limiter import limiter
 from dealbot.db.database import get_async_session
 from dealbot.db.models import User

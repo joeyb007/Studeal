@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from dealbot.agents.extractor import ExtractorAgent
+from dealbot.agents.orchestrator import OrchestratorAgent
 from dealbot.agents.query_gen import QueryGenAgent
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
@@ -155,6 +156,16 @@ async def extract_node(state: PipelineState, llm: LLMClient) -> PipelineState:
     )
     candidates = [r for r in results if r is not None]
     logger.info("extract_node: extracted %d candidates from %d pages", len(candidates), len(pages))
+    return {**state, "candidates": candidates}
+
+
+async def orchestrator_node(state: PipelineState, llm: LLMClient) -> PipelineState:
+    """Run the orchestrator: parallel BrowserAgent sessions → deduplicated candidates."""
+    keyword = state["keyword"]
+    logger.info("orchestrator_node: starting for keyword=%r", keyword)
+    agent = OrchestratorAgent(llm=llm)
+    candidates = await agent.run(keyword)
+    logger.info("orchestrator_node: %d candidates", len(candidates))
     return {**state, "candidates": candidates}
 
 

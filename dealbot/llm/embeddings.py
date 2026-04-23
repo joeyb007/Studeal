@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import ollama
 
@@ -19,7 +20,8 @@ async def embed_text(text: str) -> list[float]:
     if not text.strip():
         return []
     try:
-        client = ollama.AsyncClient()
+        host = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        client = ollama.AsyncClient(host=host)
         response = await client.embed(model=EMBED_MODEL, input=text)
         return list(response.embeddings[0])
     except Exception:

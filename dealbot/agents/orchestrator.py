@@ -139,10 +139,13 @@ class OrchestratorAgent:
     async def run(self, keyword: str) -> list[DealRaw]:
         self._candidates = []
 
+        # Phase 1: LLM orchestrator — search and collect candidates.
+        # Single shared BrowserSession for all search_shopping calls only.
+        # Resolution (Phase 2) uses independent per-call sessions so it runs
+        # outside this context and doesn't compete for the same browser.
         async with BrowserSession() as session:
             self._browser_session = session
 
-            # Phase 1: LLM orchestrator — search and collect candidates
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": f"Find deals for: {keyword}"},
@@ -171,12 +174,12 @@ class OrchestratorAgent:
                 if done:
                     break
 
-            # Phase 2: deterministic resolution — resolve all remaining organic URLs
-            # Runs after the LLM loop regardless of how it ended, so search breadth
-            # and URL resolution are fully decoupled.
-            await self._resolve_all_organic()
-
         self._browser_session = None
+
+        # Phase 2: resolve organic URLs — each find_url call opens its own fresh
+        # Browserbase session with a proxy, so Google sees each click as a new user.
+        await self._resolve_all_organic()
+
         logger.info("OrchestratorAgent: %d candidates for %r", len(self._candidates), keyword)
         return self._candidates
 
@@ -185,6 +188,10 @@ class OrchestratorAgent:
         Post-loop: resolve every candidate still holding a google.com placeholder URL.
         Each DealRaw carries its own raw_button_label and search_query so no lookup
         dict is needed — identity was attached at extraction time.
+
+        Deduplicates by (title, source) before resolving — multiple search queries
+        often surface the same product, and resolving duplicates wastes browser sessions
+        and burns Google's per-session throttle threshold.
         """
         unresolved = [
             d for d in self._candidates if "google.com/search" in d.url
@@ -192,15 +199,27 @@ class OrchestratorAgent:
         if not unresolved:
             return
 
-        logger.info("OrchestratorAgent: resolving %d organic URL(s)", len(unresolved))
-        page = self._browser_session.page
-
+        # Deduplicate by (title, source) — keep first occurrence, drop the rest.
+        seen: set[tuple[str, str]] = set()
+        unique_unresolved: list[DealRaw] = []
         for deal in unresolved:
+            key = (deal.title.lower().strip(), deal.source.lower().strip())
+            if key not in seen:
+                seen.add(key)
+                unique_unresolved.append(deal)
+
+        duplicates_dropped = len(unresolved) - len(unique_unresolved)
+        logger.info(
+            "OrchestratorAgent: resolving %d organic URL(s) (%d duplicates dropped)",
+            len(unique_unresolved), duplicates_dropped,
+        )
+
+        for deal in unique_unresolved:
             if not deal.raw_button_label or not deal.search_query:
                 logger.debug("_resolve_all_organic: missing identity for %r", deal.title[:40])
                 continue
 
-            url = await find_url(page, self._llm, deal.title, deal.source,
+            url = await find_url(self._llm, deal.title, deal.source,
                                  deal.raw_button_label, deal.search_query)
             if url:
                 deal.url = url

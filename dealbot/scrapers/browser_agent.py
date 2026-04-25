@@ -154,7 +154,6 @@ Rules:
 
 
 async def find_url(
-    page: Page,
     llm: LLMClient,
     title: str,
     merchant: str,
@@ -164,51 +163,83 @@ async def find_url(
     """
     Resolve the direct retailer URL for an organic listing.
 
+    Opens a fresh Browserbase session with proxies for each call so Google
+    sees each resolution attempt as a distinct user — prevents per-session
+    throttling that occurs when reusing a shared session across many clicks.
+
     Strategy (deterministic first, LLM fallback second):
-    1. Navigate back to the original search results page
+    1. Open fresh session + proxy, navigate to search results page
     2. Click the exact product button (label stored from search_shopping)
     3. Aria snapshot the detail panel
-    4. Parse all `link "for from {Merchant}"` entries — deterministic
+    4. Parse all merchant → URL pairs — deterministic
     5. Fuzzy-match the target merchant → return URL
     6. If no match: single LLM call to pick the best URL from the list
 
     Returns the URL string, or "" if not found.
     """
-    # Step 1: Navigate back to the search results page
-    shop_url = f"https://www.google.com/search?q={quote_plus(search_query)}&tbm=shop&gl=us&hl=en"
-    try:
-        await page.goto(shop_url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
-    except Exception as exc:
-        logger.warning("find_url: failed to navigate to search: %s", exc)
+    api_key = os.environ.get("BROWSERBASE_API_KEY", "")
+    project_id = os.environ.get("BROWSERBASE_PROJECT_ID", "")
+    if not api_key or not project_id:
+        logger.warning("find_url: BROWSERBASE credentials not set")
         return ""
 
-    # Step 2: Click the exact product button
-    btn = page.get_by_role("button", name=button_label)
-    count = await btn.count()
-    if count == 0:
-        btn = page.get_by_role("button", name=button_label[:60], exact=False)
-        count = await btn.count()
-    if count == 0:
-        logger.debug("find_url: button not found for %r", title[:40])
-        return ""
-
+    session_id = None
+    snap = ""
     try:
-        await btn.first.click(timeout=10_000)
-        await page.wait_for_timeout(2_500)
-    except Exception as exc:
-        logger.debug("find_url: click failed for %r: %s", title[:40], exc)
-        return ""
+        session_id, connect_url = await _create_session(api_key, project_id, proxies=True)
+        async with async_playwright() as pw:
+            browser = await pw.chromium.connect_over_cdp(connect_url)
+            ctx = browser.contexts[0]
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-    # Step 3: Aria snapshot of the detail panel
-    try:
-        snap = await page.locator("body").aria_snapshot()
+            # Step 1: Navigate to the search results page
+            shop_url = f"https://www.google.com/search?q={quote_plus(search_query)}&tbm=shop&gl=us&hl=en"
+            try:
+                await page.goto(shop_url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
+            except Exception as exc:
+                logger.warning("find_url: failed to navigate to search: %s", exc)
+                await browser.close()
+                return ""
+
+            # Step 2: Click the exact product button
+            btn = page.get_by_role("button", name=button_label)
+            count = await btn.count()
+            if count == 0:
+                btn = page.get_by_role("button", name=button_label[:60], exact=False)
+                count = await btn.count()
+            if count == 0:
+                logger.debug("find_url: button not found for %r", title[:40])
+                await browser.close()
+                return ""
+
+            try:
+                await btn.first.click(timeout=10_000)
+                await page.wait_for_timeout(2_500)
+            except Exception as exc:
+                logger.debug("find_url: click failed for %r: %s", title[:40], exc)
+                await browser.close()
+                return ""
+
+            # Step 3: Aria snapshot of the detail panel
+            try:
+                snap = await page.locator("body").aria_snapshot()
+            except Exception as exc:
+                logger.debug("find_url: snapshot failed after click: %s", exc)
+                await browser.close()
+                return ""
+
+            await browser.close()
     except Exception as exc:
-        logger.debug("find_url: snapshot failed after click: %s", exc)
+        logger.warning("find_url: session error for %r: %s", title[:40], exc)
+        return ""
+    finally:
+        if session_id:
+            await _terminate_session(api_key, session_id)
+
+    if not snap:
         return ""
 
     # Step 4: Parse merchant → URL pairs from the detail panel
-    # Diagnostic: log snapshot size and a fragment to distinguish "panel opened but
-    # unrecognised format" from "panel never opened (still on search results page)".
     panel_indicators = ("Current price", "Compare prices", "Visit site", "Buy now", "See offer")
     panel_opened = any(ind in snap for ind in panel_indicators)
     logger.debug(
@@ -216,8 +247,6 @@ async def find_url(
         len(snap), panel_opened, title[:40],
     )
     if not panel_opened:
-        # Snapshot looks like the search results page — panel did not open.
-        # Log first 300 chars so we can see what the page state actually is.
         logger.debug("find_url: panel did not open — snapshot fragment: %s", snap[:300])
 
     merchant_urls = _extract_merchant_urls(snap)
@@ -414,14 +443,17 @@ def _filter_aria_snapshot(snap: str) -> str:
 _MAX_SESSION_RETRIES = 5
 
 
-async def _create_session(api_key: str, project_id: str) -> tuple[str, str]:
+async def _create_session(api_key: str, project_id: str, proxies: bool = False) -> tuple[str, str]:
     """Returns (session_id, connect_url). Retries on 429 using retry-after header."""
+    payload: dict = {"projectId": project_id, "keepAlive": True, "timeout": 3600}
+    if proxies:
+        payload["proxies"] = True
     for attempt in range(_MAX_SESSION_RETRIES):
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{_BROWSERBASE_API}/sessions",
                 headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"},
-                json={"projectId": project_id, "keepAlive": True, "timeout": 3600},
+                json=payload,
             )
         if resp.status_code == 429:
             if attempt == _MAX_SESSION_RETRIES - 1:

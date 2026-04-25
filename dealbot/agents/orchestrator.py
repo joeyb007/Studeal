@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -214,16 +215,24 @@ class OrchestratorAgent:
             len(unique_unresolved), duplicates_dropped,
         )
 
-        for deal in unique_unresolved:
+        sem = asyncio.Semaphore(4)
+
+        async def _resolve_one(deal: DealRaw) -> None:
             if not deal.raw_button_label or not deal.search_query:
                 logger.debug("_resolve_all_organic: missing identity for %r", deal.title[:40])
-                continue
+                return
+            async with sem:
+                url = await find_url(self._llm, deal.title, deal.source,
+                                     deal.raw_button_label, deal.search_query)
+                if not url:
+                    logger.debug("_resolve_all_organic: retrying %r", deal.title[:40])
+                    url = await find_url(self._llm, deal.title, deal.source,
+                                         deal.raw_button_label, deal.search_query)
+                if url:
+                    deal.url = url
+                    logger.debug("_resolve_all_organic: resolved %r → %s", deal.title[:40], url[:60])
 
-            url = await find_url(self._llm, deal.title, deal.source,
-                                 deal.raw_button_label, deal.search_query)
-            if url:
-                deal.url = url
-                logger.debug("_resolve_all_organic: resolved %r → %s", deal.title[:40], url[:60])
+        await asyncio.gather(*(_resolve_one(d) for d in unique_unresolved))
 
     async def _dispatch(self, tc: Any, keyword: str) -> str:
         try:

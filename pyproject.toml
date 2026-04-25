@@ -29,7 +29,6 @@ dependencies = [
     "slowapi>=0.1.9",
     "stripe>=8.0",
     "playwright>=1.44",
-    "trafilatura>=1.8",
 ]
 
 [project.optional-dependencies]

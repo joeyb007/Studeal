@@ -11,7 +11,9 @@ from dealbot.db.database import get_async_session
 from dealbot.db.models import Watchlist, WatchlistKeyword
 from dealbot.graph.graph import build_hunter_graph
 from dealbot.llm.base import LLMClient
+from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.ollama import OllamaClient
+from dealbot.llm.openai_client import OpenAIClient
 from dealbot.llm.vllm import vLLMClient
 from dealbot.worker.celery_app import app
 
@@ -19,7 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 def _get_llm() -> LLMClient:
-    return vLLMClient() if os.environ.get("LLM_BACKEND") == "vllm" else OllamaClient()
+    backend = os.environ.get("LLM_BACKEND", "ollama")
+    if backend == "openai":
+        return OpenAIClient()
+    if backend == "groq":
+        return GroqClient()
+    if backend == "vllm":
+        return vLLMClient()
+    return OllamaClient()
 
 
 @app.task(name="dealbot.worker.tasks.hunt_deals", bind=True, max_retries=3)

@@ -48,6 +48,10 @@ class DealRaw(BaseModel):
     description: Optional[str] = None
     student_eligible: bool = False  # True if page content confirms student pricing/discount
     condition: Condition = Condition.unknown
+    # URL resolution identity — set at extraction time so find_url needs no lookup dict
+    raw_button_label: Optional[str] = None  # exact UI button string from the DOM
+    listing_index: Optional[int] = None     # 1-based position in organic listing section
+    search_query: Optional[str] = None      # Google Shopping query that produced this listing
 
 
 class DealScore(BaseModel):

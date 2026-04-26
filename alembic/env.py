@@ -9,6 +9,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Import models so Alembic's autogenerate can see them
 from dealbot.db.models import Base  # noqa: F401

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import os
 from urllib.parse import quote_plus
@@ -86,7 +87,7 @@ async def search_shopping(page: Page, query: str) -> ShoppingResult:
     and return structured deal data + button labels for find_url.
     Expects a live Page from BrowserSession — does NOT manage sessions.
     """
-    shop_url = f"https://www.google.com/search?q={quote_plus(query)}&tbm=shop&gl=us&hl=en"
+    shop_url = f"https://www.google.com/search?q={quote_plus(query)}&tbm=shop&gl=ca&hl=en-CA"
     try:
         await page.goto(shop_url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
         snap = await page.locator("body").aria_snapshot()
@@ -185,6 +186,7 @@ async def find_url(
 
     session_id = None
     snap = ""
+    fail_step = ""
     try:
         session_id, connect_url = await _create_session(api_key, project_id, proxies=True)
         async with async_playwright() as pw:
@@ -193,22 +195,25 @@ async def find_url(
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
             # Step 1: Navigate to the search results page
-            shop_url = f"https://www.google.com/search?q={quote_plus(search_query)}&tbm=shop&gl=us&hl=en"
+            shop_url = f"https://www.google.com/search?q={quote_plus(search_query)}&tbm=shop&gl=ca&hl=en-CA"
             try:
                 await page.goto(shop_url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
             except Exception as exc:
-                logger.warning("find_url: failed to navigate to search: %s", exc)
+                fail_step = "navigate"
+                logger.warning("find_url [%s]: %s for %r", fail_step, exc, title[:40])
                 await browser.close()
                 return ""
 
             # Step 2: Click the exact product button
-            btn = page.get_by_role("button", name=button_label)
+            clean_label = codecs.decode(button_label, "unicode_escape")
+            btn = page.get_by_role("button", name=clean_label)
             count = await btn.count()
             if count == 0:
-                btn = page.get_by_role("button", name=button_label[:60], exact=False)
+                btn = page.get_by_role("button", name=clean_label[:60], exact=False)
                 count = await btn.count()
             if count == 0:
-                logger.debug("find_url: button not found for %r", title[:40])
+                fail_step = "button_not_found"
+                logger.warning("find_url [%s]: %r (label=%r)", fail_step, title[:40], button_label[:60])
                 await browser.close()
                 return ""
 
@@ -216,7 +221,8 @@ async def find_url(
                 await btn.first.click(timeout=10_000)
                 await page.wait_for_timeout(2_500)
             except Exception as exc:
-                logger.debug("find_url: click failed for %r: %s", title[:40], exc)
+                fail_step = "click"
+                logger.warning("find_url [%s]: %s for %r", fail_step, exc, title[:40])
                 await browser.close()
                 return ""
 
@@ -224,19 +230,23 @@ async def find_url(
             try:
                 snap = await page.locator("body").aria_snapshot()
             except Exception as exc:
-                logger.debug("find_url: snapshot failed after click: %s", exc)
+                fail_step = "snapshot"
+                logger.warning("find_url [%s]: %s for %r", fail_step, exc, title[:40])
                 await browser.close()
                 return ""
 
             await browser.close()
     except Exception as exc:
-        logger.warning("find_url: session error for %r: %s", title[:40], exc)
+        fail_step = "session"
+        logger.warning("find_url [%s]: %s for %r", fail_step, exc, title[:40])
         return ""
     finally:
         if session_id:
             await _terminate_session(api_key, session_id)
 
     if not snap:
+        fail_step = "empty_snap"
+        logger.warning("find_url [%s]: %r", fail_step, title[:40])
         return ""
 
     # Step 4: Parse merchant → URL pairs from the detail panel
@@ -255,6 +265,7 @@ async def find_url(
             "find_url: no merchant URLs parsed from panel for %r (panel_opened=%s)",
             title[:40], panel_opened,
         )
+        _dump_snap(title, merchant, snap, reason="no_merchant_urls")
         return ""
 
     # Step 5: Deterministic fuzzy match
@@ -279,8 +290,38 @@ async def find_url(
     except Exception as exc:
         logger.debug("find_url: LLM fallback failed: %s", exc)
 
+    _dump_snap(title, merchant, snap, reason="no_match", merchant_urls=merchant_urls)
     logger.debug("find_url: no URL found for %r at %s", title[:40], merchant)
     return ""
+
+
+def _dump_snap(
+    title: str,
+    merchant: str,
+    snap: str,
+    reason: str,
+    merchant_urls: list[tuple[str, str]] | None = None,
+) -> None:
+    """Write full aria snapshot + parsed URLs to /tmp for debugging label misses."""
+    import re
+    import tempfile
+
+    safe = re.sub(r"[^\w]+", "_", title[:40]).strip("_")
+    path = f"{tempfile.gettempdir()}/find_url_miss_{safe}.txt"
+    try:
+        with open(path, "w") as f:
+            f.write(f"TITLE:    {title}\n")
+            f.write(f"MERCHANT: {merchant}\n")
+            f.write(f"REASON:   {reason}\n")
+            if merchant_urls:
+                f.write(f"\nPARSED MERCHANT URLs ({len(merchant_urls)}):\n")
+                for m_name, m_url in merchant_urls:
+                    f.write(f"  {m_name}: {m_url}\n")
+            f.write(f"\n{'='*60}\nFULL SNAP ({len(snap)} chars):\n{'='*60}\n")
+            f.write(snap)
+        logger.debug("find_url: snap dumped → %s", path)
+    except Exception as exc:
+        logger.debug("find_url: snap dump failed: %s", exc)
 
 
 def _extract_merchant_urls(snap: str) -> list[tuple[str, str]]:

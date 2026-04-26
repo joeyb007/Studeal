@@ -10,6 +10,7 @@ from dealbot.graph.nodes import (
     keyword_dedup_node,
     orchestrator_node,
     persist_node,
+    score_and_persist_node,
     score_node,
 )
 from dealbot.graph.state import PipelineState
@@ -28,13 +29,13 @@ def _route_after_dedup(state: PipelineState) -> str:
     """Skip the rest of the pipeline if this keyword was already covered today."""
     if state.get("keyword_covered"):
         return END
-    return "query_gen"
+    return "orchestrator"
 
 
 def _fan_out_to_score(state: PipelineState) -> list[Send]:
-    """Fan out one score invocation per extracted candidate."""
+    """Fan out one score_and_persist invocation per candidate."""
     candidates: list[DealRaw] = state.get("candidates", [])
-    return [Send("score", {**state, "deal": candidate}) for candidate in candidates]
+    return [Send("score_and_persist", {**state, "deal": candidate}) for candidate in candidates]
 
 
 def build_graph(llm: LLMClient) -> StateGraph:
@@ -65,19 +66,18 @@ def build_hunter_graph(llm: LLMClient) -> StateGraph:
     """
     Full hunter pipeline — entry point is a watchlist keyword.
 
-    keyword_dedup → orchestrator → Send() → score → persist
+    keyword_dedup → orchestrator → Send() → score_and_persist
                          ↓ (keyword already covered)
                         END
     """
     bound_orchestrator = functools.partial(orchestrator_node, llm=llm)
-    bound_score = functools.partial(score_node, llm=llm)
+    bound_score_and_persist = functools.partial(score_and_persist_node, llm=llm)
 
     graph = StateGraph(PipelineState)
 
     graph.add_node("keyword_dedup", keyword_dedup_node)
     graph.add_node("orchestrator", bound_orchestrator)
-    graph.add_node("score", bound_score)
-    graph.add_node("persist", persist_node)
+    graph.add_node("score_and_persist", bound_score_and_persist)
 
     graph.add_edge(START, "keyword_dedup")
     graph.add_conditional_edges(
@@ -85,8 +85,7 @@ def build_hunter_graph(llm: LLMClient) -> StateGraph:
         _route_after_dedup,
         {"orchestrator": "orchestrator", END: END},
     )
-    graph.add_conditional_edges("orchestrator", _fan_out_to_score, ["score"])
-    graph.add_conditional_edges("score", _route_after_score, {"persist": "persist", END: END})
-    graph.add_edge("persist", END)
+    graph.add_conditional_edges("orchestrator", _fan_out_to_score, ["score_and_persist"])
+    graph.add_edge("score_and_persist", END)
 
     return graph.compile()

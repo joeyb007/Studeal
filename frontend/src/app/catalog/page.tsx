@@ -10,7 +10,7 @@ interface Deal {
   id: number;
   title: string;
   source: string;
-  url: string;
+  url: string | null;
   listed_price: number;
   sale_price: number;
   score: number;
@@ -46,7 +46,7 @@ function pct(listed: number, sale: number) {
 function DealCard({ deal, index = 0 }: { deal: Deal; index?: number }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
   return (
-    <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.card} style={{ animationDelay: `${index * 50}ms` }}>
+    <div className={styles.card} style={{ animationDelay: `${index * 50}ms` }}>
       <div className={styles.discountBadge}>−{discount}%</div>
       <div className={styles.cardBody}>
         <div className={styles.cardMeta}>
@@ -77,8 +77,13 @@ function DealCard({ deal, index = 0 }: { deal: Deal; index?: number }) {
           </div>
           <span className={styles.scoreNum}>{deal.score}</span>
         </div>
+        {deal.url && (
+          <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+            Buy here →
+          </a>
+        )}
       </div>
-    </a>
+    </div>
   );
 }
 

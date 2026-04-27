@@ -20,7 +20,7 @@ class DealResponse(BaseModel):
     id: int
     title: str
     source: str
-    url: str
+    url: Optional[str]
     listed_price: float
     sale_price: float
     asin: Optional[str]

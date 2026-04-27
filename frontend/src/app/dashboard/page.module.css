@@ -664,3 +664,17 @@
   min-width: 20px;
   text-align: right;
 }
+
+.buyBtn {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+.buyBtn:hover { opacity: 0.85; }

@@ -41,7 +41,7 @@ class DealRaw(BaseModel):
 
     source: str
     title: str
-    url: str
+    url: Optional[str] = None
     listed_price: float
     sale_price: float
     asin: Optional[str] = None

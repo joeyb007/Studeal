@@ -11,7 +11,7 @@ interface Deal {
   id: number;
   title: string;
   source: string;
-  url: string;
+  url: string | null;
   listed_price: number;
   sale_price: number;
   score: number;
@@ -67,10 +67,10 @@ function CarouselStrip({ feed }: { feed: Deal[] }) {
       <div className={styles.carouselLabel}>Live deals</div>
       <div className={styles.carouselViewport}>
         <div className={styles.carouselTrack}>
-          {doubled.map((deal, i) => {
+          {doubled.filter(deal => deal.url).map((deal, i) => {
             const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
             return (
-              <a key={`${deal.id}-${i}`} href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.miniCard}>
+              <a key={`${deal.id}-${i}`} href={deal.url!} target="_blank" rel="noopener noreferrer" className={styles.miniCard}>
                 <span className={styles.miniDiscount}>−{discount}%</span>
                 <span className={styles.miniTitle}>{deal.title}</span>
                 <span className={styles.miniPrice}>${deal.sale_price.toFixed(2)}</span>
@@ -90,13 +90,7 @@ function pct(listed: number, sale: number) {
 function DealCard({ deal, index }: { deal: Deal; index: number }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
   return (
-    <a
-      href={deal.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={styles.card}
-      style={{ animationDelay: `${index * 60}ms` }}
-    >
+    <div className={styles.card} style={{ animationDelay: `${index * 60}ms` }}>
       <div className={styles.discountBadge}>−{discount}%</div>
       <div className={styles.cardBody}>
         <div className={styles.cardMeta}>
@@ -127,8 +121,13 @@ function DealCard({ deal, index }: { deal: Deal; index: number }) {
           </div>
           <span className={styles.scoreNum}>{deal.score}</span>
         </div>
+        {deal.url && (
+          <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+            Buy here →
+          </a>
+        )}
       </div>
-    </a>
+    </div>
   );
 }
 

@@ -18,7 +18,7 @@ class Deal(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
-    url: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
     listed_price: Mapped[float] = mapped_column(Float, nullable=False)
     sale_price: Mapped[float] = mapped_column(Float, nullable=False)
     asin: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -30,7 +30,7 @@ class Deal(Base):
     real_discount_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     student_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     condition: Mapped[str] = mapped_column(String(8), nullable=False, default="unknown")
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     hunt_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -88,7 +88,7 @@ class WatchlistKeyword(Base):
         ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
     )
     keyword: Mapped[str] = mapped_column(String(128), nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
 
     watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="keywords")
 

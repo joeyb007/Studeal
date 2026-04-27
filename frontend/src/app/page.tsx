@@ -11,7 +11,7 @@ interface Deal {
   id: number;
   title: string;
   source: string;
-  url: string;
+  url: string | null;
   listed_price: number;
   sale_price: number;
   score: number;
@@ -198,13 +198,7 @@ export default function Home() {
           <section className={styles.results}>
             <div className={styles.resultsGrid}>
               {deals.map((deal) => (
-                <a
-                  key={deal.id}
-                  href={deal.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={styles.dealCard}
-                >
+                <div key={deal.id} className={styles.dealCard}>
                   <div className={styles.dealHeader}>
                     <span className={styles.dealSource}>{deal.source}</span>
                     <div className={styles.dealBadges}>
@@ -236,7 +230,12 @@ export default function Home() {
                     </div>
                     <span className={styles.scoreLabel}>{deal.score}/100</span>
                   </div>
-                </a>
+                  {deal.url && (
+                    <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+                      Buy here →
+                    </a>
+                  )}
+                </div>
               ))}
             </div>
 

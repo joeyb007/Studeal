@@ -113,6 +113,35 @@ async def create_watchlist(
     )
 
 
+@router.post("/{watchlist_id}/renew", response_model=WatchlistResponse)
+async def renew_watchlist(
+    watchlist_id: int,
+    current_user: User = Depends(get_current_user),
+) -> WatchlistResponse:
+    """Pro-only: reset expires_at to 60 days from now."""
+    if not current_user.is_pro:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Watchlist renewal is a pro feature.")
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+        watchlist.expires_at = _expiry()
+        kw_result = await session.execute(
+            select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist.id)
+        )
+        keywords = [k.keyword for k in kw_result.scalars().all()]
+        await session.commit()
+        await session.refresh(watchlist)
+    return WatchlistResponse(
+        id=watchlist.id,
+        name=watchlist.name,
+        keywords=keywords,
+        min_score=watchlist.min_score,
+        alert_tier_threshold=watchlist.alert_tier_threshold,
+        expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
+    )
+
+
 @router.delete("/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_watchlist(
     watchlist_id: int,

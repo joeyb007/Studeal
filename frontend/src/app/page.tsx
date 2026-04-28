@@ -2,27 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import AgentWorkflow from "@/components/AgentWorkflow";
-import PipelineVisualizer from "@/components/PipelineVisualizer";
 import AuthModal from "@/components/AuthModal";
 import { useSession, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import styles from "./page.module.css";
-
-interface Deal {
-  id: number;
-  title: string;
-  source: string;
-  url: string | null;
-  listed_price: number;
-  sale_price: number;
-  score: number;
-  alert_tier: string;
-  real_discount_pct: number | null;
-  student_eligible: boolean;
-}
-
-type Phase = "idle" | "running" | "done";
-
-const STAGE_DELAYS = [800, 1600, 2800, 4200];
 
 const EXAMPLE_QUERIES = [
   "AirPods Pro under $180",
@@ -75,47 +58,32 @@ function useTypingPlaceholder(active: boolean): string {
   return placeholder;
 }
 
-const ENTER_DURATION = 800; // ms for entrance to complete before workflow starts
+const ENTER_DURATION = 800;
 
 export default function Home() {
   const { data: session } = useSession();
   const isLoggedIn = !!session;
+  const router = useRouter();
   const [query, setQuery] = useState("");
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [activeStage, setActiveStage] = useState(-1);
-  const [deals, setDeals] = useState<Deal[]>([]);
   const [workflowStarted, setWorkflowStarted] = useState(false);
   const [authModal, setAuthModal] = useState<{ open: boolean; tab: "login" | "signup" }>({ open: false, tab: "login" });
   const inputRef = useRef<HTMLInputElement>(null);
-  const placeholder = useTypingPlaceholder(phase === "idle" && query === "");
+  const placeholder = useTypingPlaceholder(query === "");
 
   useEffect(() => {
     const t = setTimeout(() => setWorkflowStarted(true), ENTER_DURATION);
     return () => clearTimeout(t);
   }, []);
 
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!query.trim() || phase === "running") return;
+    if (!query.trim()) return;
 
-    setPhase("running");
-    setActiveStage(0);
-    setDeals([]);
-
-    STAGE_DELAYS.forEach((delay, i) => {
-      setTimeout(() => setActiveStage(i), delay);
-    });
-
-    setTimeout(() => {
-      setActiveStage(4);
-      setPhase("done");
-
-      if (isLoggedIn) {
-        router.push("/dashboard");
-      } else {
-        setAuthModal({ open: true, tab: "signup" });
-      }
-    }, 5500);
+    if (isLoggedIn) {
+      router.push(`/dashboard?q=${encodeURIComponent(query.trim())}`);
+    } else {
+      setAuthModal({ open: true, tab: "signup" });
+    }
   };
 
   return (
@@ -169,23 +137,16 @@ export default function Home() {
               placeholder={placeholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              disabled={phase === "running"}
               autoFocus
             />
             <button
               type="submit"
               className={styles.searchBtn}
-              disabled={!query.trim() || phase === "running"}
+              disabled={!query.trim()}
             >
-              {phase === "running" ? "Hunting..." : "Hunt deals"}
+              Hunt deals
             </button>
           </form>
-
-          {phase !== "idle" && (
-            <div className={styles.pipelineWrapper}>
-              <PipelineVisualizer activeStage={activeStage} />
-            </div>
-          )}
           </div>
 
           <div className={[styles.heroRight, styles.enterDone].join(" ")}
@@ -193,64 +154,6 @@ export default function Home() {
             <AgentWorkflow started={workflowStarted} />
           </div>
         </section>
-
-        {deals.length > 0 && (
-          <section className={styles.results}>
-            <div className={styles.resultsGrid}>
-              {deals.map((deal) => (
-                <div key={deal.id} className={styles.dealCard}>
-                  <div className={styles.dealHeader}>
-                    <span className={styles.dealSource}>{deal.source}</span>
-                    <div className={styles.dealBadges}>
-                      {deal.student_eligible && (
-                        <span className={styles.tierStudent}>student</span>
-                      )}
-                      <span className={[
-                        styles.dealTier,
-                        deal.alert_tier === "push" ? styles.tierPush : "",
-                        deal.alert_tier === "digest" ? styles.tierDigest : "",
-                      ].join(" ")}>
-                        {deal.alert_tier}
-                      </span>
-                    </div>
-                  </div>
-                  <p className={styles.dealTitle}>{deal.title}</p>
-                  <div className={styles.dealPricing}>
-                    <span className={styles.salePrice}>${deal.sale_price.toFixed(2)}</span>
-                    {deal.listed_price > deal.sale_price && (
-                      <span className={styles.listedPrice}>${deal.listed_price.toFixed(2)}</span>
-                    )}
-                    {deal.real_discount_pct && (
-                      <span className={styles.discount}>{deal.real_discount_pct.toFixed(0)}% off</span>
-                    )}
-                  </div>
-                  <div className={styles.dealScore}>
-                    <div className={styles.scoreBarTrack}>
-                      <div className={styles.scoreBar} style={{ width: `${deal.score}%` }} />
-                    </div>
-                    <span className={styles.scoreLabel}>{deal.score}/100</span>
-                  </div>
-                  {deal.url && (
-                    <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
-                      Buy here →
-                    </a>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className={styles.cta}>
-              <p className={styles.ctaText}>Save this watchlist and get daily alerts</p>
-              <button className={styles.ctaBtn} onClick={() => setAuthModal({ open: true, tab: "signup" })}>Create free account →</button>
-            </div>
-          </section>
-        )}
-
-        {phase === "done" && deals.length === 0 && (
-          <div className={styles.emptyState}>
-            <p>No deals found today for that search. Try something else or check back tomorrow.</p>
-          </div>
-        )}
       </main>
 
       <AuthModal

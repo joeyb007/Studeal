@@ -143,6 +143,11 @@ export default function DashboardPage() {
       setUpgraded(true);
       router.replace("/dashboard", { scroll: false });
     }
+    const q = searchParams.get("q");
+    if (q) {
+      setQuery(q);
+      router.replace("/dashboard", { scroll: false });
+    }
   }, []);
   const [query, setQuery] = useState("");
   const [deals, setDeals] = useState<Deal[]>([]);

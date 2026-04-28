@@ -9,9 +9,10 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultTab?: "login" | "signup";
+  callbackQuery?: string;
 }
 
-export default function AuthModal({ isOpen, onClose, defaultTab = "signup" }: AuthModalProps) {
+export default function AuthModal({ isOpen, onClose, defaultTab = "signup", callbackQuery }: AuthModalProps) {
   const router = useRouter();
   const [tab, setTab] = useState<"login" | "signup">(defaultTab);
   const [direction, setDirection] = useState<"left" | "right">("left");
@@ -64,12 +65,14 @@ export default function AuthModal({ isOpen, onClose, defaultTab = "signup" }: Au
       return;
     }
 
+    const dest = callbackQuery ? `/dashboard?q=${encodeURIComponent(callbackQuery)}` : "/dashboard";
     close();
-    router.push("/dashboard");
+    router.push(dest);
   }
 
   async function handleGoogle() {
-    await signIn("google", { callbackUrl: "/dashboard" });
+    const dest = callbackQuery ? `/dashboard?q=${encodeURIComponent(callbackQuery)}` : "/dashboard";
+    await signIn("google", { callbackUrl: dest });
   }
 
   function handleBackdropClick(e: React.MouseEvent) {

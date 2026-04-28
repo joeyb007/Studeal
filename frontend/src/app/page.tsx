@@ -160,6 +160,7 @@ export default function Home() {
         isOpen={authModal.open}
         defaultTab={authModal.tab}
         onClose={() => setAuthModal(v => ({ ...v, open: false }))}
+        callbackQuery={query || undefined}
       />
     </>
   );

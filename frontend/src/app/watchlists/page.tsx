@@ -12,23 +12,143 @@ interface Watchlist {
   keywords: string[];
   min_score: number;
   alert_tier_threshold: string;
+  expires_at: string | null;
 }
 
-function WatchlistCard({ watchlist }: { watchlist: Watchlist }) {
+interface Deal {
+  id: number;
+  title: string;
+  source: string;
+  url: string | null;
+  listed_price: number;
+  sale_price: number;
+  score: number;
+  alert_tier: string;
+  category: string;
+  real_discount_pct: number | null;
+  student_eligible: boolean;
+  condition: string;
+}
+
+const TIER_LABELS: Record<string, string> = { push: "Hot", digest: "Good", none: "Mild" };
+const TIER_CLASS: Record<string, string> = {
+  push: styles.tierPush,
+  digest: styles.tierDigest,
+  none: styles.tierNone,
+};
+
+function daysUntil(isoString: string): number {
+  const ms = new Date(isoString).getTime() - Date.now();
+  return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+}
+
+function pct(listed: number, sale: number) {
+  return Math.round(((listed - sale) / listed) * 100);
+}
+
+function DealRow({ deal }: { deal: Deal }) {
+  const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
+  return (
+    <div className={styles.dealRow}>
+      <div className={styles.dealRowLeft}>
+        <span className={styles.dealDiscount}>−{discount}%</span>
+        <div>
+          <p className={styles.dealTitle}>{deal.title}</p>
+          <span className={styles.dealSource}>{deal.source} · {deal.category}</span>
+        </div>
+      </div>
+      <div className={styles.dealRowRight}>
+        <span className={styles.dealPrice}>${deal.sale_price.toFixed(2)}</span>
+        <span className={[styles.dealTier, TIER_CLASS[deal.alert_tier] ?? ""].join(" ")}>
+          {TIER_LABELS[deal.alert_tier] ?? deal.alert_tier}
+        </span>
+        {deal.url && (
+          <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.dealBuyBtn}>
+            Buy →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WatchlistCard({
+  watchlist,
+  onDelete,
+}: {
+  watchlist: Watchlist;
+  onDelete: (id: number) => void;
+}) {
+  const [deals, setDeals] = useState<Deal[] | null>(null);
+  const [loadingDeals, setLoadingDeals] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const days = watchlist.expires_at ? daysUntil(watchlist.expires_at) : null;
+
+  async function loadDeals() {
+    if (deals !== null) return;
+    setLoadingDeals(true);
+    try {
+      const res = await fetch(`/api/watchlists/${watchlist.id}/deals`);
+      const data = await res.json();
+      setDeals(Array.isArray(data) ? data : []);
+    } catch {
+      setDeals([]);
+    }
+    setLoadingDeals(false);
+  }
+
+  function toggle() {
+    if (!expanded) loadDeals();
+    setExpanded(v => !v);
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete "${watchlist.name}"?`)) return;
+    setDeleting(true);
+    await fetch(`/api/watchlists/${watchlist.id}`, { method: "DELETE" });
+    onDelete(watchlist.id);
+  }
+
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
-        <span className={styles.cardName}>{watchlist.name}</span>
-        <div className={styles.cardMeta}>
-          <span className={styles.metaPill}>score ≥ {watchlist.min_score}</span>
-          <span className={styles.metaPill}>{watchlist.alert_tier_threshold}</span>
+        <button className={styles.cardToggle} onClick={toggle}>
+          <span className={styles.cardName}>{watchlist.name}</span>
+          <span className={styles.toggleChevron}>{expanded ? "▲" : "▼"}</span>
+        </button>
+        <div className={styles.cardActions}>
+          {days !== null && (
+            <span className={styles.expiry}>
+              {days === 0 ? "Expires today" : `${days}d left`}
+            </span>
+          )}
+          <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
+            {deleting ? "…" : "✕"}
+          </button>
         </div>
       </div>
+
       <div className={styles.keywords}>
         {watchlist.keywords.map(kw => (
           <span key={kw} className={styles.keyword}>{kw}</span>
         ))}
       </div>
+
+      {expanded && (
+        <div className={styles.dealsSection}>
+          {loadingDeals && <p className={styles.dealsLoading}>Finding matches…</p>}
+          {!loadingDeals && deals !== null && deals.length === 0 && (
+            <p className={styles.dealsEmpty}>No deals matched yet — check back after the next hunt runs.</p>
+          )}
+          {!loadingDeals && deals && deals.length > 0 && (
+            <div className={styles.dealsList}>
+              {deals.map(d => <DealRow key={d.id} deal={d} />)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -73,7 +193,7 @@ export default function WatchlistsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleCreate(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!token) return;
     setFormError(null);
@@ -176,7 +296,7 @@ export default function WatchlistsPage() {
                 onChange={e => setDescription(e.target.value)}
                 required
               />
-              <p className={styles.hint}>Describe it naturally — we&apos;ll extract the keywords.</p>
+              <p className={styles.hint}>Describe it naturally — we&apos;ll extract the keywords and start hunting immediately.</p>
             </div>
             {formError && <p className={styles.error}>{formError}</p>}
             <button className={styles.submitBtn} type="submit" disabled={submitting}>
@@ -191,7 +311,13 @@ export default function WatchlistsPage() {
           <div className={styles.empty}>No watchlists yet. Create one to start getting alerts.</div>
         ) : (
           <div className={styles.list}>
-            {watchlists.map(wl => <WatchlistCard key={wl.id} watchlist={wl} />)}
+            {watchlists.map(wl => (
+              <WatchlistCard
+                key={wl.id}
+                watchlist={wl}
+                onDelete={id => setWatchlists(prev => prev.filter(w => w.id !== id))}
+              />
+            ))}
           </div>
         )}
       </main>

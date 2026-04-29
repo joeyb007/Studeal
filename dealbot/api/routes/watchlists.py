@@ -4,14 +4,15 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 
 from dealbot.agents.keyword_extractor import extract_keywords
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import User, Watchlist, WatchlistKeyword
+from dealbot.db.models import Deal, User, Watchlist, WatchlistKeyword
+from dealbot.db.rag import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.llm.ollama import OllamaClient
@@ -53,6 +54,23 @@ class WatchlistResponse(BaseModel):
     min_score: int
     alert_tier_threshold: str
     expires_at: Optional[str]
+
+
+class WatchlistDealResponse(BaseModel):
+    id: int
+    title: str
+    source: str
+    url: Optional[str]
+    listed_price: float
+    sale_price: float
+    score: int
+    alert_tier: str
+    category: str
+    real_discount_pct: Optional[float]
+    student_eligible: bool
+    condition: str
+
+    model_config = {"from_attributes": True}
 
 
 @router.post("", response_model=WatchlistResponse, status_code=status.HTTP_201_CREATED)
@@ -103,6 +121,14 @@ async def create_watchlist(
         await session.commit()
         await session.refresh(watchlist)
 
+    # Dispatch immediate hunt for each keyword (runs in background via Celery)
+    try:
+        from dealbot.worker.tasks import hunt_keyword
+        for kw in keywords:
+            hunt_keyword.delay(kw)
+    except Exception:
+        pass  # worker not running in dev — fail silently
+
     return WatchlistResponse(
         id=watchlist.id,
         name=watchlist.name,
@@ -111,6 +137,54 @@ async def create_watchlist(
         alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
     )
+
+
+@router.get("/{watchlist_id}/deals", response_model=list[WatchlistDealResponse])
+async def list_watchlist_deals(
+    watchlist_id: int,
+    limit: int = Query(20, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+) -> list[WatchlistDealResponse]:
+    """Return deals semantically matched to a watchlist's keywords via pgvector."""
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+
+        kw_result = await session.execute(
+            select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist_id)
+        )
+        keywords = kw_result.scalars().all()
+
+        seen_ids: set[int] = set()
+        deals: list[Deal] = []
+        for kw in keywords:
+            if kw.embedding is None:
+                continue
+            similar = await retrieve_similar_deals(kw.embedding, session, k=10)
+            for d in similar:
+                if d.id not in seen_ids:
+                    seen_ids.add(d.id)
+                    deals.append(d)
+
+    deals.sort(key=lambda d: d.score, reverse=True)
+    return [
+        WatchlistDealResponse(
+            id=d.id,
+            title=d.title,
+            source=d.source,
+            url=d.url,
+            listed_price=d.listed_price,
+            sale_price=d.sale_price,
+            score=d.score,
+            alert_tier=d.alert_tier,
+            category=d.category,
+            real_discount_pct=d.real_discount_pct,
+            student_eligible=d.student_eligible,
+            condition=d.condition,
+        )
+        for d in deals[:limit]
+    ]
 
 
 @router.post("/{watchlist_id}/renew", response_model=WatchlistResponse)

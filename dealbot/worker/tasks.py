@@ -31,6 +31,32 @@ def _get_llm() -> LLMClient:
     return OllamaClient()
 
 
+@app.task(name="dealbot.worker.tasks.hunt_keyword", bind=True, max_retries=3)
+def hunt_keyword(self, keyword: str) -> dict:
+    """
+    Celery task: run the hunter pipeline for a single keyword.
+    Dispatched immediately when a watchlist is created.
+    """
+    try:
+        llm = _get_llm()
+        return asyncio.run(_run_single(llm, keyword))
+    except Exception as exc:
+        logger.exception("hunt_keyword task failed for '%s': %s", keyword, exc)
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
+
+
+async def _run_single(llm: LLMClient, keyword: str) -> dict:
+    graph = build_hunter_graph(llm)
+    try:
+        final_state = await graph.ainvoke({"keyword": keyword})
+        skipped = bool(final_state.get("keyword_covered"))
+        logger.info("hunt_keyword: keyword=%r skipped=%s", keyword, skipped)
+        return {"keyword": keyword, "skipped": skipped}
+    except Exception:
+        logger.exception("hunt_keyword: unhandled error for keyword '%s'", keyword)
+        return {"keyword": keyword, "error": True}
+
+
 @app.task(name="dealbot.worker.tasks.hunt_deals", bind=True, max_retries=3)
 def hunt_deals(self) -> dict:
     """

@@ -51,6 +51,11 @@ app.conf.update(
             "task": "dealbot.worker.celery_app.cleanup_old_deals",
             "schedule": crontab(hour=5, minute=0),
         },
+        # 05:10 UTC — delete watchlists past their expires_at
+        "cleanup-stale-watchlists": {
+            "task": "dealbot.worker.celery_app.cleanup_stale_watchlists",
+            "schedule": crontab(hour=5, minute=10),
+        },
     },
 )
 
@@ -76,4 +81,31 @@ async def _run_cleanup() -> dict:
         await session.commit()
 
     logger.info("cleanup_old_deals: deleted %d deal(s) older than 3 days", deleted)
+    return {"deleted": deleted}
+
+
+@app.task(name="dealbot.worker.celery_app.cleanup_stale_watchlists")
+def cleanup_stale_watchlists() -> dict:
+    """Delete watchlists whose expires_at has passed."""
+    return asyncio.run(_run_watchlist_cleanup())
+
+
+async def _run_watchlist_cleanup() -> dict:
+    from sqlalchemy import delete
+
+    from dealbot.db.database import get_async_session
+    from dealbot.db.models import Watchlist
+
+    now = datetime.now(timezone.utc)
+    async with get_async_session() as session:
+        result = await session.execute(
+            delete(Watchlist)
+            .where(Watchlist.expires_at.isnot(None))
+            .where(Watchlist.expires_at < now)
+            .returning(Watchlist.id)
+        )
+        deleted = len(result.fetchall())
+        await session.commit()
+
+    logger.info("cleanup_stale_watchlists: deleted %d expired watchlist(s)", deleted)
     return {"deleted": deleted}

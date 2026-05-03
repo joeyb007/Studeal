@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from dealbot.affiliates import rewrite as affiliate_rewrite
 from dealbot.agents.orchestrator import OrchestratorAgent
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
@@ -199,10 +200,12 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
         return {}
 
     now = datetime.now(timezone.utc)
+    affiliate_url = affiliate_rewrite(deal.url)
     values = dict(
         title=deal.title,
         source=deal.source,
         url=deal.url,
+        affiliate_url=affiliate_url if affiliate_url != deal.url else None,
         listed_price=deal.listed_price,
         sale_price=deal.sale_price,
         asin=deal.asin,
@@ -236,6 +239,7 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
                         "real_discount_pct": values["real_discount_pct"],
                         "student_eligible": values["student_eligible"],
                         "condition": values["condition"],
+                        "affiliate_url": values["affiliate_url"],
                         "embedding": values["embedding"],
                         "scraped_at": values["scraped_at"],
                     },

@@ -21,6 +21,7 @@ class DealResponse(BaseModel):
     title: str
     source: str
     url: Optional[str]
+    affiliate_url: Optional[str] = None
     listed_price: float
     sale_price: float
     asin: Optional[str]
@@ -43,6 +44,7 @@ def _to_response(deal: Deal) -> DealResponse:
         title=deal.title,
         source=deal.source,
         url=deal.url,
+        affiliate_url=deal.affiliate_url,
         listed_price=deal.listed_price,
         sale_price=deal.sale_price,
         asin=deal.asin,

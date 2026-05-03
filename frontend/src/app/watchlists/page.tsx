@@ -20,6 +20,7 @@ interface Deal {
   title: string;
   source: string;
   url: string | null;
+  affiliate_url: string | null;
   listed_price: number;
   sale_price: number;
   score: number;

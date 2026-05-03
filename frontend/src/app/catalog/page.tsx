@@ -11,6 +11,7 @@ interface Deal {
   title: string;
   source: string;
   url: string | null;
+  affiliate_url: string | null;
   listed_price: number;
   sale_price: number;
   score: number;
@@ -77,8 +78,8 @@ function DealCard({ deal, index = 0 }: { deal: Deal; index?: number }) {
           </div>
           <span className={styles.scoreNum}>{deal.score}</span>
         </div>
-        {deal.url && (
-          <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+        {(deal.affiliate_url || deal.url) && (
+          <a href={deal.affiliate_url ?? deal.url!} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
             Buy here →
           </a>
         )}

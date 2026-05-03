@@ -4,11 +4,12 @@ import asyncio
 import json
 import logging
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from dealbot.agents.query_gen import QueryGenAgent
 from dealbot.llm.base import LLMClient, LLMResponse
 from dealbot.schemas import Condition, DealRaw
+from dealbot.scrapers.amazon import search_amazon
 from dealbot.scrapers.browser_agent import (
     BrowserSession,
     ShoppingResult,
@@ -16,14 +17,23 @@ from dealbot.scrapers.browser_agent import (
     find_url,
     search_shopping,
 )
+from dealbot.scrapers.ebay import search_ebay
+from dealbot.scrapers.walmart import search_walmart
 from dealbot.search.brave import BraveSearchClient
 
 logger = logging.getLogger(__name__)
 
 _MAX_ITERATIONS = 12
 _MAX_SUMMARY_DEALS = 6
-# Cap organic results per query — limits resolution sessions and keeps runs fast.
 _MAX_ORGANIC_PER_QUERY = 10
+_MAX_BRAVE_FETCHES = 4  # cap page fetches from Brave gap-fill
+
+_EDITORIAL_DOMAINS = {
+    "wirecutter.com", "cnet.com", "pcmag.com", "techradar.com", "rtings.com",
+    "wired.com", "tomsguide.com", "nytimes.com", "theverge.com", "engadget.com",
+    "laptopmag.com", "pcworld.com", "digitaltrends.com", "tomshardware.com",
+    "notebookcheck.net", "gsmarena.com", "anandtech.com", "reddit.com",
+}
 
 _SYSTEM_PROMPT = """\
 You are a deal-hunting research agent for students and budget-conscious shoppers in Canada.
@@ -48,9 +58,7 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": "Generate 2 focused search query variants for a keyword.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "keyword": {"type": "string"},
-                },
+                "properties": {"keyword": {"type": "string"}},
                 "required": ["keyword"],
             },
         },
@@ -65,41 +73,8 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": (
-                "Search the web via Brave. Returns URLs and descriptions. "
-                "Use when Shopping and deal sites don't have enough coverage. "
-                "Follow up with fetch_page on promising URLs."
-            ),
-            "parameters": {
-                "type": "object",
                 "properties": {"query": {"type": "string"}},
                 "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "fetch_page",
-            "description": (
-                "Fetch the full text content of a URL. Use on promising links "
-                "returned by search_web to extract deal details."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"url": {"type": "string"}},
-                "required": ["url"],
             },
         },
     },
@@ -140,7 +115,7 @@ For each product extract:
 - listed_price: original price as float — same as price if no discount shown
 - merchant: retailer name
 - condition: "new" | "used" | "refurb" | "unknown"
-- url: exact URL for featured deals only — omit for organic
+- url: exact URL for featured deals only — omit for organic. Prefer .ca URLs over .com when both are present for the same product (e.g. bestbuy.ca over bestbuy.com, amazon.ca over amazon.com)
 - listing_index: integer N for organic listings — omit for featured
 
 Return ONLY valid JSON:
@@ -149,33 +124,73 @@ Return ONLY valid JSON:
 
 If no products are found, return: {"products": []}"""
 
+_PAGE_EXTRACT_PROMPT = """\
+Extract a single product deal from the page text below.
+
+Return ONLY valid JSON with these fields (omit fields not present):
+{
+  "title": "product name",
+  "price": 99.99,
+  "listed_price": 129.99,
+  "merchant": "retailer name",
+  "condition": "new" | "used" | "refurb" | "unknown"
+}
+
+If this is not a product listing page (it's a review, blog, or category page with no clear \
+single product and price), return: {"products": null}"""
+
 
 class OrchestratorAgent:
     """
-    ReAct orchestrator: single BrowserSession for searching, parallel sessions
-    for organic URL resolution after the search loop completes.
-
-    Tools:
-    - generate_queries: LLM generates search query variants
-    - search_shopping: aria snapshot + LLM extraction of Google Shopping Canada
-    - search_web: Brave web search for broader coverage
-    - fetch_page: fetches a specific URL for detail extraction
-    - finish: signals completion
+    Parallel multi-source deal hunter:
+    1. Google Shopping browser agent + API scrapers run in parallel
+    2. Results deduplicated by URL + ASIN
+    3. Brave search fills gaps — only unique URLs not in pool get fetched
     """
 
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
-        self._candidates: list[DealRaw] = []
+        self._google_candidates: list[DealRaw] = []
         self._browser_session: BrowserSession | None = None
 
     async def run(self, keyword: str) -> list[DealRaw]:
-        self._candidates = []
+        # Phase 1: Google Shopping + all API scrapers in parallel
+        google_task = self._run_google_loop(keyword)
+        api_task = self._run_api_scrapers(keyword)
 
-        # Phase 1: LLM orchestrator — search and collect candidates.
-        # Single shared BrowserSession for all search_shopping calls.
+        google_results, api_results = await asyncio.gather(
+            google_task, api_task, return_exceptions=True
+        )
+
+        if isinstance(google_results, Exception):
+            logger.warning("OrchestratorAgent: Google Shopping failed: %s", google_results)
+            google_results = []
+        if isinstance(api_results, Exception):
+            logger.warning("OrchestratorAgent: API scrapers failed: %s", api_results)
+            api_results = []
+
+        # Resolve organic Google Shopping URLs before deduping
+        self._google_candidates = list(google_results)
+        await self._resolve_all_organic()
+
+        pool = _dedup(self._google_candidates + list(api_results))
+        logger.info("OrchestratorAgent: %d candidates after dedup (Google+APIs)", len(pool))
+
+        # Phase 2: Brave gap-fill — fetch only unique leads not in pool
+        brave_candidates = await self._brave_gap_fill(keyword, pool)
+        if brave_candidates:
+            pool = _dedup(pool + brave_candidates)
+            logger.info("OrchestratorAgent: %d candidates after Brave gap-fill", len(pool))
+
+        logger.info("OrchestratorAgent: %d final candidates for %r", len(pool), keyword)
+        return pool
+
+    async def _run_google_loop(self, keyword: str) -> list[DealRaw]:
+        """Run the existing ReAct browser loop for Google Shopping."""
+        self._google_candidates = []
+
         async with BrowserSession() as session:
             self._browser_session = session
-
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": f"Find deals for: {keyword}"},
@@ -205,42 +220,133 @@ class OrchestratorAgent:
                     break
 
         self._browser_session = None
+        return self._google_candidates
 
-        # Phase 2: resolve organic URLs in parallel — each find_url call opens
-        # its own fresh Browserbase session so Google sees independent traffic.
-        await self._resolve_all_organic()
+    async def _run_api_scrapers(self, keyword: str) -> list[DealRaw]:
+        """Run all retailer API scrapers in parallel."""
+        results = await asyncio.gather(
+            search_amazon(keyword),
+            search_ebay(keyword),
+            search_walmart(keyword),
+            return_exceptions=True,
+        )
+        candidates: list[DealRaw] = []
+        names = ["Amazon", "eBay", "Walmart"]
+        for name, result in zip(names, results):
+            if isinstance(result, Exception):
+                logger.warning("OrchestratorAgent: %s scraper failed: %s", name, result)
+            elif isinstance(result, list):
+                # Mark as API-sourced
+                for deal in result:
+                    deal.source_type = "api"
+                candidates.extend(result)
+                logger.info("OrchestratorAgent: %s returned %d deals", name, len(result))
+        return candidates
 
-        logger.info("OrchestratorAgent: %d candidates for %r", len(self._candidates), keyword)
-        return self._candidates
+    async def _brave_gap_fill(self, keyword: str, pool: list[DealRaw]) -> list[DealRaw]:
+        """Brave search → filter to unique URLs not in pool → fetch + extract."""
+        pool_urls = {d.url for d in pool if d.url and "google.com/search" not in d.url}
+        pool_domains = {_domain(u) for u in pool_urls}
+
+        try:
+            client = BraveSearchClient()
+            results = await client.search(f"{keyword} deal buy", n=12)
+        except Exception as exc:
+            logger.warning("OrchestratorAgent: Brave search failed: %s", exc)
+            return []
+
+        unique_urls: list[str] = []
+        for r in results:
+            dom = _domain(r.url)
+            if dom in _EDITORIAL_DOMAINS:
+                continue
+            if r.url in pool_urls:
+                continue
+            if dom in pool_domains:
+                continue  # already have a deal from this retailer
+            unique_urls.append(r.url)
+
+        if not unique_urls:
+            return []
+
+        logger.info("OrchestratorAgent: Brave gap-fill — %d unique URLs to fetch", len(unique_urls[:_MAX_BRAVE_FETCHES]))
+
+        sem = asyncio.Semaphore(2)
+
+        async def _fetch_and_extract(url: str) -> DealRaw | None:
+            async with sem:
+                text = await fetch_page(url)
+                if not text:
+                    return None
+                return await self._extract_from_page(url, text)
+
+        tasks = [_fetch_and_extract(u) for u in unique_urls[:_MAX_BRAVE_FETCHES]]
+        results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+        deals = []
+        for r in results_raw:
+            if isinstance(r, DealRaw):
+                deals.append(r)
+        return deals
+
+    async def _extract_from_page(self, url: str, text: str) -> DealRaw | None:
+        """Extract a single DealRaw from a fetched page using the LLM."""
+        domain = _domain(url)
+        messages = [
+            {"role": "system", "content": _PAGE_EXTRACT_PROMPT},
+            {"role": "user", "content": text[:4_000]},
+        ]
+        try:
+            response = await self._llm.complete(messages)
+            content = (response.content or "").strip()
+            if content.startswith("```"):
+                content = content.split("```")[1].lstrip("json").strip()
+            data = json.loads(content)
+            if data.get("products") is None:
+                return None
+            p = data if "title" in data else data.get("products", {})
+            if not p or not isinstance(p, dict):
+                return None
+            price = float(p.get("price") or 0)
+            if price <= 0:
+                return None
+            listed = float(p.get("listed_price") or price)
+            if listed < price:
+                listed = price
+            return DealRaw(
+                source=p.get("merchant") or domain,
+                title=str(p.get("title") or "").strip(),
+                url=url,
+                listed_price=listed,
+                sale_price=price,
+                condition=Condition(p.get("condition", "unknown")) if p.get("condition") in ("new", "used", "refurb", "unknown") else Condition.unknown,
+                source_type="scraped",
+            )
+        except Exception:
+            return None
 
     async def _resolve_all_organic(self) -> None:
-        """
-        Post-loop: resolve every candidate still holding a google.com placeholder URL.
-        Deduplicates by (title, source) before resolving to avoid wasting sessions.
-        Retries once on miss — catches random flakiness without burning extra sessions.
-        """
-        unresolved = [d for d in self._candidates if "google.com/search" in d.url]
+        unresolved = [d for d in self._google_candidates if d.url and "google.com/search" in d.url]
         if not unresolved:
             return
 
         seen: set[tuple[str, str]] = set()
-        unique_unresolved: list[DealRaw] = []
+        unique: list[DealRaw] = []
         for deal in unresolved:
             key = (deal.title.lower().strip(), deal.source.lower().strip())
             if key not in seen:
                 seen.add(key)
-                unique_unresolved.append(deal)
+                unique.append(deal)
 
         logger.info(
             "OrchestratorAgent: resolving %d organic URL(s) (%d duplicates dropped)",
-            len(unique_unresolved), len(unresolved) - len(unique_unresolved),
+            len(unique), len(unresolved) - len(unique),
         )
 
         sem = asyncio.Semaphore(4)
 
         async def _resolve_one(deal: DealRaw) -> None:
             if not deal.raw_button_label or not deal.search_query:
-                logger.debug("_resolve_all_organic: missing identity for %r", deal.title[:40])
                 return
             async with sem:
                 url = await find_url(
@@ -248,18 +354,14 @@ class OrchestratorAgent:
                     deal.raw_button_label, deal.search_query,
                 )
                 if not url:
-                    # Single retry — catches random Browserbase/network flakiness
                     url = await find_url(
                         self._llm, deal.title, deal.source,
                         deal.raw_button_label, deal.search_query,
                     )
                 if url:
                     deal.url = url
-                    logger.debug("_resolve_all_organic: resolved %r → %s", deal.title[:40], url[:60])
-                else:
-                    logger.debug("_resolve_all_organic: unresolved after retry: %r", deal.title[:40])
 
-        await asyncio.gather(*(_resolve_one(d) for d in unique_unresolved))
+        await asyncio.gather(*(_resolve_one(d) for d in unique))
 
     async def _dispatch(self, tc: Any, keyword: str) -> str:
         try:
@@ -267,10 +369,6 @@ class OrchestratorAgent:
                 return await self._tool_generate_queries(tc.arguments, keyword)
             elif tc.name == "search_shopping":
                 return await self._tool_search_shopping(tc.arguments)
-            elif tc.name == "search_web":
-                return await self._tool_search_web(tc.arguments)
-            elif tc.name == "fetch_page":
-                return await self._tool_fetch_page(tc.arguments)
             elif tc.name == "finish":
                 return "Research complete."
             else:
@@ -295,48 +393,21 @@ class OrchestratorAgent:
         if not deals:
             return f"Searched '{query}' — no deals extracted (CAPTCHA or empty results page)."
 
-        # Cap organics to limit downstream resolution sessions
         organic_count = 0
         for deal in deals:
-            if "google.com/search" not in deal.url:
-                continue  # featured — already has URL
+            if "google.com/search" not in (deal.url or ""):
+                continue
             deal.search_query = result.query
             if organic_count >= _MAX_ORGANIC_PER_QUERY:
-                # Drop excess organics — don't add to candidates at all
-                deals = [d for d in deals if "google.com/search" not in d.url or d.search_query]
+                deals = [d for d in deals if "google.com/search" not in (d.url or "") or d.search_query]
                 break
             idx = (deal.listing_index or 1) - 1
             if 0 <= idx < len(result.button_labels):
                 deal.raw_button_label = result.button_labels[idx]
             organic_count += 1
 
-        self._candidates.extend(deals)
+        self._google_candidates.extend(deals)
         return _deal_summary(deals, f"'{query}'")
-
-    async def _tool_search_web(self, args: dict) -> str:
-        query = args.get("query", "")
-        try:
-            client = BraveSearchClient()
-            results = await client.search(query, n=8)
-        except Exception as exc:
-            return f"Web search failed: {exc}"
-        if not results:
-            return f"No web results for '{query}'."
-        lines = [f"Web search results for '{query}':"]
-        for r in results:
-            lines.append(f"  • {r.title}: {r.url}")
-            if r.description:
-                lines.append(f"    {r.description[:120]}")
-        return "\n".join(lines)
-
-    async def _tool_fetch_page(self, args: dict) -> str:
-        url = args.get("url", "")
-        if not url:
-            return "No URL provided."
-        text = await fetch_page(url)
-        if not text:
-            return f"Failed to fetch {url}."
-        return text[:4_000]
 
     async def _extract_shopping_list(self, text: str) -> list[DealRaw]:
         messages = [
@@ -350,17 +421,37 @@ class OrchestratorAgent:
                 content = content.split("```")[1].lstrip("json").strip()
             data = json.loads(content)
             products = data.get("products", [])
-            logger.debug("_extract_shopping_list: LLM returned %d products", len(products))
         except Exception as exc:
             logger.debug("_extract_shopping_list: parse failed: %s", exc)
             return []
 
-        deals = []
-        for p in products:
-            deal = _product_to_deal_raw(p)
-            if deal:
-                deals.append(deal)
-        return deals
+        return [d for p in products if (d := _product_to_deal_raw(p)) is not None]
+
+
+def _dedup(candidates: list[DealRaw]) -> list[DealRaw]:
+    """Deduplicate by URL (exact) and ASIN. Google placeholder URLs are not dedup keys."""
+    seen_urls: set[str] = set()
+    seen_asins: set[str] = set()
+    result: list[DealRaw] = []
+    for d in candidates:
+        if d.asin and d.asin in seen_asins:
+            continue
+        url_key = d.url if d.url and "google.com/search" not in d.url else None
+        if url_key and url_key in seen_urls:
+            continue
+        if d.asin:
+            seen_asins.add(d.asin)
+        if url_key:
+            seen_urls.add(url_key)
+        result.append(d)
+    return result
+
+
+def _domain(url: str) -> str:
+    try:
+        return urlparse(url).netloc.lower().lstrip("www.")
+    except Exception:
+        return ""
 
 
 def _product_to_deal_raw(p: dict[str, Any]) -> DealRaw | None:
@@ -413,10 +504,7 @@ def _assistant_message(response: LLMResponse) -> dict[str, Any]:
             {
                 "id": tc.id,
                 "type": "function",
-                "function": {
-                    "name": tc.name,
-                    "arguments": json.dumps(tc.arguments),
-                },
+                "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
             }
             for tc in response.tool_calls
         ],
@@ -424,20 +512,17 @@ def _assistant_message(response: LLMResponse) -> dict[str, Any]:
 
 
 def _deal_summary(deals: list[DealRaw], source_label: str) -> str:
-    needs_url = [d for d in deals if "google.com/search" in d.url]
+    needs_url = [d for d in deals if d.url and "google.com/search" in d.url]
     lines = [f"Found {len(deals)} deal(s) from {source_label}:"]
     for d in deals[:_MAX_SUMMARY_DEALS]:
-        has_url = "google.com/search" not in d.url
+        has_url = not d.url or "google.com/search" not in d.url
         url_status = "URL ✓" if has_url else "URL pending"
         discount = (
             f" (was ${d.listed_price:.2f}, "
             f"{(d.listed_price - d.sale_price) / d.listed_price * 100:.0f}% off)"
-            if d.listed_price > d.sale_price
-            else ""
+            if d.listed_price > d.sale_price else ""
         )
         lines.append(f"  • [{d.source}] {d.title}: ${d.sale_price:.2f}{discount} [{url_status}]")
     if needs_url:
-        lines.append(
-            f"\n{len(needs_url)} organic listing(s) will have URLs resolved after research."
-        )
+        lines.append(f"\n{len(needs_url)} organic listing(s) will have URLs resolved after research.")
     return "\n".join(lines)

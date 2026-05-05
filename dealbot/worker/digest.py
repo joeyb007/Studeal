@@ -98,7 +98,8 @@ async def _send_digests() -> dict:
     skipped = 0
 
     async with get_async_session() as session:
-        users = (await session.execute(select(User))).scalars().all()
+        all_users = (await session.execute(select(User).where(User.is_pro == True))).scalars().all()  # noqa: E712
+        users = [u for u in all_users if u.is_pro]
 
         for user in users:
             matches = await _matched_deals_for_user(session, user, since)

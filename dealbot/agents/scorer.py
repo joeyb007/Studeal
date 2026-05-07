@@ -44,6 +44,11 @@ Scoring rubric:
 - 61-80: good — meaningful discount vs historical price
 - 81-100: exceptional — significant discount, price near all-time low
 
+If market context is provided, use it to calibrate:
+- Priced lower than similar items in catalog → score higher
+- Discount percentage larger than comparable deals → score higher
+- Similar items scoring 70+ at comparable price → match that tier
+
 Alert tiers:
 - "none":   score < 50
 - "digest": score 50-79

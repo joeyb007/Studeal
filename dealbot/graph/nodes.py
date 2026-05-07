@@ -18,15 +18,26 @@ from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 
 def _similar_deals_context(similar: list[Deal]) -> str | None:
-    """Format retrieved deals into a context string for the scorer's system prompt."""
+    """Format retrieved deals into a market context string for the scorer."""
     if not similar:
         return None
-    lines = ["Similar deals scored previously (use for market context):"]
+    lines = ["Market context — similar deals currently in catalog:"]
     for d in similar:
+        if d.real_discount_pct and d.real_discount_pct > 0:
+            price_info = (
+                f"${d.sale_price:.2f} (was ${d.listed_price:.2f}, "
+                f"{d.real_discount_pct:.0f}% off)"
+            )
+        else:
+            price_info = f"${d.sale_price:.2f} (no discount)"
         lines.append(
-            f"- {d.title}: score={d.score}, tier={d.alert_tier}, "
-            f"category={d.category}, sale_price=${d.sale_price:.2f}"
+            f"- {d.title}: {price_info} | score={d.score} | "
+            f"{d.alert_tier} | {d.category} | {d.condition}"
         )
+    lines.append(
+        "Use these to benchmark: if this deal is priced lower or discounted more "
+        "than similar items, score it higher."
+    )
     return "\n".join(lines)
 
 

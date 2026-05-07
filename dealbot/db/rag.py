@@ -14,6 +14,15 @@ _DEFAULT_K = 3
 _DEDUP_THRESHOLD = 0.35
 
 
+def _cosine_distance(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 1.0
+    return 1.0 - dot / (norm_a * norm_b)
+
+
 async def retrieve_similar_deals(
     embedding: list[float],
     session: AsyncSession,
@@ -78,7 +87,6 @@ async def keyword_covered_today(
         if closest is None or closest.embedding is None:
             return False
 
-        from dealbot.worker.matching import _cosine_distance  # avoid circular import at module level
         distance = _cosine_distance(closest.embedding, embedding)
         covered = distance <= threshold
         if covered:

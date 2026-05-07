@@ -75,18 +75,24 @@ def seed_deals(self) -> dict:
 
 async def _run_seed(llm: LLMClient) -> dict:
     graph = build_hunter_graph(llm)
-    results = {"processed": 0, "skipped": 0, "errors": 0}
+    sem = asyncio.Semaphore(3)
+    results: dict[str, int] = {"processed": 0, "skipped": 0, "errors": 0}
+    lock = asyncio.Lock()
 
-    for query in SEED_QUERIES:
-        try:
-            final_state = await graph.ainvoke({"keyword": query})
-            if final_state.get("keyword_covered"):
-                results["skipped"] += 1
-            else:
-                results["processed"] += 1
-        except Exception:
-            logger.exception("seed_deals: unhandled error for query '%s'", query)
-            results["errors"] += 1
+    async def _hunt_one(query: str) -> None:
+        async with sem:
+            try:
+                final_state = await graph.ainvoke({"keyword": query})
+                async with lock:
+                    if final_state.get("keyword_covered"):
+                        results["skipped"] += 1
+                    else:
+                        results["processed"] += 1
+            except Exception:
+                logger.exception("seed_deals: unhandled error for query '%s'", query)
+                async with lock:
+                    results["errors"] += 1
 
+    await asyncio.gather(*[_hunt_one(q) for q in SEED_QUERIES])
     logger.info("seed_deals: done — %s", results)
     return results

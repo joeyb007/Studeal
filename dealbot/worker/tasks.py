@@ -73,9 +73,9 @@ def hunt_deals(self) -> dict:
 
 async def _run_hunter(llm: LLMClient) -> dict:
     graph = build_hunter_graph(llm)
+    sem = asyncio.Semaphore(3)
 
     async with get_async_session() as session:
-        # Only hunt keywords from non-expired watchlists
         now = datetime.now(timezone.utc)
         result = await session.execute(
             select(WatchlistKeyword)
@@ -87,18 +87,23 @@ async def _run_hunter(llm: LLMClient) -> dict:
         keywords = result.scalars().all()
 
     logger.info("hunt_deals: %d keywords to process", len(keywords))
-    results = {"processed": 0, "skipped": 0, "errors": 0}
+    results: dict[str, int] = {"processed": 0, "skipped": 0, "errors": 0}
+    lock = asyncio.Lock()
 
-    for kw in keywords:
-        try:
-            final_state = await graph.ainvoke({"keyword": kw.keyword})
-            if final_state.get("keyword_covered"):
-                results["skipped"] += 1
-            else:
-                results["processed"] += 1
-        except Exception:
-            logger.exception("hunt_deals: unhandled error for keyword '%s'", kw.keyword)
-            results["errors"] += 1
+    async def _hunt_one(kw: WatchlistKeyword) -> None:
+        async with sem:
+            try:
+                final_state = await graph.ainvoke({"keyword": kw.keyword})
+                async with lock:
+                    if final_state.get("keyword_covered"):
+                        results["skipped"] += 1
+                    else:
+                        results["processed"] += 1
+            except Exception:
+                logger.exception("hunt_deals: unhandled error for keyword '%s'", kw.keyword)
+                async with lock:
+                    results["errors"] += 1
 
+    await asyncio.gather(*[_hunt_one(kw) for kw in keywords])
     logger.info("hunt_deals: done — %s", results)
     return results

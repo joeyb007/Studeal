@@ -3,7 +3,11 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 
+import logging
+
+import sentry_sdk
 from fastapi import FastAPI
+from sentry_sdk.integrations.logging import LoggingIntegration
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -18,6 +22,21 @@ from dealbot.config import validate_env
 
 _raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
 _ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+        integrations=[
+            LoggingIntegration(
+                level=logging.WARNING,
+                event_level=logging.ERROR,
+            )
+        ],
+    )
 
 
 @asynccontextmanager

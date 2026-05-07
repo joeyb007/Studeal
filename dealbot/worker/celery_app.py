@@ -5,10 +5,30 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+import logging
+
+import sentry_sdk
 from celery import Celery
 from celery.schedules import crontab
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+        integrations=[
+            CeleryIntegration(),
+            LoggingIntegration(
+                level=logging.WARNING,
+                event_level=logging.ERROR,
+            ),
+        ],
+    )
 
 logger = logging.getLogger(__name__)
 

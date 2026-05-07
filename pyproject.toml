@@ -29,6 +29,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "stripe>=8.0",
     "playwright>=1.44",
+    "sentry-sdk[fastapi,celery,sqlalchemy,httpx]>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -105,5 +105,16 @@ async def _run_hunter(llm: LLMClient) -> dict:
                     results["errors"] += 1
 
     await asyncio.gather(*[_hunt_one(kw) for kw in keywords])
-    logger.info("hunt_deals: done — %s", results)
+
+    total = len(keywords)
+    logger.info(
+        "hunt_deals complete: processed=%d skipped=%d errors=%d total=%d",
+        results["processed"], results["skipped"], results["errors"], total,
+    )
+    if total > 0 and results["processed"] == 0 and results["errors"] > 0:
+        logger.error(
+            "hunt_deals: ZERO keywords produced deals and %d errored — "
+            "pipeline may be failing",
+            results["errors"],
+        )
     return results

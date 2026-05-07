@@ -94,5 +94,22 @@ async def _run_seed(llm: LLMClient) -> dict:
                     results["errors"] += 1
 
     await asyncio.gather(*[_hunt_one(q) for q in SEED_QUERIES])
-    logger.info("seed_deals: done — %s", results)
+
+    total = len(SEED_QUERIES)
+    logger.info(
+        "seed_deals complete: processed=%d skipped=%d errors=%d total=%d",
+        results["processed"], results["skipped"], results["errors"], total,
+    )
+    zero_yield = results["errors"] + results["skipped"]
+    if results["processed"] == 0:
+        logger.error(
+            "seed_deals: ZERO deals produced across all %d queries — "
+            "pipeline may be blocked (Browserbase/Google Shopping)",
+            total,
+        )
+    elif zero_yield / total > 0.5:
+        logger.warning(
+            "seed_deals: low yield — %d/%d queries produced no new deals",
+            zero_yield, total,
+        )
     return results

@@ -42,3 +42,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = "-m 'not integration'"
+markers = [
+    "integration: requires Redis and a live database (run with -m integration)",
+]

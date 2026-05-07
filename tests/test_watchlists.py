@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 def _register_and_login(client, email="joe@example.com", password="secret123") -> str:
     client.post("/auth/register", json={"email": email, "password": password})

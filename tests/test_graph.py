@@ -45,7 +45,7 @@ DEAL = DealRaw(
 VALID_SCORE_JSON = json.dumps({
     "score": 82,
     "alert_tier": "push",
-    "category": "electronics/audio",
+    "category": "Electronics",
     "tags": ["headphones", "sony", "50-off"],
     "real_discount_pct": 50.0,
     "confidence": "high",

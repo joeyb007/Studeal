@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel
 from sqlalchemy import select, text
 

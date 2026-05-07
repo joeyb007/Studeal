@@ -21,7 +21,7 @@ async def _seed_deal(factory, **overrides) -> Deal:
         asin="B09XS7JWHH",
         score=82,
         alert_tier="push",
-        category="electronics/audio",
+        category="Electronics",
         tags=json.dumps(["headphones", "sony"]),
         confidence="high",
         real_discount_pct=50.0,
@@ -45,16 +45,16 @@ def test_health(client):
 
 
 @pytest.mark.asyncio
-async def test_list_deals_empty(client):
-    resp = client.get("/deals")
+async def test_list_deals_empty(authed_client):
+    resp = authed_client.get("/deals")
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 @pytest.mark.asyncio
-async def test_list_deals_returns_seeded_row(client, db_factory):
+async def test_list_deals_returns_seeded_row(authed_client, db_factory):
     await _seed_deal(db_factory)
-    resp = client.get("/deals")
+    resp = authed_client.get("/deals")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
@@ -64,10 +64,10 @@ async def test_list_deals_returns_seeded_row(client, db_factory):
 
 
 @pytest.mark.asyncio
-async def test_list_deals_filter_by_tier(client, db_factory):
+async def test_list_deals_filter_by_tier(authed_client, db_factory):
     await _seed_deal(db_factory, alert_tier="push", title="Deal A")
     await _seed_deal(db_factory, alert_tier="digest", title="Deal B", url="https://example.com/2")
-    resp = client.get("/deals?tier=push")
+    resp = authed_client.get("/deals?tier=push")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
@@ -75,15 +75,15 @@ async def test_list_deals_filter_by_tier(client, db_factory):
 
 
 @pytest.mark.asyncio
-async def test_get_deal_by_id(client, db_factory):
+async def test_get_deal_by_id(authed_client, db_factory):
     deal = await _seed_deal(db_factory)
-    resp = client.get(f"/deals/{deal.id}")
+    resp = authed_client.get(f"/deals/{deal.id}")
     assert resp.status_code == 200
     assert resp.json()["id"] == deal.id
     assert resp.json()["title"] == "Sony WH-1000XM5"
 
 
-def test_get_deal_not_found(client):
-    resp = client.get("/deals/99999")
+def test_get_deal_not_found(authed_client):
+    resp = authed_client.get("/deals/99999")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Deal not found"

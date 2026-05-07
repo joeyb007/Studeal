@@ -43,7 +43,7 @@ DEAL = DealRaw(
 VALID_SCORE_JSON = json.dumps({
     "score": 82,
     "alert_tier": "push",
-    "category": "electronics/audio",
+    "category": "Electronics",
     "tags": ["headphones", "sony", "50-off"],
     "real_discount_pct": 50.0,
     "confidence": "high",
@@ -74,7 +74,7 @@ async def test_scorer_calls_tool_then_scores():
 
     assert result.score == 82
     assert result.alert_tier == AlertTier.push
-    assert result.category == "electronics/audio"
+    assert result.category == "Electronics"
     assert result.confidence == "high"
     assert llm.call_count == 2
 

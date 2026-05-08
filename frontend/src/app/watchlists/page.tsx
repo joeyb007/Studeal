@@ -1,10 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
+
+interface WatchlistContext {
+  product_query: string;
+  max_budget: number | null;
+  min_discount_pct: number | null;
+  condition: string[];
+  brands: string[];
+  keywords: string[];
+}
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 interface Watchlist {
   id: number;
@@ -13,6 +27,7 @@ interface Watchlist {
   min_score: number;
   alert_tier_threshold: string;
   expires_at: string | null;
+  context: WatchlistContext | null;
 }
 
 interface Deal {
@@ -49,6 +64,7 @@ function pct(listed: number, sale: number) {
 
 function DealRow({ deal }: { deal: Deal }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
+  const buyUrl = deal.affiliate_url || deal.url;
   return (
     <div className={styles.dealRow}>
       <div className={styles.dealRowLeft}>
@@ -63,8 +79,8 @@ function DealRow({ deal }: { deal: Deal }) {
         <span className={[styles.dealTier, TIER_CLASS[deal.alert_tier] ?? ""].join(" ")}>
           {TIER_LABELS[deal.alert_tier] ?? deal.alert_tier}
         </span>
-        {deal.url && (
-          <a href={deal.url} target="_blank" rel="noopener noreferrer" className={styles.dealBuyBtn}>
+        {buyUrl && (
+          <a href={buyUrl} target="_blank" rel="noopener noreferrer" className={styles.dealBuyBtn}>
             Buy →
           </a>
         )}
@@ -76,28 +92,62 @@ function DealRow({ deal }: { deal: Deal }) {
 function WatchlistCard({
   watchlist,
   onDelete,
+  token,
 }: {
   watchlist: Watchlist;
   onDelete: (id: number) => void;
+  token: string | undefined;
 }) {
   const [deals, setDeals] = useState<Deal[] | null>(null);
+  const [dealCount, setDealCount] = useState<number | null>(null);
+  const [usedFallback, setUsedFallback] = useState(false);
   const [loadingDeals, setLoadingDeals] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [ctx, setCtx] = useState<WatchlistContext | null>(watchlist.context);
+  const [patching, setPatching] = useState(false);
 
   const days = watchlist.expires_at ? daysUntil(watchlist.expires_at) : null;
 
   async function loadDeals() {
-    if (deals !== null) return;
     setLoadingDeals(true);
     try {
-      const res = await fetch(`/api/watchlists/${watchlist.id}/deals`);
+      const res = await fetch(`/api/watchlists/${watchlist.id}/deals`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
-      setDeals(Array.isArray(data) ? data : []);
+      const dealList: Deal[] = Array.isArray(data) ? data : (data.deals ?? []);
+      setDeals(dealList);
+      setDealCount(dealList.length);
+      setUsedFallback(data.filtered === false);
     } catch {
       setDeals([]);
     }
     setLoadingDeals(false);
+  }
+
+  async function patchContext(patch: Partial<WatchlistContext>) {
+    if (!token) return;
+    setPatching(true);
+    try {
+      const res = await fetch(`/api/watchlists/${watchlist.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCtx(data.context);
+        setDeals(null);
+        setDealCount(null);
+        if (expanded) loadDeals();
+      }
+    } finally {
+      setPatching(false);
+    }
   }
 
   function toggle() {
@@ -108,7 +158,10 @@ function WatchlistCard({
   async function handleDelete() {
     if (!confirm(`Delete "${watchlist.name}"?`)) return;
     setDeleting(true);
-    await fetch(`/api/watchlists/${watchlist.id}`, { method: "DELETE" });
+    await fetch(`/api/watchlists/${watchlist.id}`, {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     onDelete(watchlist.id);
   }
 
@@ -137,6 +190,72 @@ function WatchlistCard({
         ))}
       </div>
 
+      {ctx && (
+        <div className={styles.filterControls}>
+          <div className={styles.filterRow}>
+            <label className={styles.filterLabel}>Budget</label>
+            <input
+              className={styles.filterInput}
+              type="number"
+              placeholder="Max $"
+              defaultValue={ctx.max_budget ?? ""}
+              disabled={patching}
+              onBlur={e => {
+                const val = parseFloat(e.target.value);
+                if (!isNaN(val) && val !== ctx.max_budget) patchContext({ max_budget: val });
+                if (!e.target.value) patchContext({ max_budget: null });
+              }}
+            />
+          </div>
+          <div className={styles.filterRow}>
+            <label className={styles.filterLabel}>Min discount</label>
+            <input
+              className={styles.filterInput}
+              type="number"
+              placeholder="% off"
+              defaultValue={ctx.min_discount_pct ?? ""}
+              disabled={patching}
+              onBlur={e => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val !== ctx.min_discount_pct) patchContext({ min_discount_pct: val });
+                if (!e.target.value) patchContext({ min_discount_pct: null });
+              }}
+            />
+          </div>
+          <div className={styles.filterRow}>
+            <label className={styles.filterLabel}>Condition</label>
+            <div className={styles.conditionPills}>
+              {(["new", "refurb", "used"] as const).map(c => (
+                <button
+                  key={c}
+                  disabled={patching}
+                  className={[
+                    styles.pill,
+                    (ctx.condition.length === 0 || ctx.condition.includes(c)) ? styles.pillActive : "",
+                  ].join(" ")}
+                  onClick={() => {
+                    const current = ctx.condition;
+                    const next = current.includes(c)
+                      ? current.filter(x => x !== c)
+                      : [...current, c];
+                    patchContext({ condition: next });
+                  }}
+                >
+                  {c.charAt(0).toUpperCase() + c.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {dealCount !== null && (
+            <p className={styles.dealCount}>
+              {usedFallback
+                ? "No exact matches — showing closest deals"
+                : `${dealCount} deal${dealCount !== 1 ? "s" : ""} match your filters`}
+            </p>
+          )}
+        </div>
+      )}
+
       {expanded && (
         <div className={styles.dealsSection}>
           {loadingDeals && <p className={styles.dealsLoading}>Finding matches…</p>}
@@ -154,21 +273,34 @@ function WatchlistCard({
   );
 }
 
-export default function WatchlistsPage() {
+function WatchlistsPageInner() {
   const { data: session } = useSession();
-  const token = session?.accessToken;
+  const token = (session as any)?.accessToken as string | undefined;
   const router = useRouter();
   const searchParams = useSearchParams();
+
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+
+  // Chat state
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatContext, setChatContext] = useState<WatchlistContext | null>(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatComplete, setChatComplete] = useState(false);
+  const [chatName, setChatName] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [atCap, setAtCap] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [modal, setModal] = useState<{ type: "cancelled" | "error"; message: string } | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, chatLoading]);
 
   useEffect(() => {
     if (searchParams.get("checkout_cancelled") === "1") {
@@ -194,18 +326,60 @@ export default function WatchlistsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  async function handleCreate(e: React.SyntheticEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!token) return;
+  function openChat() {
+    setShowChat(true);
+    setChatMessages([{
+      role: "assistant",
+      content: "Hey! I'm Dexter, your deal-hunting sidekick 🔥 What are you looking to buy?",
+    }]);
+    setChatContext(null);
+    setChatComplete(false);
+    setChatInput("");
+    setChatName("");
     setFormError(null);
+  }
+
+  async function sendChatMessage() {
+    if (!chatInput.trim() || chatLoading) return;
+    const userMsg: ChatMessage = { role: "user", content: chatInput.trim() };
+    const newMessages = [...chatMessages, userMsg];
+    setChatMessages(newMessages);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const res = await fetch("/api/watchlists/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ messages: newMessages, context: chatContext }),
+      });
+      const data = await res.json();
+      setChatMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
+      setChatContext(data.context);
+      if (data.is_complete) setChatComplete(true);
+    } catch {
+      setChatMessages(prev => [...prev, {
+        role: "assistant",
+        content: "Oops, something went wrong — try again? 😅",
+      }]);
+    }
+    setChatLoading(false);
+  }
+
+  async function handleCreateFromChat() {
+    if (!chatContext || !chatName.trim() || !token) return;
     setSubmitting(true);
+    setFormError(null);
     const res = await fetch("/api/watchlists", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ name, description }),
+      body: JSON.stringify({ name: chatName, context: chatContext }),
     });
     const data = await res.json();
     setSubmitting(false);
@@ -214,11 +388,12 @@ export default function WatchlistsPage() {
       setFormError(data.detail ?? "Failed to create watchlist");
       return;
     }
-    setAtCap(false);
     setWatchlists(prev => [...prev, data]);
-    setName("");
-    setDescription("");
-    setShowForm(false);
+    setShowChat(false);
+    setChatMessages([]);
+    setChatContext(null);
+    setChatComplete(false);
+    setChatName("");
   }
 
   async function handleUpgrade() {
@@ -255,11 +430,15 @@ export default function WatchlistsPage() {
           </div>
         </div>
       )}
+
       <main className={styles.main}>
         <div className={styles.header}>
           <h1 className={styles.heading}>Watchlists</h1>
-          <button className={styles.addBtn} onClick={() => setShowForm(v => !v)}>
-            {showForm ? "Cancel" : "+ New watchlist"}
+          <button
+            className={styles.addBtn}
+            onClick={() => (showChat ? setShowChat(false) : openChat())}
+          >
+            {showChat ? "Cancel" : "+ New watchlist"}
           </button>
         </div>
 
@@ -272,38 +451,70 @@ export default function WatchlistsPage() {
           </div>
         )}
 
-        {showForm && (
-          <form className={styles.form} onSubmit={handleCreate}>
-            <div className={styles.formRow}>
-              <div className={styles.field}>
-                <label className={styles.label}>Name</label>
+        {showChat && (
+          <div className={styles.chatPanel}>
+            <div className={styles.chatMessages}>
+              {chatMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={msg.role === "assistant" ? styles.chatMsgAgent : styles.chatMsgUser}
+                >
+                  {msg.content}
+                </div>
+              ))}
+              {chatLoading && (
+                <div className={styles.chatMsgAgent}>
+                  <span className={styles.chatTyping}>···</span>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {chatComplete ? (
+              <div className={styles.chatComplete}>
+                <p className={styles.chatCompleteLabel}>
+                  Dexter found your vibe ✓ Give this watchlist a name:
+                </p>
                 <input
                   className={styles.input}
                   type="text"
                   placeholder="e.g. Gaming gear"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  required
+                  value={chatName}
+                  onChange={e => setChatName(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleCreateFromChat(); }}
+                  autoFocus
                 />
+                {formError && <p className={styles.error}>{formError}</p>}
+                <button
+                  className={styles.submitBtn}
+                  onClick={handleCreateFromChat}
+                  disabled={submitting || !chatName.trim()}
+                >
+                  {submitting ? "Creating..." : "Create watchlist →"}
+                </button>
               </div>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.label}>What are you looking for?</label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="e.g. cheap mechanical keyboard for studying"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                required
-              />
-              <p className={styles.hint}>Describe it naturally — we&apos;ll extract the keywords and start hunting immediately.</p>
-            </div>
-            {formError && <p className={styles.error}>{formError}</p>}
-            <button className={styles.submitBtn} type="submit" disabled={submitting}>
-              {submitting ? "Creating..." : "Create watchlist"}
-            </button>
-          </form>
+            ) : (
+              <div className={styles.chatInputRow}>
+                <input
+                  className={styles.chatInput}
+                  type="text"
+                  placeholder="Type your reply..."
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") sendChatMessage(); }}
+                  disabled={chatLoading}
+                  autoFocus
+                />
+                <button
+                  className={styles.chatSendBtn}
+                  onClick={sendChatMessage}
+                  disabled={chatLoading || !chatInput.trim()}
+                >
+                  Send
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {loading ? (
@@ -316,6 +527,7 @@ export default function WatchlistsPage() {
               <WatchlistCard
                 key={wl.id}
                 watchlist={wl}
+                token={token}
                 onDelete={id => setWatchlists(prev => prev.filter(w => w.id !== id))}
               />
             ))}
@@ -323,5 +535,13 @@ export default function WatchlistsPage() {
         )}
       </main>
     </>
+  );
+}
+
+export default function WatchlistsPage() {
+  return (
+    <Suspense>
+      <WatchlistsPageInner />
+    </Suspense>
   );
 }

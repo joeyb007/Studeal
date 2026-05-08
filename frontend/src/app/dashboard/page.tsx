@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -132,7 +132,7 @@ function DealCard({ deal, index }: { deal: Deal; index: number }) {
   );
 }
 
-export default function DashboardPage() {
+function DashboardPageInner() {
   const { data: session } = useSession();
   const token = session?.accessToken;
   const router = useRouter();
@@ -382,5 +382,13 @@ export default function DashboardPage() {
         </div>
       </main>
     </>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense>
+      <DashboardPageInner />
+    </Suspense>
   );
 }

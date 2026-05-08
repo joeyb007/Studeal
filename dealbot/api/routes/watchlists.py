@@ -92,6 +92,11 @@ class WatchlistDealResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class WatchlistDealsResponse(BaseModel):
+    deals: list[WatchlistDealResponse]
+    filtered: bool  # False = min_discount_pct was relaxed (fallback)
+
+
 @router.post("/chat", response_model=TurnResult)
 async def chat_turn(
     body: ChatTurnRequest,
@@ -175,17 +180,23 @@ async def create_watchlist(
     )
 
 
-@router.get("/{watchlist_id}/deals", response_model=list[WatchlistDealResponse])
+@router.get("/{watchlist_id}/deals", response_model=WatchlistDealsResponse)
 async def list_watchlist_deals(
     watchlist_id: int,
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(get_current_user),
-) -> list[WatchlistDealResponse]:
-    """Return deals semantically matched to a watchlist's keywords via pgvector."""
+) -> WatchlistDealsResponse:
+    """Return deals matched to watchlist keywords, filtered by WatchlistContext."""
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None or watchlist.user_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+
+        ctx = (
+            WatchlistContext.model_validate_json(watchlist.context)
+            if watchlist.context
+            else None
+        )
 
         kw_result = await session.execute(
             select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist_id)
@@ -203,24 +214,52 @@ async def list_watchlist_deals(
                     seen_ids.add(d.id)
                     deals.append(d)
 
+    # Apply context filters
+    filtered = True
+    if ctx:
+        if ctx.max_budget:
+            deals = [d for d in deals if d.sale_price <= ctx.max_budget]
+        if ctx.condition:
+            deals = [d for d in deals if d.condition in ctx.condition]
+        if ctx.brands:
+            deals = [
+                d for d in deals
+                if any(
+                    b.lower() in d.title.lower() or b.lower() in d.source.lower()
+                    for b in ctx.brands
+                )
+            ]
+        if ctx.min_discount_pct:
+            strict = [
+                d for d in deals
+                if d.real_discount_pct and d.real_discount_pct >= ctx.min_discount_pct
+            ]
+            if strict:
+                deals = strict
+            else:
+                filtered = False  # fallback: relax min_discount_pct
+
     deals.sort(key=lambda d: d.score, reverse=True)
-    return [
-        WatchlistDealResponse(
-            id=d.id,
-            title=d.title,
-            source=d.source,
-            url=d.url,
-            listed_price=d.listed_price,
-            sale_price=d.sale_price,
-            score=d.score,
-            alert_tier=d.alert_tier,
-            category=d.category,
-            real_discount_pct=d.real_discount_pct,
-            student_eligible=d.student_eligible,
-            condition=d.condition,
-        )
-        for d in deals[:limit]
-    ]
+    return WatchlistDealsResponse(
+        deals=[
+            WatchlistDealResponse(
+                id=d.id,
+                title=d.title,
+                source=d.source,
+                url=d.url,
+                listed_price=d.listed_price,
+                sale_price=d.sale_price,
+                score=d.score,
+                alert_tier=d.alert_tier,
+                category=d.category,
+                real_discount_pct=d.real_discount_pct,
+                student_eligible=d.student_eligible,
+                condition=d.condition,
+            )
+            for d in deals[:limit]
+        ],
+        filtered=filtered,
+    )
 
 
 @router.post("/{watchlist_id}/renew", response_model=WatchlistResponse)

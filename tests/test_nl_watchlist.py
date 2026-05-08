@@ -125,3 +125,76 @@ async def test_agent_falls_back_on_bad_json():
 
     assert result.reply != ""
     assert result.is_complete is False
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_returns_turn_result(authed_client):
+    from dealbot.schemas import TurnResult, WatchlistContext
+
+    mock_result = TurnResult(
+        reply="Gaming laptops — love it! What's your budget?",
+        context=WatchlistContext(
+            product_query="gaming laptop",
+            keywords=["gaming laptop deal", "rtx laptop sale"],
+        ),
+        is_complete=False,
+    )
+
+    with patch(
+        "dealbot.agents.nl_watchlist.NLWatchlistAgent.turn",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ):
+        resp = authed_client.post(
+            "/watchlists/chat",
+            json={
+                "messages": [{"role": "user", "content": "I want gaming laptop deals"}],
+                "context": None,
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_complete"] is False
+    assert data["context"]["product_query"] == "gaming laptop"
+    assert "reply" in data
+
+
+def test_patch_watchlist_404_on_missing(authed_client):
+    resp = authed_client.patch(
+        "/watchlists/99999",
+        json={"max_budget": 800.0},
+    )
+    assert resp.status_code == 404
+
+
+def test_create_watchlist_with_context(authed_client):
+    with patch("dealbot.worker.tasks.hunt_keyword.delay"):
+        resp = authed_client.post(
+            "/watchlists",
+            json={
+                "name": "Gaming Laptops",
+                "context": {
+                    "product_query": "gaming laptop",
+                    "max_budget": 1000.0,
+                    "min_discount_pct": None,
+                    "condition": ["new"],
+                    "brands": [],
+                    "keywords": [
+                        "gaming laptop deal",
+                        "rtx laptop sale canada",
+                        "budget gaming laptop",
+                    ],
+                },
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert set(data["keywords"]) == {
+        "gaming laptop deal",
+        "rtx laptop sale canada",
+        "budget gaming laptop",
+    }
+    assert data["context"]["product_query"] == "gaming laptop"
+    assert data["context"]["max_budget"] == 1000.0

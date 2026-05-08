@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -9,6 +10,7 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 
 from dealbot.agents.keyword_extractor import extract_keywords
+from dealbot.agents.nl_watchlist import NLWatchlistAgent
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal, User, Watchlist, WatchlistKeyword
@@ -17,6 +19,7 @@ from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.llm.ollama import OllamaClient
 from dealbot.llm.vllm import vLLMClient
+from dealbot.schemas import ChatMessage, TurnResult, WatchlistContext, WatchlistContextPatch
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
@@ -26,7 +29,21 @@ PRO_WATCHLIST_CAP = 5
 
 
 def _get_llm() -> LLMClient:
-    return vLLMClient() if os.environ.get("LLM_BACKEND") == "vllm" else OllamaClient()
+    backend = os.environ.get("LLM_BACKEND", "openai")
+    if backend == "openai":
+        from dealbot.llm.openai_client import OpenAIClient
+        return OpenAIClient()
+    if backend == "groq":
+        from dealbot.llm.groq_client import GroqClient
+        return GroqClient()
+    if backend == "vllm":
+        return vLLMClient()
+    return OllamaClient()
+
+
+class ChatTurnRequest(BaseModel):
+    messages: list[ChatMessage]
+    context: WatchlistContext | None = None
 
 
 def _expiry() -> datetime:
@@ -35,15 +52,16 @@ def _expiry() -> datetime:
 
 class WatchlistCreate(BaseModel):
     name: str
-    description: str | None = None   # natural language — LLM extracts keywords
-    keywords: list[str] = []         # explicit keywords (used if description is absent)
+    description: str | None = None
+    keywords: list[str] = []
+    context: WatchlistContext | None = None  # from NL chat flow
     min_score: int = 50
     alert_tier_threshold: str = "digest"
 
     @model_validator(mode="after")
     def require_description_or_keywords(self) -> "WatchlistCreate":
-        if not self.description and not self.keywords:
-            raise ValueError("Provide either a description or at least one keyword.")
+        if not self.description and not self.keywords and not self.context:
+            raise ValueError("Provide either a description, keywords, or a context.")
         return self
 
 
@@ -54,6 +72,7 @@ class WatchlistResponse(BaseModel):
     min_score: int
     alert_tier_threshold: str
     expires_at: Optional[str]
+    context: Optional[dict] = None
 
 
 class WatchlistDealResponse(BaseModel):
@@ -71,6 +90,19 @@ class WatchlistDealResponse(BaseModel):
     condition: str
 
     model_config = {"from_attributes": True}
+
+
+@router.post("/chat", response_model=TurnResult)
+async def chat_turn(
+    body: ChatTurnRequest,
+    current_user: User = Depends(get_current_user),
+) -> TurnResult:
+    """Single stateless conversation turn with Dexter, the watchlist agent."""
+    agent = NLWatchlistAgent(_get_llm())
+    return await agent.turn(
+        messages=[m.model_dump() for m in body.messages],
+        context=body.context,
+    )
 
 
 @router.post("", response_model=WatchlistResponse, status_code=status.HTTP_201_CREATED)
@@ -95,7 +127,9 @@ async def create_watchlist(
             )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
-        if body.description and not body.keywords:
+        if body.context and body.context.keywords:
+            keywords = [kw.lower().strip() for kw in body.context.keywords]
+        elif body.description and not body.keywords:
             keywords = await extract_keywords(body.description, _get_llm())
         else:
             keywords = [kw.lower().strip() for kw in body.keywords]
@@ -106,6 +140,7 @@ async def create_watchlist(
             min_score=body.min_score,
             alert_tier_threshold=body.alert_tier_threshold,
             expires_at=_expiry(),
+            context=body.context.model_dump_json() if body.context else None,
         )
         session.add(watchlist)
         await session.flush()
@@ -136,6 +171,7 @@ async def create_watchlist(
         min_score=watchlist.min_score,
         alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
+        context=json.loads(watchlist.context) if watchlist.context else None,
     )
 
 
@@ -213,6 +249,53 @@ async def renew_watchlist(
         min_score=watchlist.min_score,
         alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
+    )
+
+
+@router.patch("/{watchlist_id}", response_model=WatchlistResponse)
+async def patch_watchlist(
+    watchlist_id: int,
+    body: WatchlistContextPatch,
+    current_user: User = Depends(get_current_user),
+) -> WatchlistResponse:
+    """Update editable context fields (budget, discount, condition, brands)."""
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+
+        ctx = (
+            WatchlistContext.model_validate_json(watchlist.context)
+            if watchlist.context
+            else WatchlistContext(product_query="", keywords=[])
+        )
+
+        if body.max_budget is not None:
+            ctx.max_budget = body.max_budget
+        if body.min_discount_pct is not None:
+            ctx.min_discount_pct = body.min_discount_pct
+        if body.condition is not None:
+            ctx.condition = body.condition
+        if body.brands is not None:
+            ctx.brands = body.brands
+
+        watchlist.context = ctx.model_dump_json()
+        await session.commit()
+        await session.refresh(watchlist)
+
+        kw_result = await session.execute(
+            select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist.id)
+        )
+        keywords = [k.keyword for k in kw_result.scalars().all()]
+
+    return WatchlistResponse(
+        id=watchlist.id,
+        name=watchlist.name,
+        keywords=keywords,
+        min_score=watchlist.min_score,
+        alert_tier_threshold=watchlist.alert_tier_threshold,
+        expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
+        context=json.loads(watchlist.context) if watchlist.context else None,
     )
 
 

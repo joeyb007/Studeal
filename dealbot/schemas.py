@@ -66,3 +66,31 @@ class DealScore(BaseModel):
     real_discount_pct: Optional[float] = None
     confidence: str = "high"  # "high" | "low" (low if max iterations hit)
     condition: Condition = Condition.unknown
+
+
+class WatchlistContext(BaseModel):
+    product_query: str
+    max_budget: Optional[float] = None
+    min_discount_pct: Optional[int] = None
+    condition: list[str] = []
+    brands: list[str] = []
+    keywords: list[str] = []
+
+
+class ChatMessage(BaseModel):
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class TurnResult(BaseModel):
+    reply: str
+    context: WatchlistContext
+    is_complete: bool
+
+
+class WatchlistContextPatch(BaseModel):
+    max_budget: Optional[float] = None
+    min_discount_pct: Optional[int] = None
+    condition: Optional[list[str]] = None
+    brands: Optional[list[str]] = None
+

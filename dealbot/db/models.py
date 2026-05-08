@@ -74,6 +74,7 @@ class Watchlist(Base):
     min_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     alert_tier_threshold: Mapped[str] = mapped_column(String(16), nullable=False, default="digest")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="watchlists")
     keywords: Mapped[list[WatchlistKeyword]] = relationship(

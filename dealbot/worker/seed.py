@@ -5,11 +5,18 @@ import logging
 import os
 
 from dealbot.graph.graph import build_hunter_graph
+from dealbot.graph.nodes import score_and_persist_node
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.ollama import OllamaClient
 from dealbot.llm.openai_client import OpenAIClient
 from dealbot.llm.vllm import vLLMClient
+from dealbot.scrapers.community import (
+    COMMUNITY_RSS_FEEDS,
+    STUDENT_DEAL_SOURCES,
+    fetch_rss_deals,
+    fetch_site_deals,
+)
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -45,6 +52,11 @@ SEED_QUERIES = [
     "backpack for college on sale",
     "water bottle insulated cheap",
     "bike lock sale",
+    # Student-specific
+    "student laptop deals canada",
+    "apple education discount canada",
+    "student discount electronics canada",
+    "unidays canada deals",
 ]
 
 
@@ -73,6 +85,39 @@ def seed_deals(self) -> dict:
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 
 
+async def _run_community_sources(llm: LLMClient) -> dict:
+    """Fetch RSS feeds and student deal sites, score and persist each deal found."""
+    sem = asyncio.Semaphore(3)
+    results: dict[str, int] = {"persisted": 0, "errors": 0}
+    lock = asyncio.Lock()
+
+    async def _process_source(coro) -> None:
+        async with sem:
+            try:
+                deals = await coro
+                for deal in deals:
+                    try:
+                        await score_and_persist_node({"deal": deal}, llm)
+                        async with lock:
+                            results["persisted"] += 1
+                    except Exception:
+                        logger.exception("community: failed to score/persist '%s'", deal.title)
+                        async with lock:
+                            results["errors"] += 1
+            except Exception:
+                logger.exception("community: source fetch failed")
+                async with lock:
+                    results["errors"] += 1
+
+    tasks = (
+        [_process_source(fetch_rss_deals(llm, url)) for url in COMMUNITY_RSS_FEEDS]
+        + [_process_source(fetch_site_deals(llm, url)) for url in STUDENT_DEAL_SOURCES]
+    )
+    await asyncio.gather(*tasks)
+    logger.info("community_sources: persisted=%d errors=%d", results["persisted"], results["errors"])
+    return results
+
+
 async def _run_seed(llm: LLMClient) -> dict:
     graph = build_hunter_graph(llm)
     sem = asyncio.Semaphore(3)
@@ -93,7 +138,11 @@ async def _run_seed(llm: LLMClient) -> dict:
                 async with lock:
                     results["errors"] += 1
 
-    await asyncio.gather(*[_hunt_one(q) for q in SEED_QUERIES])
+    # Run seed queries and community sources in parallel
+    await asyncio.gather(
+        asyncio.gather(*[_hunt_one(q) for q in SEED_QUERIES]),
+        _run_community_sources(llm),
+    )
 
     total = len(SEED_QUERIES)
     logger.info(

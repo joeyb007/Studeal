@@ -16,7 +16,7 @@ class MockLLM(LLMClient):
         self._content = content
         self.call_count = 0
 
-    async def complete(self, messages: list[dict[str, Any]], tools=None) -> LLMResponse:
+    async def complete(self, messages: list[dict[str, Any]], tools=None, response_format=None) -> LLMResponse:
         self.call_count += 1
         return LLMResponse(content=self._content, tool_calls=[])
 

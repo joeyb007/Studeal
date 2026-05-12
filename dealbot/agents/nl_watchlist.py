@@ -68,18 +68,21 @@ class NLWatchlistAgent:
         llm_messages = [{"role": "system", "content": system_content}] + list(messages)
 
         try:
-            response = await self._llm.complete(llm_messages)
-            content = (response.content or "").strip()
-            if content.startswith("```"):
-                content = content.split("```")[1].lstrip("json").strip()
-            data = json.loads(content)
+            response = await self._llm.complete(
+                llm_messages,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(response.content or "{}")
             return TurnResult(
                 reply=data["reply"],
                 context=WatchlistContext(**data["context"]),
                 is_complete=bool(data.get("is_complete", False)),
             )
         except Exception:
-            logger.warning("NLWatchlistAgent: failed to parse LLM response, using fallback")
+            logger.warning(
+                "NLWatchlistAgent: failed — raw: %r",
+                (response.content or "")[:300] if "response" in dir() else "no response",
+            )
             return TurnResult(
                 reply="Hmm, I got a bit confused there — could you try again? 😅",
                 context=context or _EMPTY_CONTEXT,

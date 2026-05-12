@@ -26,6 +26,7 @@ class OpenAIClient(LLMClient):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -37,6 +38,8 @@ class OpenAIClient(LLMClient):
         }
         if tools:
             payload["tools"] = tools
+        if response_format:
+            payload["response_format"] = response_format
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(

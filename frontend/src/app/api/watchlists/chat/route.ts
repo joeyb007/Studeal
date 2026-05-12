@@ -3,19 +3,21 @@ import { auth } from "@/auth";
 
 const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8001";
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.accessToken) {
-    return NextResponse.redirect(new URL("/", req.url));
+    return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
   }
 
-  const { searchParams } = new URL(req.url);
-  const upstream = `${API_BASE}/deals?${searchParams.toString()}`;
-
+  const body = await req.json();
   try {
-    const res = await fetch(upstream, {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${session.accessToken}` },
+    const res = await fetch(`${API_BASE}/watchlists/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });

@@ -99,7 +99,7 @@ export default function Home() {
             {isLoggedIn ? (
               <>
                 <a href="/dashboard" className={styles.navLink}>Daily Drops</a>
-                <a href="/watchlists" className={styles.navLink}>Watchlists</a>
+                <a href="/watchlists" className={styles.navLink}>My Agents</a>
                 <button className={styles.navLink} onClick={() => signOut({ callbackUrl: "/" })}>Log out</button>
               </>
             ) : (

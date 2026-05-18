@@ -30,12 +30,6 @@ const CONDITION_CLASS: Record<string, string> = {
   refurb: styles.condRefurb,
 };
 const TIER_LABELS: Record<string, string> = { push: "Hot", digest: "Good", none: "Mild" };
-const TIER_CLASS: Record<string, string> = {
-  push: styles.tierPush,
-  digest: styles.tierDigest,
-  none: styles.tierNone,
-};
-
 const CATEGORIES = ["Electronics", "Laptops", "Tablets", "Phones", "Audio", "Gaming", "Accessories", "Software", "Books", "Clothing", "Food & Drink", "Travel", "Home", "Other"];
 const CONDITIONS = ["new", "used", "refurb"];
 const TIERS = ["push", "digest", "none"];
@@ -46,41 +40,32 @@ function pct(listed: number, sale: number) {
 
 function DealCard({ deal, index = 0 }: { deal: Deal; index?: number }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
+  const buyUrl = deal.affiliate_url ?? deal.url;
   return (
     <div className={styles.card} style={{ animationDelay: `${index * 50}ms` }}>
-      <div className={styles.discountBadge}>−{discount}%</div>
       <div className={styles.cardBody}>
-        <div className={styles.cardMeta}>
+        <div className={styles.cardTop}>
           <span className={styles.source}>{deal.source}</span>
-          <span className={styles.category}>{deal.category}</span>
+          {deal.student_eligible && <span className={styles.studentBadge}>Student</span>}
         </div>
         <p className={styles.title}>{deal.title}</p>
         <div className={styles.prices}>
           <span className={styles.salePrice}>${deal.sale_price.toFixed(2)}</span>
           <span className={styles.listedPrice}>${deal.listed_price.toFixed(2)}</span>
+          <span className={styles.discountInline}>−{discount}%</span>
         </div>
       </div>
       <div className={styles.cardFooter}>
         <div className={styles.badges}>
-          {deal.student_eligible && <span className={styles.studentBadge}>Student</span>}
-          {deal.condition && deal.condition !== "unknown" && (
+          {deal.condition && deal.condition !== "unknown" && deal.condition !== "new" && (
             <span className={[styles.condBadge, CONDITION_CLASS[deal.condition] ?? ""].join(" ")}>
               {CONDITION_LABELS[deal.condition] ?? deal.condition}
             </span>
           )}
-          <span className={[styles.tierBadge, TIER_CLASS[deal.alert_tier] ?? ""].join(" ")}>
-            {TIER_LABELS[deal.alert_tier] ?? deal.alert_tier}
-          </span>
         </div>
-        <div className={styles.scoreWrap}>
-          <div className={styles.scoreTrack}>
-            <div className={styles.scoreFill} style={{ width: `${deal.score}%` }} />
-          </div>
-          <span className={styles.scoreNum}>{deal.score}</span>
-        </div>
-        {(deal.affiliate_url || deal.url) && (
-          <a href={deal.affiliate_url ?? deal.url!} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
-            Buy here →
+        {buyUrl && (
+          <a href={buyUrl} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+            Buy →
           </a>
         )}
       </div>
@@ -198,24 +183,24 @@ export default function CatalogPage() {
           {loading ? (
             <div className={styles.empty}>Loading deals...</div>
           ) : filtered.length === 0 ? (
-            <div className={styles.empty}>No deals match your filters.</div>
-          ) : (
-            <div className={[styles.grid, dealsReady ? styles.gridReady : ""].join(" ")}>
-              {filtered.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
-            </div>
-          )}
-
-          {!loading && (
             <div className={styles.catalogCta}>
-              <p className={styles.catalogCtaText}>
-                {filtered.length === 0
-                  ? "Our database had nothing for these filters."
-                  : "Don't see what you're looking for?"}
-              </p>
+              <p className={styles.catalogCtaText}>We haven&apos;t caught that one yet.</p>
               <Link href="/watchlists" className={styles.catalogCtaLink}>
-                Create a watchlist and we'll hunt it down →
+                Deploy an AI agent to find it for you →
               </Link>
             </div>
+          ) : (
+            <>
+              <div className={[styles.grid, dealsReady ? styles.gridReady : ""].join(" ")}>
+                {filtered.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
+              </div>
+              <div className={styles.catalogCta}>
+                <p className={styles.catalogCtaText}>Not seeing what you came for?</p>
+                <Link href="/watchlists" className={styles.catalogCtaLink}>
+                  Deploy an AI agent to find it for you →
+                </Link>
+              </div>
+            </>
           )}
         </main>
       </div>

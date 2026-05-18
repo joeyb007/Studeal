@@ -379,6 +379,17 @@
   animation: searchFadeIn 0.6s ease both;
 }
 
+.empty p { margin: 0 0 8px; }
+
+.emptyCtaLink {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.emptyCtaLink:hover { text-decoration: underline; }
+
 /* Carousel */
 .carousel {
   width: 100%;

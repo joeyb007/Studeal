@@ -272,7 +272,7 @@ function DashboardPageInner() {
 
         {upgraded && (
           <div className={styles.upgradedBanner}>
-            <span>You&apos;re now a Pro member — enjoy unlimited watchlists and email digests.</span>
+            <span>You&apos;re now a Pro member — enjoy unlimited agents and email digests.</span>
             <button onClick={() => setUpgraded(false)} className={styles.upgradedDismiss}>✕</button>
           </div>
         )}
@@ -327,7 +327,7 @@ function DashboardPageInner() {
           <div className={styles.heroInner}>
             <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
               <h1 className={styles.heading}>Daily Drops</h1>
-              <p className={styles.subheading}>Every deal the internet has right now — just tell us what you need.</p>
+              <p className={styles.subheading}>Our agents have been scanning the web. Search what they found.</p>
             </div>
             <div className={styles.searchWrap}>
               <svg className={styles.searchIcon} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -362,7 +362,12 @@ function DashboardPageInner() {
             {/* Fixed results panel */}
             <div className={[styles.resultsPanel, isShifted ? styles.resultsPanelOpen : ""].join(" ")}>
               {isEmpty && (
-                <div className={styles.empty}>Nothing matched — try describing what you need differently.</div>
+                <div className={styles.empty}>
+                  <p>We haven&apos;t spotted that one yet.</p>
+                  <Link href="/watchlists" className={styles.emptyCtaLink}>
+                    Deploy an AI agent to find it for you →
+                  </Link>
+                </div>
               )}
               {hasResults && (
                 <>

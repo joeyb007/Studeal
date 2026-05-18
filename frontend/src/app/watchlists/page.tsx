@@ -263,9 +263,9 @@ function WatchlistCard({
           {loadingDeals && <p className={styles.dealsLoading}>Finding matches…</p>}
           {!loadingDeals && deals !== null && deals.length === 0 && (
             <div className={styles.dealsEmpty}>
-              <p>Our database had nothing for this watchlist yet.</p>
+              <p>Our agents are still scanning — nothing surfaced yet.</p>
               <button className={styles.dealsEmptyLink} onClick={onNewWatchlist}>
-                Create a new watchlist →
+                Deploy an AI agent to find it for you →
               </button>
             </div>
           )}
@@ -440,18 +440,18 @@ function WatchlistsPageInner() {
 
       <main className={styles.main}>
         <div className={styles.header}>
-          <h1 className={styles.heading}>Watchlists</h1>
+          <h1 className={styles.heading}>My Agents</h1>
           <button
             className={styles.addBtn}
             onClick={() => (showChat ? setShowChat(false) : openChat())}
           >
-            {showChat ? "Cancel" : "+ New watchlist"}
+            {showChat ? "Cancel" : "+ Deploy new agent"}
           </button>
         </div>
 
         {atCap && (
           <div className={styles.upgradeBanner}>
-            <p>You&apos;ve hit your watchlist limit. Upgrade to Pro for up to 5 watchlists, email digests, and more.</p>
+            <p>You&apos;ve hit your agent limit. Upgrade to Pro to run up to 5 agents, get email digests, and more.</p>
             <button className={styles.upgradeBtn} onClick={handleUpgrade} disabled={upgrading}>
               {upgrading ? "Redirecting..." : "Upgrade to Pro — $7.99/mo"}
             </button>
@@ -480,7 +480,7 @@ function WatchlistsPageInner() {
             {chatComplete ? (
               <div className={styles.chatComplete}>
                 <p className={styles.chatCompleteLabel}>
-                  Dexter found your vibe ✓ Give this watchlist a name:
+                  Agent configured ✓ Give it a name:
                 </p>
                 <input
                   className={styles.input}
@@ -497,7 +497,7 @@ function WatchlistsPageInner() {
                   onClick={handleCreateFromChat}
                   disabled={submitting || !chatName.trim()}
                 >
-                  {submitting ? "Creating..." : "Create watchlist →"}
+                  {submitting ? "Deploying..." : "Deploy agent →"}
                 </button>
               </div>
             ) : (
@@ -527,7 +527,7 @@ function WatchlistsPageInner() {
         {loading ? (
           <div className={styles.empty}>Loading...</div>
         ) : watchlists.length === 0 ? (
-          <div className={styles.empty}>No watchlists yet. Create one to start getting alerts.</div>
+          <div className={styles.empty}>No agents deployed yet — deploy one and it&apos;ll start scanning immediately.</div>
         ) : (
           <div className={styles.list}>
             {watchlists.map(wl => (

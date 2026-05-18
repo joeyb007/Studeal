@@ -12,7 +12,7 @@ const fraunces = Fraunces({
 
 export const metadata: Metadata = {
   title: "Studeal — Never overpay again",
-  description: "AI-powered deal hunting for students. Set a watchlist, get daily alerts when prices drop.",
+  description: "AI-powered deal hunting for students. Deploy an agent, get alerted the moment prices drop.",
 };
 
 export default function RootLayout({

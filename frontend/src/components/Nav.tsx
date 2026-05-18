@@ -29,7 +29,7 @@ export default function Nav() {
           Daily Drops
         </Link>
         <Link href="/watchlists" className={[styles.link, pathname === "/watchlists" ? styles.active : ""].join(" ")}>
-          Watchlists
+          My Agents
         </Link>
         {isPro && (
           <button className={styles.link} onClick={handleManageBilling}>Manage plan</button>

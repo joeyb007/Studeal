@@ -172,6 +172,30 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+.catalogCta {
+  text-align: center;
+  padding: 48px 0 24px;
+  border-top: 1px solid var(--border);
+  margin-top: 32px;
+}
+
+.catalogCtaText {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+
+.catalogCtaLink {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.catalogCtaLink:hover {
+  text-decoration: underline;
+}
+
 .empty {
   font-size: 14px;
   color: var(--text-secondary);

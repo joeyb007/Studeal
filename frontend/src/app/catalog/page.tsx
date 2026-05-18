@@ -204,6 +204,19 @@ export default function CatalogPage() {
               {filtered.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
             </div>
           )}
+
+          {!loading && (
+            <div className={styles.catalogCta}>
+              <p className={styles.catalogCtaText}>
+                {filtered.length === 0
+                  ? "Our database had nothing for these filters."
+                  : "Don't see what you're looking for?"}
+              </p>
+              <Link href="/watchlists" className={styles.catalogCtaLink}>
+                Create a watchlist and we'll hunt it down →
+              </Link>
+            </div>
+          )}
         </main>
       </div>
     </>

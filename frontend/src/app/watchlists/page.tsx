@@ -93,10 +93,12 @@ function WatchlistCard({
   watchlist,
   onDelete,
   token,
+  onNewWatchlist,
 }: {
   watchlist: Watchlist;
   onDelete: (id: number) => void;
   token: string | undefined;
+  onNewWatchlist: () => void;
 }) {
   const [deals, setDeals] = useState<Deal[] | null>(null);
   const [dealCount, setDealCount] = useState<number | null>(null);
@@ -260,7 +262,12 @@ function WatchlistCard({
         <div className={styles.dealsSection}>
           {loadingDeals && <p className={styles.dealsLoading}>Finding matches…</p>}
           {!loadingDeals && deals !== null && deals.length === 0 && (
-            <p className={styles.dealsEmpty}>No deals matched yet — check back after the next hunt runs.</p>
+            <div className={styles.dealsEmpty}>
+              <p>Our database had nothing for this watchlist yet.</p>
+              <button className={styles.dealsEmptyLink} onClick={onNewWatchlist}>
+                Create a new watchlist →
+              </button>
+            </div>
           )}
           {!loadingDeals && deals && deals.length > 0 && (
             <div className={styles.dealsList}>
@@ -529,6 +536,7 @@ function WatchlistsPageInner() {
                 watchlist={wl}
                 token={token}
                 onDelete={id => setWatchlists(prev => prev.filter(w => w.id !== id))}
+                onNewWatchlist={openChat}
               />
             ))}
           </div>

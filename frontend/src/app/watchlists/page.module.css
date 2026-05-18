@@ -257,6 +257,22 @@
   padding: 8px 0;
 }
 
+.dealsEmptyLink {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  display: block;
+  margin-top: 4px;
+}
+
+.dealsEmptyLink:hover {
+  text-decoration: underline;
+}
+
 .dealsList {
   display: flex;
   flex-direction: column;

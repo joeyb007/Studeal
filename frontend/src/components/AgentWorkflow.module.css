@@ -150,13 +150,17 @@
 
 .node.nodeActive {
   border-color: var(--accent);
-  background: rgba(26, 47, 94, 0.06);
-  box-shadow: 0 0 24px rgba(26, 47, 94, 0.14);
+  background: rgba(26, 47, 94, 0.07);
+  box-shadow:
+    0 0 0 1px rgba(26, 47, 94, 0.15),
+    0 0 16px rgba(26, 47, 94, 0.25),
+    0 0 36px rgba(26, 47, 94, 0.12);
 }
 
 .node.nodeDone {
   border-color: var(--success);
   background: rgba(22, 163, 74, 0.05);
+  box-shadow: 0 0 10px rgba(22, 163, 74, 0.2);
 }
 
 .nodeIcon {
@@ -200,13 +204,40 @@
   left: calc(50% + 26px);
   width: calc(100% - 52px);
   height: 1.5px;
-  background: var(--border);
-  transition: background 0.5s;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(26, 47, 94, 0.18) 0px,
+    rgba(26, 47, 94, 0.18) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  transition: background 0.4s, box-shadow 0.4s;
+  overflow: visible;
 }
 
-.connector.connectorDone { background: var(--success); }
+.connector.connectorDone {
+  background: var(--success);
+  box-shadow: 0 0 6px 1px rgba(22, 163, 74, 0.45);
+}
+
 .connector.connectorActive {
-  background: linear-gradient(90deg, var(--success), var(--accent));
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    var(--accent) 20%,
+    rgba(255, 255, 255, 0.85) 50%,
+    var(--accent) 80%,
+    var(--accent) 100%
+  );
+  background-size: 250% 100%;
+  background-position: 120% 0;
+  box-shadow: 0 0 8px 2px rgba(26, 47, 94, 0.35);
+  animation: beamSweep 1.4s ease-in-out infinite;
+}
+
+@keyframes beamSweep {
+  0%   { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
 }
 
 /* Fixed-height panel area */

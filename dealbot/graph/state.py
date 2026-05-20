@@ -18,3 +18,4 @@ class PipelineState(TypedDict):
     keyword: NotRequired[str]
     candidates: NotRequired[list[DealRaw]]
     keyword_covered: NotRequired[bool]
+    hunt_cost_usd: NotRequired[float]

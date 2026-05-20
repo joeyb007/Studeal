@@ -8,7 +8,6 @@ from datetime import date, datetime, timezone
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from dealbot.affiliates import rewrite as affiliate_rewrite
-from dealbot.agents.orchestrator import OrchestratorAgent
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
@@ -16,6 +15,8 @@ from dealbot.db.rag import keyword_covered_today, retrieve_similar_deals
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
+from dealbot.schemas import Condition, DealRaw
+from dealbot.search import SearchResult, SearchRouter
 
 def _similar_deals_context(similar: list[Deal]) -> str | None:
     """Format retrieved deals into a market context string for the scorer."""
@@ -61,14 +62,53 @@ async def keyword_dedup_node(state: PipelineState) -> PipelineState:
     return {**state, "keyword_covered": covered}
 
 
+_router = SearchRouter()
+
+
+def _result_to_deal_raw(r: SearchResult, search_query: str) -> DealRaw | None:
+    """Map a SearchResult to a DealRaw for downstream scoring/persistence.
+
+    Skips results without a sale price — they aren't actionable deals.
+    """
+    if not r.url or not r.title:
+        return None
+    if r.sale_price is None or r.sale_price <= 0:
+        return None
+
+    listed = r.listed_price if r.listed_price and r.listed_price > r.sale_price else r.sale_price
+    source_name = r.source_domain.replace("www.", "") if r.source_domain else r.provider
+
+    return DealRaw(
+        source=source_name,
+        title=r.title,
+        url=r.url,
+        listed_price=listed,
+        sale_price=r.sale_price,
+        description=r.snippet[:500] if r.snippet else None,
+        condition=Condition.unknown,
+        source_type="api",
+        search_query=search_query,
+    )
+
+
 async def orchestrator_node(state: PipelineState, llm: LLMClient) -> PipelineState:
-    """Run the orchestrator: parallel BrowserAgent sessions → deduplicated candidates."""
+    """Run parallel multi-provider search → normalize to DealRaw candidates."""
     keyword = state["keyword"]
-    logger.info("orchestrator_node: starting for keyword=%r", keyword)
-    agent = OrchestratorAgent(llm=llm)
-    candidates = await agent.run(keyword)
-    logger.info("orchestrator_node: %d candidates", len(candidates))
-    return {**state, "candidates": candidates}
+    logger.info("orchestrator_node: starting for keyword=%r providers=%s",
+                keyword, _router.active_providers)
+
+    results, cost = await _router.search(keyword, locale="ca")
+    candidates: list[DealRaw] = []
+    for r in results:
+        deal = _result_to_deal_raw(r, search_query=keyword)
+        if deal is not None:
+            candidates.append(deal)
+
+    logger.info(
+        "orchestrator_node: keyword=%r results=%d candidates=%d cost=$%.4f",
+        keyword, len(results), len(candidates), cost.total_usd,
+    )
+    return {**state, "candidates": candidates, "hunt_cost_usd": cost.total_usd}
 
 
 async def ingest_node(state: PipelineState) -> PipelineState:

@@ -4,14 +4,16 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-
-import logging
+from pathlib import Path
 
 import sentry_sdk
 from celery import Celery
 from celery.schedules import crontab
+from dotenv import load_dotenv
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 

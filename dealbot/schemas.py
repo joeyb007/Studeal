@@ -86,6 +86,7 @@ class TurnResult(BaseModel):
     reply: str
     context: WatchlistContext
     is_complete: bool
+    suggestions: list[str] = []
 
 
 class WatchlistContextPatch(BaseModel):

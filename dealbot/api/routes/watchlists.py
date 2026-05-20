@@ -102,7 +102,7 @@ async def chat_turn(
     body: ChatTurnRequest,
     current_user: User = Depends(get_current_user),
 ) -> TurnResult:
-    """Single stateless conversation turn with Dexter, the watchlist agent."""
+    """Single stateless conversation turn with Scout, the watchlist agent."""
     agent = NLWatchlistAgent(_get_llm())
     return await agent.turn(
         messages=[m.model_dump() for m in body.messages],

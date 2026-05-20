@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Nav from "@/components/Nav";
+import AgentBuilder from "@/components/AgentBuilder";
 import styles from "./page.module.css";
 
 interface WatchlistContext {
@@ -295,6 +296,7 @@ function WatchlistsPageInner() {
   const [chatContext, setChatContext] = useState<WatchlistContext | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [chatComplete, setChatComplete] = useState(false);
+  const [chatSuggestions, setChatSuggestions] = useState<string[]>([]);
   const [chatName, setChatName] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -302,12 +304,6 @@ function WatchlistsPageInner() {
   const [atCap, setAtCap] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [modal, setModal] = useState<{ type: "cancelled" | "error"; message: string } | null>(null);
-
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, chatLoading]);
 
   useEffect(() => {
     if (searchParams.get("checkout_cancelled") === "1") {
@@ -337,21 +333,24 @@ function WatchlistsPageInner() {
     setShowChat(true);
     setChatMessages([{
       role: "assistant",
-      content: "Hey! I'm Dexter, your deal-hunting sidekick 🔥 What are you looking to buy?",
+      content: "I'm Scout. What are we hunting today?",
     }]);
     setChatContext(null);
     setChatComplete(false);
+    setChatSuggestions([]);
     setChatInput("");
     setChatName("");
     setFormError(null);
   }
 
-  async function sendChatMessage() {
-    if (!chatInput.trim() || chatLoading) return;
-    const userMsg: ChatMessage = { role: "user", content: chatInput.trim() };
+  async function sendChatMessage(override?: string) {
+    const text = (override ?? chatInput).trim();
+    if (!text || chatLoading) return;
+    const userMsg: ChatMessage = { role: "user", content: text };
     const newMessages = [...chatMessages, userMsg];
     setChatMessages(newMessages);
     setChatInput("");
+    setChatSuggestions([]);
     setChatLoading(true);
 
     try {
@@ -366,11 +365,12 @@ function WatchlistsPageInner() {
       const data = await res.json();
       setChatMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
       setChatContext(data.context);
+      setChatSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);
       if (data.is_complete) setChatComplete(true);
     } catch {
       setChatMessages(prev => [...prev, {
         role: "assistant",
-        content: "Oops, something went wrong — try again? 😅",
+        content: "Connection hiccup. Try that again.",
       }]);
     }
     setChatLoading(false);
@@ -400,6 +400,7 @@ function WatchlistsPageInner() {
     setChatMessages([]);
     setChatContext(null);
     setChatComplete(false);
+    setChatSuggestions([]);
     setChatName("");
   }
 
@@ -459,69 +460,21 @@ function WatchlistsPageInner() {
         )}
 
         {showChat && (
-          <div className={styles.chatPanel}>
-            <div className={styles.chatMessages}>
-              {chatMessages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={msg.role === "assistant" ? styles.chatMsgAgent : styles.chatMsgUser}
-                >
-                  {msg.content}
-                </div>
-              ))}
-              {chatLoading && (
-                <div className={styles.chatMsgAgent}>
-                  <span className={styles.chatTyping}>···</span>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {chatComplete ? (
-              <div className={styles.chatComplete}>
-                <p className={styles.chatCompleteLabel}>
-                  Agent configured ✓ Give it a name:
-                </p>
-                <input
-                  className={styles.input}
-                  type="text"
-                  placeholder="e.g. Gaming gear"
-                  value={chatName}
-                  onChange={e => setChatName(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") handleCreateFromChat(); }}
-                  autoFocus
-                />
-                {formError && <p className={styles.error}>{formError}</p>}
-                <button
-                  className={styles.submitBtn}
-                  onClick={handleCreateFromChat}
-                  disabled={submitting || !chatName.trim()}
-                >
-                  {submitting ? "Deploying..." : "Deploy agent →"}
-                </button>
-              </div>
-            ) : (
-              <div className={styles.chatInputRow}>
-                <input
-                  className={styles.chatInput}
-                  type="text"
-                  placeholder="Type your reply..."
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") sendChatMessage(); }}
-                  disabled={chatLoading}
-                  autoFocus
-                />
-                <button
-                  className={styles.chatSendBtn}
-                  onClick={sendChatMessage}
-                  disabled={chatLoading || !chatInput.trim()}
-                >
-                  Send
-                </button>
-              </div>
-            )}
-          </div>
+          <AgentBuilder
+            context={chatContext}
+            messages={chatMessages}
+            suggestions={chatSuggestions}
+            isLoading={chatLoading}
+            isComplete={chatComplete}
+            input={chatInput}
+            onInputChange={setChatInput}
+            onSend={sendChatMessage}
+            name={chatName}
+            onNameChange={setChatName}
+            onDeploy={handleCreateFromChat}
+            submitting={submitting}
+            formError={formError}
+          />
         )}
 
         {loading ? (

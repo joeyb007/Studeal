@@ -33,7 +33,7 @@ async def retrieve_similar_deals(
     Requires the deals table to have a populated `embedding` column.
     Returns an empty list on any failure so callers degrade gracefully.
     """
-    if not embedding:
+    if embedding is None or len(embedding) == 0:
         return []
 
     # Format the vector literal for pgvector's <=> cosine distance operator

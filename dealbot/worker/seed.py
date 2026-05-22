@@ -4,8 +4,9 @@ import asyncio
 import logging
 import os
 
-from dealbot.graph.graph import build_hunter_graph
-from dealbot.graph.nodes import score_and_persist_node
+from dealbot.graph.graph import build_scorer_graph
+from dealbot.graph.nodes import _result_to_deal_raw, score_and_persist_node
+from dealbot.search import SearchRouter
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.ollama import OllamaClient
@@ -119,7 +120,9 @@ async def _run_community_sources(llm: LLMClient) -> dict:
 
 
 async def _run_seed(llm: LLMClient) -> dict:
-    graph = build_hunter_graph(llm)
+    """Daily catalog seed — runs SEED_QUERIES through SearchRouter directly (no agent loop)."""
+    router = SearchRouter()
+    scorer = build_scorer_graph(llm)
     sem = asyncio.Semaphore(3)
     results: dict[str, int] = {"processed": 0, "skipped": 0, "errors": 0}
     lock = asyncio.Lock()
@@ -127,12 +130,17 @@ async def _run_seed(llm: LLMClient) -> dict:
     async def _hunt_one(query: str) -> None:
         async with sem:
             try:
-                final_state = await graph.ainvoke({"keyword": query})
-                async with lock:
-                    if final_state.get("keyword_covered"):
+                search_results, _cost = await router.search(query, locale="ca")
+                if not search_results:
+                    async with lock:
                         results["skipped"] += 1
-                    else:
-                        results["processed"] += 1
+                    return
+                for r in search_results:
+                    deal = _result_to_deal_raw(r, query)
+                    if deal:
+                        await scorer.ainvoke({"deal": deal})
+                async with lock:
+                    results["processed"] += 1
             except Exception:
                 logger.exception("seed_deals: unhandled error for query '%s'", query)
                 async with lock:

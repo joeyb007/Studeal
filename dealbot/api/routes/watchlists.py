@@ -9,12 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 
-from dealbot.agents.keyword_extractor import extract_keywords
 from dealbot.agents.nl_watchlist import NLWatchlistAgent
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Deal, User, Watchlist, WatchlistKeyword
-from dealbot.db.rag import retrieve_similar_deals
+from dealbot.db.models import Deal, User, Watchlist
+from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.llm.ollama import OllamaClient
@@ -23,7 +22,7 @@ from dealbot.schemas import ChatMessage, TurnResult, WatchlistContext, Watchlist
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
-WATCHLIST_TTL_DAYS = 60  # inactive watchlists expire after 60 days
+WATCHLIST_TTL_DAYS = 60
 FREE_WATCHLIST_CAP = 1
 PRO_WATCHLIST_CAP = 5
 
@@ -53,22 +52,20 @@ def _expiry() -> datetime:
 class WatchlistCreate(BaseModel):
     name: str
     description: str | None = None
-    keywords: list[str] = []
-    context: WatchlistContext | None = None  # from NL chat flow
+    context: WatchlistContext | None = None
     min_score: int = 50
     alert_tier_threshold: str = "digest"
 
     @model_validator(mode="after")
-    def require_description_or_keywords(self) -> "WatchlistCreate":
-        if not self.description and not self.keywords and not self.context:
-            raise ValueError("Provide either a description, keywords, or a context.")
+    def require_description_or_context(self) -> "WatchlistCreate":
+        if not self.description and not self.context:
+            raise ValueError("Provide either a description or a context.")
         return self
 
 
 class WatchlistResponse(BaseModel):
     id: int
     name: str
-    keywords: list[str]
     min_score: int
     alert_tier_threshold: str
     expires_at: Optional[str]
@@ -94,7 +91,7 @@ class WatchlistDealResponse(BaseModel):
 
 class WatchlistDealsResponse(BaseModel):
     deals: list[WatchlistDealResponse]
-    filtered: bool  # False = min_discount_pct was relaxed (fallback)
+    filtered: bool
 
 
 @router.post("/chat", response_model=TurnResult)
@@ -115,6 +112,9 @@ async def create_watchlist(
     body: WatchlistCreate,
     current_user: User = Depends(get_current_user),
 ) -> WatchlistResponse:
+    if not body.context or not body.context.product_query:
+        raise HTTPException(status_code=400, detail="Context with product_query required.")
+
     async with get_async_session() as session:
         now = datetime.now(timezone.utc)
         count_result = await session.execute(
@@ -126,18 +126,14 @@ async def create_watchlist(
         cap = PRO_WATCHLIST_CAP if current_user.is_pro else FREE_WATCHLIST_CAP
         if count_result.scalar_one() >= cap:
             detail = (
-                f"Pro members can have up to {PRO_WATCHLIST_CAP} active watchlists. Delete one to create a new one."
+                f"Pro members can have up to {PRO_WATCHLIST_CAP} active agents. Delete one to deploy a new one."
                 if current_user.is_pro
-                else f"Free accounts are limited to {FREE_WATCHLIST_CAP} watchlist. Upgrade to pro for up to {PRO_WATCHLIST_CAP}."
+                else f"Free accounts are limited to {FREE_WATCHLIST_CAP} agent. Upgrade to pro for up to {PRO_WATCHLIST_CAP}."
             )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
-        if body.context and body.context.keywords:
-            keywords = [kw.lower().strip() for kw in body.context.keywords]
-        elif body.description and not body.keywords:
-            keywords = await extract_keywords(body.description, _get_llm())
-        else:
-            keywords = [kw.lower().strip() for kw in body.keywords]
+        # Embed the product_query as the watchlist's "intent embedding"
+        intent_embedding = await embed_text(body.context.product_query)
 
         watchlist = Watchlist(
             user_id=current_user.id,
@@ -145,34 +141,24 @@ async def create_watchlist(
             min_score=body.min_score,
             alert_tier_threshold=body.alert_tier_threshold,
             expires_at=_expiry(),
-            context=body.context.model_dump_json() if body.context else None,
+            context=body.context.model_dump_json(),
+            intent_embedding=intent_embedding or None,
         )
         session.add(watchlist)
-        await session.flush()
-
-        for kw in keywords:
-            embedding = await embed_text(kw)
-            session.add(WatchlistKeyword(
-                watchlist_id=watchlist.id,
-                keyword=kw,
-                embedding=embedding or None,
-            ))
-
         await session.commit()
         await session.refresh(watchlist)
+        wl_id = watchlist.id
 
-    # Dispatch immediate hunt for each keyword (runs in background via Celery)
+    # Dispatch the research agent for this watchlist (background via Celery)
     try:
-        from dealbot.worker.tasks import hunt_keyword
-        for kw in keywords:
-            hunt_keyword.delay(kw)
+        from dealbot.worker.tasks import research_for_agent
+        research_for_agent.delay(wl_id)
     except Exception:
         pass  # worker not running in dev — fail silently
 
     return WatchlistResponse(
-        id=watchlist.id,
+        id=wl_id,
         name=watchlist.name,
-        keywords=keywords,
         min_score=watchlist.min_score,
         alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
@@ -186,11 +172,11 @@ async def list_watchlist_deals(
     limit: int = Query(20, ge=1, le=50),
     current_user: User = Depends(get_current_user),
 ) -> WatchlistDealsResponse:
-    """Return deals matched to watchlist keywords, filtered by WatchlistContext."""
+    """Return deals matched to the watchlist's intent embedding, filtered by context."""
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None or watchlist.user_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
 
         ctx = (
             WatchlistContext.model_validate_json(watchlist.context)
@@ -198,21 +184,12 @@ async def list_watchlist_deals(
             else None
         )
 
-        kw_result = await session.execute(
-            select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist_id)
-        )
-        keywords = kw_result.scalars().all()
-
-        seen_ids: set[int] = set()
+        # Cosine-match the intent embedding to all deals in the pool
         deals: list[Deal] = []
-        for kw in keywords:
-            if kw.embedding is None:
-                continue
-            similar = await retrieve_similar_deals(kw.embedding, session, k=10)
-            for d in similar:
-                if d.id not in seen_ids:
-                    seen_ids.add(d.id)
-                    deals.append(d)
+        if watchlist.intent_embedding is not None:
+            deals = await retrieve_similar_deals(
+                watchlist.intent_embedding, session, threshold=0.75, k=limit * 2,
+            )
 
     # Apply context filters
     filtered = True
@@ -224,10 +201,8 @@ async def list_watchlist_deals(
         if ctx.brands:
             deals = [
                 d for d in deals
-                if any(
-                    b.lower() in d.title.lower() or b.lower() in d.source.lower()
-                    for b in ctx.brands
-                )
+                if any(b.lower() in d.title.lower() or b.lower() in d.source.lower()
+                       for b in ctx.brands)
             ]
         if ctx.min_discount_pct:
             strict = [
@@ -237,27 +212,17 @@ async def list_watchlist_deals(
             if strict:
                 deals = strict
             else:
-                filtered = False  # fallback: relax min_discount_pct
+                filtered = False
 
     deals.sort(key=lambda d: d.score, reverse=True)
     return WatchlistDealsResponse(
-        deals=[
-            WatchlistDealResponse(
-                id=d.id,
-                title=d.title,
-                source=d.source,
-                url=d.url,
-                listed_price=d.listed_price,
-                sale_price=d.sale_price,
-                score=d.score,
-                alert_tier=d.alert_tier,
-                category=d.category,
-                real_discount_pct=d.real_discount_pct,
-                student_eligible=d.student_eligible,
-                condition=d.condition,
-            )
-            for d in deals[:limit]
-        ],
+        deals=[WatchlistDealResponse(
+            id=d.id, title=d.title, source=d.source, url=d.url,
+            listed_price=d.listed_price, sale_price=d.sale_price,
+            score=d.score, alert_tier=d.alert_tier, category=d.category,
+            real_discount_pct=d.real_discount_pct,
+            student_eligible=d.student_eligible, condition=d.condition,
+        ) for d in deals[:limit]],
         filtered=filtered,
     )
 
@@ -269,22 +234,17 @@ async def renew_watchlist(
 ) -> WatchlistResponse:
     """Pro-only: reset expires_at to 60 days from now."""
     if not current_user.is_pro:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Watchlist renewal is a pro feature.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent renewal is a pro feature.")
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None or watchlist.user_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
         watchlist.expires_at = _expiry()
-        kw_result = await session.execute(
-            select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist.id)
-        )
-        keywords = [k.keyword for k in kw_result.scalars().all()]
         await session.commit()
         await session.refresh(watchlist)
     return WatchlistResponse(
         id=watchlist.id,
         name=watchlist.name,
-        keywords=keywords,
         min_score=watchlist.min_score,
         alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
@@ -301,7 +261,7 @@ async def patch_watchlist(
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None or watchlist.user_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
 
         ctx = (
             WatchlistContext.model_validate_json(watchlist.context)
@@ -322,15 +282,9 @@ async def patch_watchlist(
         await session.commit()
         await session.refresh(watchlist)
 
-        kw_result = await session.execute(
-            select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == watchlist.id)
-        )
-        keywords = [k.keyword for k in kw_result.scalars().all()]
-
     return WatchlistResponse(
         id=watchlist.id,
         name=watchlist.name,
-        keywords=keywords,
         min_score=watchlist.min_score,
         alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
@@ -346,7 +300,7 @@ async def delete_watchlist(
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None or watchlist.user_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
         await session.delete(watchlist)
         await session.commit()
 
@@ -367,20 +321,14 @@ async def list_watchlists(
 
         responses = []
         for wl in watchlists:
-            # Refresh expiry on activity — keeps active users' watchlists alive
             wl.expires_at = _expiry()
-
-            kw_result = await session.execute(
-                select(WatchlistKeyword).where(WatchlistKeyword.watchlist_id == wl.id)
-            )
-            keywords = [k.keyword for k in kw_result.scalars().all()]
             responses.append(WatchlistResponse(
                 id=wl.id,
                 name=wl.name,
-                keywords=keywords,
                 min_score=wl.min_score,
                 alert_tier_threshold=wl.alert_tier_threshold,
                 expires_at=wl.expires_at.isoformat() if wl.expires_at else None,
+                context=json.loads(wl.context) if wl.context else None,
             ))
 
         await session.commit()

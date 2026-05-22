@@ -3,19 +3,15 @@ from __future__ import annotations
 import functools
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send
 
 from dealbot.graph.nodes import (
     ingest_node,
-    keyword_dedup_node,
-    orchestrator_node,
     persist_node,
     score_and_persist_node,
     score_node,
 )
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
-from dealbot.schemas import DealRaw
 
 
 def _route_after_score(state: PipelineState) -> str:
@@ -25,31 +21,11 @@ def _route_after_score(state: PipelineState) -> str:
     return "persist"
 
 
-def _route_after_dedup(state: PipelineState) -> str:
-    """Skip the rest of the pipeline if this keyword was already covered today."""
-    if state.get("keyword_covered"):
-        return END
-    return "orchestrator"
-
-
-def _fan_out_to_score(state: PipelineState) -> list[Send]:
-    """Fan out one score_and_persist invocation per candidate."""
-    candidates: list[DealRaw] = state.get("candidates", [])
-    return [Send("score_and_persist", {**state, "deal": candidate}) for candidate in candidates]
-
-
 def build_graph(llm: LLMClient) -> StateGraph:
-    """
-    Scorer-only pipeline (used by existing Celery task).
-
-    ingest → score → persist
-                ↓ (on error)
-               END
-    """
+    """Original scorer pipeline: ingest → score → persist."""
     bound_score_node = functools.partial(score_node, llm=llm)
 
     graph = StateGraph(PipelineState)
-
     graph.add_node("ingest", ingest_node)
     graph.add_node("score", bound_score_node)
     graph.add_node("persist", persist_node)
@@ -62,30 +38,16 @@ def build_graph(llm: LLMClient) -> StateGraph:
     return graph.compile()
 
 
-def build_hunter_graph(llm: LLMClient) -> StateGraph:
-    """
-    Full hunter pipeline — entry point is a watchlist keyword.
+def build_scorer_graph(llm: LLMClient) -> StateGraph:
+    """Single-node graph that runs score_and_persist on one deal.
 
-    keyword_dedup → orchestrator → Send() → score_and_persist
-                         ↓ (keyword already covered)
-                        END
+    Called by the ResearchAgent's downstream fan-out after the ReAct loop
+    accumulates deals.
     """
-    bound_orchestrator = functools.partial(orchestrator_node, llm=llm)
-    bound_score_and_persist = functools.partial(score_and_persist_node, llm=llm)
+    bound = functools.partial(score_and_persist_node, llm=llm)
 
     graph = StateGraph(PipelineState)
-
-    graph.add_node("keyword_dedup", keyword_dedup_node)
-    graph.add_node("orchestrator", bound_orchestrator)
-    graph.add_node("score_and_persist", bound_score_and_persist)
-
-    graph.add_edge(START, "keyword_dedup")
-    graph.add_conditional_edges(
-        "keyword_dedup",
-        _route_after_dedup,
-        {"orchestrator": "orchestrator", END: END},
-    )
-    graph.add_conditional_edges("orchestrator", _fan_out_to_score, ["score_and_persist"])
+    graph.add_node("score_and_persist", bound)
+    graph.add_edge(START, "score_and_persist")
     graph.add_edge("score_and_persist", END)
-
     return graph.compile()

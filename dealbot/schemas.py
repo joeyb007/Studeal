@@ -87,6 +87,10 @@ class TurnResult(BaseModel):
     context: WatchlistContext
     is_complete: bool
     suggestions: list[str] = []
+    turns_remaining: int = 0
+    aborted: bool = False
+    abort_reason: Optional[str] = None
+    abort_code: Optional[str] = None  # off_topic | adversarial | unintelligible | non_shopping
 
 
 class WatchlistContextPatch(BaseModel):

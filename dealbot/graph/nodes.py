@@ -11,12 +11,12 @@ from dealbot.affiliates import rewrite as affiliate_rewrite
 from dealbot.agents.scorer import ScorerAgent
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal
-from dealbot.db.rag import keyword_covered_today, retrieve_similar_deals
+from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.schemas import Condition, DealRaw
-from dealbot.search import SearchResult, SearchRouter
+from dealbot.search import SearchResult
 
 def _similar_deals_context(similar: list[Deal]) -> str | None:
     """Format retrieved deals into a market context string for the scorer."""
@@ -47,23 +47,6 @@ logger = logging.getLogger(__name__)
 
 # --- Nodes ------------------------------------------------------------------
 
-async def keyword_dedup_node(state: PipelineState) -> PipelineState:
-    """Skip the hunt if a semantically similar keyword was already searched today."""
-    keyword = state.get("keyword", "")
-    embedding = await embed_text(keyword)
-    if not embedding:
-        return {**state, "keyword_covered": False}
-
-    async with get_async_session() as session:
-        covered = await keyword_covered_today(embedding, session)
-
-    if covered:
-        logger.info("keyword_dedup_node: '%s' already covered today, skipping", keyword)
-    return {**state, "keyword_covered": covered}
-
-
-_router = SearchRouter()
-
 
 def _result_to_deal_raw(r: SearchResult, search_query: str) -> DealRaw | None:
     """Map a SearchResult to a DealRaw for downstream scoring/persistence.
@@ -89,26 +72,6 @@ def _result_to_deal_raw(r: SearchResult, search_query: str) -> DealRaw | None:
         source_type="api",
         search_query=search_query,
     )
-
-
-async def orchestrator_node(state: PipelineState, llm: LLMClient) -> PipelineState:
-    """Run parallel multi-provider search → normalize to DealRaw candidates."""
-    keyword = state["keyword"]
-    logger.info("orchestrator_node: starting for keyword=%r providers=%s",
-                keyword, _router.active_providers)
-
-    results, cost = await _router.search(keyword, locale="ca")
-    candidates: list[DealRaw] = []
-    for r in results:
-        deal = _result_to_deal_raw(r, search_query=keyword)
-        if deal is not None:
-            candidates.append(deal)
-
-    logger.info(
-        "orchestrator_node: keyword=%r results=%d candidates=%d cost=$%.4f",
-        keyword, len(results), len(candidates), cost.total_usd,
-    )
-    return {**state, "candidates": candidates, "hunt_cost_usd": cost.total_usd}
 
 
 async def ingest_node(state: PipelineState) -> PipelineState:

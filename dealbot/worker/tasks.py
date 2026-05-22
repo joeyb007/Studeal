@@ -7,21 +7,23 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from dealbot.agents.research import ResearchAgent
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Watchlist, WatchlistKeyword
-from dealbot.graph.graph import build_hunter_graph
+from dealbot.db.models import Watchlist
+from dealbot.graph.graph import build_scorer_graph
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.ollama import OllamaClient
 from dealbot.llm.openai_client import OpenAIClient
 from dealbot.llm.vllm import vLLMClient
+from dealbot.schemas import WatchlistContext
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
 
 def _get_llm() -> LLMClient:
-    backend = os.environ.get("LLM_BACKEND", "ollama")
+    backend = os.environ.get("LLM_BACKEND", "openai")
     if backend == "openai":
         return OpenAIClient()
     if backend == "groq":
@@ -31,90 +33,116 @@ def _get_llm() -> LLMClient:
     return OllamaClient()
 
 
-@app.task(name="dealbot.worker.tasks.hunt_keyword", bind=True, max_retries=3)
-def hunt_keyword(self, keyword: str) -> dict:
-    """
-    Celery task: run the hunter pipeline for a single keyword.
-    Dispatched immediately when a watchlist is created.
-    """
+@app.task(name="dealbot.worker.tasks.research_for_agent", bind=True, max_retries=3)
+def research_for_agent(self, watchlist_id: int) -> dict:
+    """Run the ResearchAgent for a single watchlist, then score+persist all deals."""
     try:
         llm = _get_llm()
-        return asyncio.run(_run_single(llm, keyword))
+        return asyncio.run(_run_research(llm, watchlist_id))
     except Exception as exc:
-        logger.exception("hunt_keyword task failed for '%s': %s", keyword, exc)
+        logger.exception("research_for_agent failed for wl=%d: %s", watchlist_id, exc)
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 
 
-async def _run_single(llm: LLMClient, keyword: str) -> dict:
-    graph = build_hunter_graph(llm)
-    try:
-        final_state = await graph.ainvoke({"keyword": keyword})
-        skipped = bool(final_state.get("keyword_covered"))
-        logger.info("hunt_keyword: keyword=%r skipped=%s", keyword, skipped)
-        return {"keyword": keyword, "skipped": skipped}
-    except Exception:
-        logger.exception("hunt_keyword: unhandled error for keyword '%s'", keyword)
-        return {"keyword": keyword, "error": True}
+async def _run_research(llm: LLMClient, watchlist_id: int) -> dict:
+    # Load the watchlist context
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None:
+            logger.warning("research_for_agent: watchlist %d not found", watchlist_id)
+            return {"watchlist_id": watchlist_id, "error": "not_found"}
+        if not watchlist.context:
+            logger.warning("research_for_agent: watchlist %d has no context", watchlist_id)
+            return {"watchlist_id": watchlist_id, "error": "no_context"}
+        context = WatchlistContext.model_validate_json(watchlist.context)
+
+    # Run the agent (no event sink in this task — SSE is wired separately in Phase F)
+    agent = ResearchAgent(llm=llm)
+    state = await agent.run(watchlist_id=watchlist_id, context=context)
+
+    logger.info(
+        "research_for_agent: wl=%d turns=%d deals=%d cost=$%.4f reason=%s",
+        watchlist_id, state.turns_used, state.deal_count,
+        state.total_cost_usd, state.stop_reason,
+    )
+
+    # Fan out scoring + persistence for every accumulated deal
+    if state.deals_by_url:
+        sem = asyncio.Semaphore(5)
+        graph = build_scorer_graph(llm)
+
+        async def _score_one(deal):
+            async with sem:
+                try:
+                    await graph.ainvoke({"deal": deal})
+                except Exception:
+                    logger.exception("scorer graph failed for %r", deal.title)
+
+        await asyncio.gather(*[_score_one(d) for d in state.deals_by_url.values()])
+
+    return {
+        "watchlist_id": watchlist_id,
+        "turns_used": state.turns_used,
+        "deal_count": state.deal_count,
+        "cost_usd": state.total_cost_usd,
+        "stop_reason": state.stop_reason,
+    }
 
 
-@app.task(name="dealbot.worker.tasks.hunt_deals", bind=True, max_retries=3)
-def hunt_deals(self) -> dict:
-    """
-    Celery task: run the hunter pipeline for every watchlist keyword.
-    Fires once daily via Celery Beat.
-    """
+@app.task(name="dealbot.worker.tasks.daily_rehunt", bind=True, max_retries=3)
+def daily_rehunt(self) -> dict:
+    """Cron task: replay every HuntQuery row through the SearchRouter (no LLM)
+    to refresh deals cheaply. Full ResearchAgent re-runs handled separately."""
     try:
-        llm = _get_llm()
-        return asyncio.run(_run_hunter(llm))
+        return asyncio.run(_run_daily_rehunt())
     except Exception as exc:
-        logger.exception("hunt_deals task failed: %s", exc)
+        logger.exception("daily_rehunt failed: %s", exc)
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 
 
-async def _run_hunter(llm: LLMClient) -> dict:
-    graph = build_hunter_graph(llm)
+async def _run_daily_rehunt() -> dict:
+    from dealbot.db.models import HuntQuery
+    from dealbot.graph.graph import build_scorer_graph
+    from dealbot.search import SearchRouter, SearchResult
+
+    router = SearchRouter()
+    llm = _get_llm()
+    scorer = build_scorer_graph(llm)
     sem = asyncio.Semaphore(3)
+    stats = {"queries_replayed": 0, "deals_persisted": 0, "errors": 0}
 
     async with get_async_session() as session:
         now = datetime.now(timezone.utc)
         result = await session.execute(
-            select(WatchlistKeyword)
-            .join(Watchlist, WatchlistKeyword.watchlist_id == Watchlist.id)
-            .where(
-                (Watchlist.expires_at == None) | (Watchlist.expires_at > now)  # noqa: E711
-            )
+            select(HuntQuery)
+            .join(Watchlist, HuntQuery.watchlist_id == Watchlist.id)
+            .where((Watchlist.expires_at == None) | (Watchlist.expires_at > now))  # noqa: E711
         )
-        keywords = result.scalars().all()
+        queries = list(result.scalars().all())
 
-    logger.info("hunt_deals: %d keywords to process", len(keywords))
-    results: dict[str, int] = {"processed": 0, "skipped": 0, "errors": 0}
-    lock = asyncio.Lock()
+    logger.info("daily_rehunt: replaying %d queries", len(queries))
 
-    async def _hunt_one(kw: WatchlistKeyword) -> None:
+    async def _replay(hq):
+        nonlocal stats
         async with sem:
             try:
-                final_state = await graph.ainvoke({"keyword": kw.keyword})
-                async with lock:
-                    if final_state.get("keyword_covered"):
-                        results["skipped"] += 1
-                    else:
-                        results["processed"] += 1
+                results, _cost = await router.search(hq.query_text, locale="ca")
+                stats["queries_replayed"] += 1
+                # Fan out scoring for each result
+                from dealbot.graph.nodes import _result_to_deal_raw
+                for r in results:
+                    deal = _result_to_deal_raw(r, hq.query_text)
+                    if deal:
+                        try:
+                            await scorer.ainvoke({"deal": deal})
+                            stats["deals_persisted"] += 1
+                        except Exception:
+                            stats["errors"] += 1
             except Exception:
-                logger.exception("hunt_deals: unhandled error for keyword '%s'", kw.keyword)
-                async with lock:
-                    results["errors"] += 1
+                logger.exception("daily_rehunt: replay failed for %r", hq.query_text)
+                stats["errors"] += 1
 
-    await asyncio.gather(*[_hunt_one(kw) for kw in keywords])
+    await asyncio.gather(*[_replay(q) for q in queries])
 
-    total = len(keywords)
-    logger.info(
-        "hunt_deals complete: processed=%d skipped=%d errors=%d total=%d",
-        results["processed"], results["skipped"], results["errors"], total,
-    )
-    if total > 0 and results["processed"] == 0 and results["errors"] > 0:
-        logger.error(
-            "hunt_deals: ZERO keywords produced deals and %d errored — "
-            "pipeline may be failing",
-            results["errors"],
-        )
-    return results
+    logger.info("daily_rehunt complete: %s", stats)
+    return stats

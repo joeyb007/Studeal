@@ -24,7 +24,6 @@ interface ChatMessage {
 interface Watchlist {
   id: number;
   name: string;
-  keywords: string[];
   min_score: number;
   alert_tier_threshold: string;
   expires_at: string | null;

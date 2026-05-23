@@ -110,8 +110,13 @@ class FirecrawlProvider(SearchProvider):
             logger.warning("FirecrawlProvider: request failed: %s", exc)
             return []
 
+        # v2 response shape: data: { web: [...], images: [...], news: [...] }
+        web_results = (data.get("data") or {}).get("web") or []
+
         results: list[SearchResult] = []
-        for item in data.get("data", []):
+        for item in web_results:
+            if not isinstance(item, dict):
+                continue
             page_url = item.get("url", "")
             page_title = item.get("title", "")
             json_blob = item.get("json") or {}
@@ -147,6 +152,6 @@ class FirecrawlProvider(SearchProvider):
 
         logger.info(
             "FirecrawlProvider: query=%r pages=%d deals_extracted=%d",
-            suffixed, len(data.get("data", [])), len(results),
+            suffixed, len(web_results), len(results),
         )
         return results

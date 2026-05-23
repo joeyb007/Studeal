@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from dealbot.db.models import Deal, HuntQuery
 
@@ -50,6 +51,7 @@ async def find_recent_similar_query(
     try:
         result = await session.execute(
             select(HuntQuery)
+            .options(selectinload(HuntQuery.deals))
             .where(HuntQuery.embedding.isnot(None))
             .where(HuntQuery.hunt_timestamp > cutoff_ts)
             .where(text("embedding <=> CAST(:emb AS vector) < :cutoff")

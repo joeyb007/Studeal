@@ -186,11 +186,11 @@ function WatchlistCard({
         </div>
       </div>
 
-      <div className={styles.keywords}>
-        {watchlist.keywords.map(kw => (
-          <span key={kw} className={styles.keyword}>{kw}</span>
-        ))}
-      </div>
+      {ctx?.product_query && (
+        <div className={styles.keywords}>
+          <span className={styles.keyword}>{ctx.product_query}</span>
+        </div>
+      )}
 
       {ctx && (
         <div className={styles.filterControls}>
@@ -302,7 +302,7 @@ function WatchlistsPageInner() {
   const [formError, setFormError] = useState<string | null>(null);
   const [atCap, setAtCap] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
-  const [modal, setModal] = useState<{ type: "cancelled" | "error"; message: string } | null>(null);
+  const [modal, setModal] = useState<{ type: "cancelled" | "error" | "abort"; message: string; title?: string } | null>(null);
 
   useEffect(() => {
     if (searchParams.get("checkout_cancelled") === "1") {
@@ -362,6 +362,22 @@ function WatchlistsPageInner() {
         body: JSON.stringify({ messages: newMessages, context: chatContext }),
       });
       const data = await res.json();
+      if (data.aborted) {
+        setShowChat(false);
+        setChatMessages([]);
+        setChatContext(null);
+        setChatComplete(false);
+        setChatSuggestions([]);
+        setChatInput("");
+        setChatName("");
+        setModal({
+          type: "abort",
+          title: "Scout couldn't continue",
+          message: data.abort_reason || "Try starting a new agent with a clearer product idea.",
+        });
+        setChatLoading(false);
+        return;
+      }
       setChatMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
       setChatContext(data.context);
       setChatSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);
@@ -426,11 +442,11 @@ function WatchlistsPageInner() {
       {modal && (
         <div className={styles.modalOverlay} onClick={() => setModal(null)}>
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
-            <div className={modal.type === "error" ? styles.modalIconError : styles.modalIconCancelled}>
-              {modal.type === "error" ? "✕" : "→"}
+            <div className={modal.type === "cancelled" ? styles.modalIconCancelled : styles.modalIconError}>
+              {modal.type === "cancelled" ? "→" : "!"}
             </div>
             <p className={styles.modalTitle}>
-              {modal.type === "error" ? "Something went wrong" : "Checkout cancelled"}
+              {modal.title ?? (modal.type === "error" ? "Something went wrong" : "Checkout cancelled")}
             </p>
             <p className={styles.modalMessage}>{modal.message}</p>
             <button className={styles.modalBtn} onClick={() => setModal(null)}>Got it</button>

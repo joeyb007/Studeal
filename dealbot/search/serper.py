@@ -49,7 +49,7 @@ class SerperProvider(SearchProvider):
             "q": query,
             "gl": locale,
             "hl": "en",
-            "num": 20,
+            "num": 100,
         }
         headers = {
             "X-API-KEY": self._api_key,

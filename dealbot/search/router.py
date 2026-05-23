@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from .base import SearchProvider, SearchResult
 from .firecrawl import FirecrawlProvider
 from .serper import SerperProvider
-from .tavily import TavilyProvider
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +36,10 @@ class SearchRouter:
 
     def __init__(self, providers: list[SearchProvider] | None = None) -> None:
         if providers is None:
-            providers = [TavilyProvider(), SerperProvider(), FirecrawlProvider()]
+            providers = [SerperProvider(), FirecrawlProvider()]
         self._providers = [p for p in providers if p.is_configured()]
         if not self._providers:
-            logger.warning("SearchRouter: no providers configured — set TAVILY_API_KEY / SERPER_API_KEY / FIRECRAWL_API_KEY")
+            logger.warning("SearchRouter: no providers configured — set SERPER_API_KEY / FIRECRAWL_API_KEY")
 
     @property
     def active_providers(self) -> list[str]:

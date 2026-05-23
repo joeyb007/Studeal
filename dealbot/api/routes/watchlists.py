@@ -188,7 +188,7 @@ async def list_watchlist_deals(
         deals: list[Deal] = []
         if watchlist.intent_embedding is not None:
             deals = await retrieve_similar_deals(
-                watchlist.intent_embedding, session, threshold=0.75, k=limit * 2,
+                watchlist.intent_embedding, session, threshold=0.55, k=limit * 2,
             )
 
     # Apply context filters

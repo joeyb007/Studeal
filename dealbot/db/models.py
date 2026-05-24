@@ -32,6 +32,9 @@ class Deal(Base):
     condition: Mapped[str] = mapped_column(String(8), nullable=False, default="unknown")
     affiliate_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    legitimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    validation_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    validation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     hunt_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

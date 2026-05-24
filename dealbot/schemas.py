@@ -56,7 +56,7 @@ class DealRaw(BaseModel):
 
 
 class DealScore(BaseModel):
-    """Scored deal produced by the ScorerAgent."""
+    """DEPRECATED. Use ValidationResult. Kept for backward compat in tests/skipped paths."""
 
     deal: DealRaw
     score: int  # 0-100
@@ -64,8 +64,27 @@ class DealScore(BaseModel):
     category: Category
     tags: list[str]
     real_discount_pct: Optional[float] = None
-    confidence: str = "high"  # "high" | "low" (low if max iterations hit)
+    confidence: str = "high"
     condition: Condition = Condition.unknown
+
+
+class ValidationResult(BaseModel):
+    """Output of the validation layer (replaces DealScore).
+
+    The scorer no longer ranks deals — it decides whether they're real and safe
+    to surface. Ranking is handled by cosine similarity to the user's intent
+    embedding at view time.
+    """
+
+    deal: DealRaw
+    legitimate: bool
+    validation_confidence: float  # 0.0 - 1.0
+    validation_reason: str
+    category: Category = Category.other
+    condition: Condition = Condition.unknown
+    student_eligible: bool = False
+    real_discount_pct: Optional[float] = None
+    tags: list[str] = []
 
 
 class WatchlistContext(BaseModel):

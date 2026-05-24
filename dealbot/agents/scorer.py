@@ -2,57 +2,60 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
-from dealbot.agents.tools import TOOL_DEFINITIONS, TOOL_REGISTRY
 from dealbot.llm.base import LLMClient
-from dealbot.schemas import AlertTier, Category, DealRaw, DealScore
+from dealbot.schemas import Category, Condition, DealRaw, ValidationResult
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 6
 
-SYSTEM_PROMPT = """\
-You are a deal scoring agent. Your job is to assess the quality of a retail deal \
-and return a score from 0 to 100.
+_VALIDATION_PROMPT = """\
+You are a deal validation agent. Your job is to decide whether a deal is REAL, \
+LEGITIMATE, and SAFE TO SURFACE to users — not to score how good it is.
 
-Use the available tools to:
-1. Verify the discount is genuine (not inflated from a fake "original" price)
-2. Check the price history to assess value vs historical pricing
+Reject deals (legitimate=false) when ANY of these apply:
+- Price is implausibly low for the product (likely auction-start, scam, or pricing error)
+  Example: AirPods Max at $19.99, iPhone 16 at $80, MacBook Pro at $200
+- Title indicates parts only, broken, "for repair", "as is", "not working"
+- Title suggests counterfeit, fake, replica, knockoff
+- Title is missing the actual product name (just "Apple Headphones" with no model)
+- Listing is clearly an accessory mistakenly indexed as the product itself \
+  (e.g. "AirPods Max Case" priced at $25 when looking for AirPods Max)
+- Suspicious seller signals in the title ("Hot Dog Vendor", random numbers, gibberish)
 
-When you have enough information, respond with ONLY a JSON object in this exact shape \
-and no other text:
+Accept deals (legitimate=true) when:
+- Price is plausible for the product (use your training knowledge of typical \
+  Canadian retail prices — products in CAD typically cost ~30% more than USD)
+- Title clearly identifies a real product
+- Condition matches the price reasonably (a refurb at 40% off MSRP is normal; \
+  refurb at 95% off is suspicious)
+- Even full-price listings from major retailers are legitimate (we'll let users \
+  filter by discount % at view time — that's not your concern)
+
+Also extract these fields based on the listing:
+- category: one of "Electronics" | "Laptops" | "Tablets" | "Phones" | "Audio" | \
+  "Gaming" | "Accessories" | "Software" | "Books" | "Clothing" | "Food & Drink" | \
+  "Travel" | "Home" | "Other"
+- condition: "new" | "used" | "refurb" | "unknown"
+- student_eligible: true ONLY if the listing explicitly mentions student pricing/discount
+- real_discount_pct: computed as round((listed - sale) / listed * 100) when listed > sale, \
+  otherwise null
+- tags: short labels like ["bestbuy", "open-box", "limited-time"]
+
+confidence is your certainty in the legitimacy decision (0.0–1.0). \
+High confidence on obvious cases, lower on ambiguous ones.
+
+Respond with ONLY a JSON object, no other text:
 {
-  "score": <integer 0-100>,
-  "alert_tier": <"none" | "digest" | "push">,
-  "category": <one of: "Electronics" | "Laptops" | "Tablets" | "Phones" | "Audio" | "Gaming" | "Accessories" | "Software" | "Books" | "Clothing" | "Food & Drink" | "Travel" | "Home" | "Other">,
-  "tags": [<short tag strings>],
+  "legitimate": <true|false>,
+  "validation_confidence": <float 0.0-1.0>,
+  "validation_reason": "<one short sentence explaining the decision>",
+  "category": "<category>",
+  "condition": "<condition>",
+  "student_eligible": <true|false>,
   "real_discount_pct": <float or null>,
-  "confidence": "high",
-  "condition": <"new" | "used" | "refurb" | "unknown">
-}
-
-Condition:
-- "new": sold as new, sealed, never opened
-- "used": pre-owned, second-hand, open-box without refurbishment
-- "refurb": certified/manufacturer/seller refurbished, or "like new"
-- "unknown": condition not mentioned — use this when the extractor did not determine it
-
-Scoring rubric:
-- 0-30:  weak — small discount or inflated original price
-- 31-60: decent — genuine discount but not exceptional
-- 61-80: good — meaningful discount vs historical price
-- 81-100: exceptional — significant discount, price near all-time low
-
-If market context is provided, use it to calibrate:
-- Priced lower than similar items in catalog → score higher
-- Discount percentage larger than comparable deals → score higher
-- Similar items scoring 70+ at comparable price → match that tier
-
-Alert tiers:
-- "none":   score < 50
-- "digest": score 50-79
-- "push":   score >= 80"""
+  "tags": [<short strings>]
+}"""
 
 
 def _deal_to_text(deal: DealRaw) -> str:
@@ -63,101 +66,66 @@ def _deal_to_text(deal: DealRaw) -> str:
         f"Sale price: ${deal.sale_price}",
         f"URL: {deal.url}",
     ]
-    if deal.asin:
-        lines.append(f"ASIN: {deal.asin}")
     if deal.description:
-        lines.append(f"Description: {deal.description}")
+        lines.append(f"Description: {deal.description[:300]}")
     return "\n".join(lines)
 
 
-def _low_confidence_score(deal: DealRaw) -> DealScore:
-    """Fallback emitted when the agent hits MAX_ITERATIONS without finishing."""
-    return DealScore(
+def _fallback_rejection(deal: DealRaw, reason: str) -> ValidationResult:
+    """Emitted when validation fails — defaults to rejection so we don't surface unknowns."""
+    return ValidationResult(
         deal=deal,
-        score=30,
-        alert_tier=AlertTier.none,
+        legitimate=False,
+        validation_confidence=0.0,
+        validation_reason=reason,
         category=Category.other,
-        tags=[],
+        condition=Condition.unknown,
+        student_eligible=False,
         real_discount_pct=None,
-        confidence="low",
+        tags=[],
     )
 
 
 class ScorerAgent:
+    """Validation layer (formerly scoring). One LLM call, no tools, no RAG."""
+
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
-    async def score(
-        self,
-        deal: DealRaw,
-        similar_context: str | None = None,
-    ) -> DealScore:
-        system = SYSTEM_PROMPT
-        if similar_context:
-            system = system + "\n\n" + similar_context
-
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system},
+    async def validate(self, deal: DealRaw) -> ValidationResult:
+        messages = [
+            {"role": "system", "content": _VALIDATION_PROMPT},
             {"role": "user", "content": _deal_to_text(deal)},
         ]
 
-        for iteration in range(MAX_ITERATIONS):
-            response = await self._llm.complete(messages, tools=TOOL_DEFINITIONS)
+        try:
+            response = await self._llm.complete(
+                messages,
+                response_format={"type": "json_object"},
+            )
+        except Exception as exc:
+            logger.warning("ScorerAgent: LLM call failed: %s", exc)
+            return _fallback_rejection(deal, f"LLM error: {exc}")
 
-            # No tool calls — model is done reasoning, parse the final score
-            if not response.tool_calls:
-                return self._parse_score(response.content, deal)
+        return self._parse(response.content, deal)
 
-            # Append the assistant turn to the conversation history
-            messages.append({
-                "role": "assistant",
-                "content": response.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                    }
-                    for tc in response.tool_calls
-                ],
-            })
-
-            # Execute each requested tool and append results
-            for tc in response.tool_calls:
-                tool_fn = TOOL_REGISTRY.get(tc.name)
-                if tool_fn is None:
-                    logger.warning("LLM requested unknown tool: %s", tc.name)
-                    tool_result = {"error": f"unknown tool '{tc.name}'"}
-                else:
-                    result = await tool_fn(**tc.arguments)  # type: ignore[operator]
-                    tool_result = result.model_dump()
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(tool_result),
-                })
-
-            logger.debug("ScorerAgent iteration %d/%d", iteration + 1, MAX_ITERATIONS)
-
-        # Exceeded MAX_ITERATIONS
-        logger.warning("ScorerAgent hit max iterations for deal: %s", deal.title)
-        return _low_confidence_score(deal)
-
-    def _parse_score(self, content: str | None, deal: DealRaw) -> DealScore:
+    def _parse(self, content: str | None, deal: DealRaw) -> ValidationResult:
         if not content:
-            logger.warning("ScorerAgent received empty content, returning low-confidence score")
-            return _low_confidence_score(deal)
+            return _fallback_rejection(deal, "empty LLM response")
+
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
 
         try:
-            data = json.loads(content)
-            return DealScore(deal=deal, **data)
+            data = json.loads(cleaned)
+            return ValidationResult(deal=deal, **data)
         except Exception:
-            # Retry once — strip any markdown fences and try again
-            cleaned = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            try:
-                data = json.loads(cleaned)
-                return DealScore(deal=deal, **data)
-            except Exception:
-                logger.warning("ScorerAgent failed to parse DealScore, returning low-confidence score")
-                return _low_confidence_score(deal)
+            logger.warning("ScorerAgent: failed to parse response: %r", content[:300])
+            return _fallback_rejection(deal, "failed to parse LLM response")
+
+    # Back-compat shim — old callers using .score() get rejected loudly so we catch them
+    async def score(self, *args, **kwargs):  # pragma: no cover
+        raise RuntimeError(
+            "ScorerAgent.score() is removed. Use ScorerAgent.validate(deal) which returns ValidationResult."
+        )

@@ -185,36 +185,38 @@ async def persist_node(state: PipelineState) -> PipelineState:
 
 async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
     """
-    Score a deal then immediately persist it to Postgres.
+    Validate a deal, embed it, then persist it to Postgres.
+
+    Validation replaces the old scoring step — no RAG, no market context. Each
+    deal is judged on its own merits. Rejected deals are still persisted with
+    legitimate=false (filtered at view time).
 
     Used in the fan-out hunter graph where each branch handles a single candidate.
-    Returns {} so no state is merged back to the shared graph — avoids
-    InvalidUpdateError when many branches complete simultaneously.
+    Returns {} so no state is merged back to the shared graph.
     """
     deal = state["deal"]
-    logger.info("score_and_persist_node: scoring '%s'", deal.title)
+    logger.info("score_and_persist_node: validating '%s'", deal.title)
 
     try:
         deal_text = f"{deal.title} {deal.description or ''}".strip()
         embedding = await embed_text(deal_text) or None
 
-        similar: list[Deal] = []
-        if embedding:
-            async with get_async_session() as session:
-                similar = await retrieve_similar_deals(embedding, session)
-
         scorer = ScorerAgent(llm=llm)
-        score_result = await scorer.score(deal, similar_context=_similar_deals_context(similar))
+        validation = await scorer.validate(deal)
         logger.info(
-            "score_and_persist_node: score=%d tier=%s",
-            score_result.score, score_result.alert_tier,
+            "score_and_persist_node: legitimate=%s confidence=%.2f reason=%r",
+            validation.legitimate, validation.validation_confidence, validation.validation_reason[:80],
         )
-    except Exception as exc:
-        logger.exception("score_and_persist_node: scoring failed for '%s'", deal.title)
+    except Exception:
+        logger.exception("score_and_persist_node: validation failed for '%s'", deal.title)
         return {}
 
     now = datetime.now(timezone.utc)
     affiliate_url = affiliate_rewrite(deal.url)
+    # score + alert_tier still populated for back-compat until 0019 drops the columns
+    legacy_score = 50 if validation.legitimate else 0
+    legacy_tier = "digest" if validation.legitimate else "none"
+
     values = dict(
         title=deal.title,
         source=deal.source,
@@ -223,15 +225,18 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
         listed_price=deal.listed_price,
         sale_price=deal.sale_price,
         asin=deal.asin,
-        score=score_result.score,
-        alert_tier=score_result.alert_tier.value,
-        category=score_result.category.value,
-        tags=json.dumps(score_result.tags),
-        confidence=score_result.confidence,
-        real_discount_pct=score_result.real_discount_pct,
-        student_eligible=deal.student_eligible,
-        condition=score_result.condition.value,
+        score=legacy_score,
+        alert_tier=legacy_tier,
+        category=validation.category.value,
+        tags=json.dumps(validation.tags),
+        confidence="high" if validation.validation_confidence >= 0.7 else "low",
+        real_discount_pct=validation.real_discount_pct,
+        student_eligible=validation.student_eligible or deal.student_eligible,
+        condition=validation.condition.value,
         embedding=embedding,
+        legitimate=validation.legitimate,
+        validation_confidence=validation.validation_confidence,
+        validation_reason=validation.validation_reason,
         hunt_date=date.today(),
         first_seen_at=now,
         scraped_at=now,
@@ -255,6 +260,9 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
                         "condition": values["condition"],
                         "affiliate_url": values["affiliate_url"],
                         "embedding": values["embedding"],
+                        "legitimate": values["legitimate"],
+                        "validation_confidence": values["validation_confidence"],
+                        "validation_reason": values["validation_reason"],
                         "scraped_at": values["scraped_at"],
                     },
                 )
@@ -264,8 +272,8 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
             deal_id = result.scalar_one()
             await session.commit()
         logger.info(
-            "score_and_persist_node: upserted '%s' id=%d score=%d",
-            deal.title, deal_id, score_result.score,
+            "score_and_persist_node: upserted '%s' id=%d legitimate=%s",
+            deal.title, deal_id, result.legitimate,
         )
     except Exception as exc:
         logger.exception("score_and_persist_node: persist failed for '%s'", deal.title)

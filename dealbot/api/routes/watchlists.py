@@ -191,6 +191,9 @@ async def list_watchlist_deals(
                 watchlist.intent_embedding, session, threshold=0.55, k=limit * 2,
             )
 
+    # Filter out validation-rejected deals
+    deals = [d for d in deals if d.legitimate]
+
     # Apply context filters
     filtered = True
     if ctx:
@@ -214,7 +217,7 @@ async def list_watchlist_deals(
             else:
                 filtered = False
 
-    deals.sort(key=lambda d: d.score, reverse=True)
+    # Keep cosine-similarity ordering (retrieve_similar_deals already sorted by relevance)
     return WatchlistDealsResponse(
         deals=[WatchlistDealResponse(
             id=d.id, title=d.title, source=d.source, url=d.url,

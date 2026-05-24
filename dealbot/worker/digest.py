@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 _RESEND_API_URL = "https://api.resend.com/emails"
 _FROM_ADDRESS = os.environ.get("RESEND_FROM", "Studeal <alerts@studeal.site>")
-_SIMILARITY_THRESHOLD = 0.35
+# pgvector cosine distance threshold — anything <= this is "close enough"
+_SIMILARITY_THRESHOLD = 0.45
+# Cap deals-per-user-per-digest so emails stay skim-able
+_MAX_DEALS_PER_DIGEST = 20
 
 
 async def _send_email(to: str, subject: str, body: str) -> None:
@@ -46,33 +49,37 @@ def _build_digest(user_email: str, matches: list[tuple[str, Deal]]) -> str:
         discount = f" ({deal.real_discount_pct:.0f}% off)" if deal.real_discount_pct else ""
         lines.append(
             f"• [{watchlist_name}] {deal.title}{discount}\n"
-            f"  Score: {deal.score}/100 | ${deal.sale_price:.2f}\n"
+            f"  ${deal.sale_price:.2f}\n"
             f"  {deal.url}\n"
         )
-    lines.append("\nManage your watchlists at studeal.site")
+    lines.append("\nManage your agents at studeal.site")
     return "\n".join(lines)
 
 
 async def _matched_deals_for_user(session, user: User, since: datetime) -> list[tuple[str, Deal]]:
     """
-    Use pgvector <=> (cosine distance) to find fresh deals matching any of
-    this user's watchlist keywords. All vector math runs in Postgres.
+    Find fresh legitimate deals matching each of this user's agents.
+
+    Uses pgvector cosine distance against each Watchlist.intent_embedding.
+    Filters to legitimate=true. Returns matches ordered by similarity, capped
+    at _MAX_DEALS_PER_DIGEST per user.
     """
     result = await session.execute(
         text("""
             SELECT DISTINCT ON (d.id)
                 d.*,
                 w.name AS watchlist_name,
-                w.min_score AS min_score
+                d.embedding <=> w.intent_embedding AS distance
             FROM deals d
-            CROSS JOIN watchlist_keywords wk
-            JOIN watchlists w ON wk.watchlist_id = w.id
+            JOIN watchlists w
+              ON (d.embedding <=> w.intent_embedding) <= :threshold
             WHERE w.user_id = :user_id
               AND d.first_seen_at >= :since
               AND d.embedding IS NOT NULL
-              AND wk.embedding IS NOT NULL
-              AND (d.embedding <=> wk.embedding) <= :threshold
-            ORDER BY d.id, d.score DESC
+              AND w.intent_embedding IS NOT NULL
+              AND d.legitimate = true
+              AND (w.expires_at IS NULL OR w.expires_at > now())
+            ORDER BY d.id, distance ASC
         """),
         {
             "user_id": user.id,
@@ -82,14 +89,13 @@ async def _matched_deals_for_user(session, user: User, since: datetime) -> list[
     )
     rows = result.mappings().all()
 
+    # Order across watchlists by best (smallest) cosine distance, then cap
+    sorted_rows = sorted(rows, key=lambda r: r["distance"])
     matches: list[tuple[str, Deal]] = []
-    for row in rows:
-        if row["score"] < row["min_score"]:
-            continue
-        deal = Deal(**{k: v for k, v in row.items() if k not in ("watchlist_name", "min_score")})
-        matches.append((row["watchlist_name"], deal))
-
-    return sorted(matches, key=lambda x: x[1].score, reverse=True)
+    for row in sorted_rows[:_MAX_DEALS_PER_DIGEST]:
+        deal_fields = {k: v for k, v in row.items() if k not in ("watchlist_name", "distance")}
+        matches.append((row["watchlist_name"], Deal(**deal_fields)))
+    return matches
 
 
 async def _send_digests() -> dict:

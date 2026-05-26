@@ -17,6 +17,11 @@ from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
 from dealbot.schemas import Condition, DealRaw
 from dealbot.search import SearchResult
+from dealbot.search.google_resolver import GoogleShoppingResolver
+
+# Module-level singleton — internal Semaphore(3) caps concurrent Google calls
+# across all fan-out branches that hit this node in parallel.
+_resolver = GoogleShoppingResolver()
 
 def _similar_deals_context(similar: list[Deal]) -> str | None:
     """Format retrieved deals into a market context string for the scorer."""
@@ -185,18 +190,53 @@ async def persist_node(state: PipelineState) -> PipelineState:
 
 async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
     """
-    Validate a deal, embed it, then persist it to Postgres.
+    Resolve, validate, embed, and persist a deal.
 
-    Validation replaces the old scoring step — no RAG, no market context. Each
-    deal is judged on its own merits. Rejected deals are still persisted with
-    legitimate=false (filtered at view time).
+    Pipeline per deal:
+      1. RESOLVE (Serper-sourced deals only): follow the Google aggregator URL
+         to find the direct retailer link + real listed_price. Drop if no
+         direct URL can be extracted — users shouldn't see deals they can't get.
+      2. VALIDATE: LLM judges legitimacy (scams, parts-only, counterfeits). Rejected
+         deals are still persisted with legitimate=false (filtered at view time).
+      3. EMBED + PERSIST.
 
-    Used in the fan-out hunter graph where each branch handles a single candidate.
-    Returns {} so no state is merged back to the shared graph.
+    Returns one of:
+      {"outcome": "persisted_legitimate", "deal_id": int}
+      {"outcome": "persisted_rejected",   "deal_id": int}
+      {"outcome": "dropped_resolution",   "reason": str}
+      {"outcome": "errored",              "reason": str}
+    Aggregated by the caller in tasks.py for per-hunt telemetry.
     """
     deal = state["deal"]
-    logger.info("score_and_persist_node: validating '%s'", deal.title)
+    logger.info("score_and_persist_node: processing '%s'", deal.title)
 
+    # Stage 1: link resolution gate (Serper aggregator URLs only)
+    if deal.url and "google.com/search" in deal.url:
+        try:
+            offer = await _resolver.resolve(deal.url)
+        except Exception as exc:
+            logger.warning("score_and_persist_node: resolver crashed for %r: %s", deal.title, exc)
+            return {"outcome": "dropped_resolution", "reason": "resolver_exception"}
+
+        if not offer.direct_url:
+            logger.info(
+                "score_and_persist_node: DROPPING %r — no direct URL (%s)",
+                deal.title, offer.failure_reason,
+            )
+            return {
+                "outcome": "dropped_resolution",
+                "reason": offer.failure_reason or "no_direct_url",
+            }
+
+        # Resolved — replace Serper's placeholder data with the real thing
+        deal.url = offer.direct_url
+        if offer.listed_price is not None:
+            deal.listed_price = offer.listed_price
+        if offer.sale_price is not None:
+            deal.sale_price = offer.sale_price
+        logger.info("score_and_persist_node: resolved %r → %s", deal.title, deal.url[:80])
+
+    # Stage 2: validation
     try:
         deal_text = f"{deal.title} {deal.description or ''}".strip()
         embedding = await embed_text(deal_text) or None
@@ -207,9 +247,9 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
             "score_and_persist_node: legitimate=%s confidence=%.2f reason=%r",
             validation.legitimate, validation.validation_confidence, validation.validation_reason[:80],
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("score_and_persist_node: validation failed for '%s'", deal.title)
-        return {}
+        return {"outcome": "errored", "reason": f"validation_error: {exc}"}
 
     now = datetime.now(timezone.utc)
     affiliate_url = affiliate_rewrite(deal.url)
@@ -268,14 +308,18 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
                 )
                 .returning(Deal.id)
             )
-            result = await session.execute(stmt)
-            deal_id = result.scalar_one()
+            sa_result = await session.execute(stmt)
+            deal_id = sa_result.scalar_one()
             await session.commit()
         logger.info(
             "score_and_persist_node: upserted '%s' id=%d legitimate=%s",
-            deal.title, deal_id, result.legitimate,
+            deal.title, deal_id, validation.legitimate,
         )
     except Exception as exc:
         logger.exception("score_and_persist_node: persist failed for '%s'", deal.title)
+        return {"outcome": "errored", "reason": f"persist_failed: {exc}"}
 
-    return {}
+    return {
+        "outcome": "persisted_legitimate" if validation.legitimate else "persisted_rejected",
+        "deal_id": deal_id,
+    }

@@ -66,7 +66,14 @@ async def _run_research(llm: LLMClient, watchlist_id: int) -> dict:
         state.total_cost_usd, state.stop_reason,
     )
 
-    # Fan out scoring + persistence for every accumulated deal
+    # Fan out scoring + persistence for every accumulated deal.
+    # Each branch returns an outcome dict; aggregate for per-hunt telemetry.
+    outcomes: dict[str, int] = {
+        "persisted_legitimate": 0,
+        "persisted_rejected": 0,
+        "dropped_resolution": 0,
+        "errored": 0,
+    }
     if state.deals_by_url:
         sem = asyncio.Semaphore(5)
         graph = build_scorer_graph(llm)
@@ -74,11 +81,30 @@ async def _run_research(llm: LLMClient, watchlist_id: int) -> dict:
         async def _score_one(deal):
             async with sem:
                 try:
-                    await graph.ainvoke({"deal": deal})
+                    result = await graph.ainvoke({"deal": deal})
+                    outcome = (result or {}).get("outcome", "errored")
+                    outcomes[outcome] = outcomes.get(outcome, 0) + 1
                 except Exception:
                     logger.exception("scorer graph failed for %r", deal.title)
+                    outcomes["errored"] += 1
 
         await asyncio.gather(*[_score_one(d) for d in state.deals_by_url.values()])
+
+    seen = len(state.deals_by_url)
+    visible = outcomes["persisted_legitimate"]
+    dropped_total = (
+        outcomes["persisted_rejected"]
+        + outcomes["dropped_resolution"]
+        + outcomes["errored"]
+    )
+    drop_rate = (dropped_total / seen * 100) if seen else 0.0
+    logger.info(
+        "research_for_agent: outcomes wl=%d seen=%d → visible=%d "
+        "persisted_rejected=%d dropped_resolution=%d errored=%d (drop_rate=%.0f%%)",
+        watchlist_id, seen, visible,
+        outcomes["persisted_rejected"], outcomes["dropped_resolution"], outcomes["errored"],
+        drop_rate,
+    )
 
     return {
         "watchlist_id": watchlist_id,

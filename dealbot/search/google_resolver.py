@@ -1,14 +1,22 @@
 """Tier 1 link resolution for Serper's Google Shopping aggregator URLs.
 
-Strategy:
-  - Fetch the Google Shopping product page via httpx (free)
-  - Parse aria-label attributes (Google's accessibility convention) with regex
-  - Extract Was/Current price and discount percentage deterministically
-  - Optionally extract direct retailer URLs from <a href> tags (when present in static HTML)
+Two-page fetch strategy (both HTTP + regex, no LLM, no third-party API):
 
-No LLM. No third-party scraping API. Just HTTP + regex.
+  Page 1: Google Shopping product comparison page (the Serper link)
+    → Finds <div data-attrid="apg-product-result"> — the headline offer block
+    → Extracts sale_price, pct_off, condition from aria-label
+    → Gets the inner <a href> pointing to the nested offer page
 
-Tier 2 (Browserbase + Playwright) is deferred until Tier 1 coverage is measured.
+  Page 2: Nested Google offer page (headlineOfferDocid URL)
+    → Same apg-product-result parsing — sometimes adds Was $X not on page 1
+    → First direct retailer <a href> on this page is the click target
+
+Merges best available data from both pages. Handles:
+  Type A  — Has Was $X → full strikethrough + discount
+  Type A2 — Has X% OFF but no Was → derive listed_price from percentage
+  Type B  — Just current price + condition → no discount, valid deal
+
+Success = direct_url is not None (a working retailer link was found).
 """
 from __future__ import annotations
 
@@ -16,7 +24,7 @@ import asyncio
 import logging
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -24,7 +32,6 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-# Realistic UAs — rotated per call to reduce fingerprint-based throttling
 _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -33,11 +40,15 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
 ]
 
-# Regex against aria-label conventions — much more stable than CSS classes
 _RE_CURRENT_PRICE = re.compile(r"Current Price:\s*\$([0-9]+(?:[,.][0-9]{1,2})?)", re.IGNORECASE)
-_RE_WAS_PRICE = re.compile(r"Was\s*\$([0-9]+(?:[,.][0-9]{1,2})?)", re.IGNORECASE)
-_RE_PERCENT_OFF = re.compile(r"([0-9]+)%\s*OFF", re.IGNORECASE)
-# Direct retailer href patterns (we know these stable Canadian retailers from prior data)
+_RE_WAS_PRICE     = re.compile(r"Was\s*\$([0-9]+(?:[,.][0-9]{1,2})?)", re.IGNORECASE)
+_RE_PERCENT_OFF   = re.compile(r"([0-9]+)%\s*OFF", re.IGNORECASE)
+# Condition appears as "Refurbished." / "Pre-owned." after Current Price in aria-label
+_RE_CONDITION     = re.compile(
+    r"Current Price:\s*\$[\d,]+(?:\.\d{1,2})?\.+\s*(Refurbished|Pre-owned|Open Box|Used|Renewed|As Is|Certified Refurbished)",
+    re.IGNORECASE,
+)
+
 _RETAILER_DOMAINS = (
     "amazon.ca", "amazon.com",
     "bestbuy.ca", "bestbuy.com",
@@ -51,7 +62,13 @@ _RETAILER_DOMAINS = (
     "canadacomputers.com",
     "thesource.ca",
     "londondrugs.com",
+    "canadiantire.ca",
+    "ebay.ca", "ebay.com",
+    "poshmark.ca", "poshmark.com",
+    "kijiji.ca",
 )
+
+
 def _parse_money(s: str | None) -> float | None:
     if not s:
         return None
@@ -61,11 +78,39 @@ def _parse_money(s: str | None) -> float | None:
         return None
 
 
+def _extract_offer_data(aria: str) -> dict:
+    """Parse all deal signals from a single aria-label string."""
+    sale_price   = _parse_money(m.group(1)) if (m := _RE_CURRENT_PRICE.search(aria)) else None
+    listed_price = _parse_money(m.group(1)) if (m := _RE_WAS_PRICE.search(aria))     else None
+    pct_off      = float(m.group(1))        if (m := _RE_PERCENT_OFF.search(aria))    else None
+    condition    = m.group(1).lower()       if (m := _RE_CONDITION.search(aria))      else None
+
+    # Derive listed_price from percentage when Was $X is absent (Type A2)
+    if listed_price is None and pct_off and sale_price:
+        pct = min(pct_off, 99.0)  # guard against 100%+ nonsense
+        listed_price = round(sale_price / (1 - pct / 100), 2)
+
+    # Compute final discount_pct
+    discount_pct = None
+    if sale_price and listed_price and listed_price > sale_price:
+        discount_pct = round((listed_price - sale_price) / listed_price * 100, 1)
+    elif pct_off:
+        discount_pct = pct_off
+
+    return {
+        "sale_price": sale_price,
+        "listed_price": listed_price,
+        "discount_pct": discount_pct,
+        "condition": condition,
+    }
+
+
 @dataclass
 class ResolvedOffer:
     sale_price: float | None = None
     listed_price: float | None = None
     real_discount_pct: float | None = None
+    condition: str | None = None   # "refurbished" | "pre-owned" | "open box" | "used" | None
     direct_url: str | None = None
     success: bool = False
     failure_reason: str | None = None
@@ -73,8 +118,6 @@ class ResolvedOffer:
 
 @dataclass
 class ResolutionStats:
-    """Per-query summary of Tier 1 resolution outcomes."""
-
     attempted: int = 0
     succeeded: int = 0
     parse_failed: int = 0
@@ -98,19 +141,14 @@ class ResolutionStats:
 
 
 class GoogleShoppingResolver:
-    """Resolves Google Shopping aggregator URLs to extract Was/Is prices.
+    """Resolves Google Shopping aggregator URLs via two-page fetch + regex parsing."""
 
-    Tier 1: pure httpx + regex. Free per call. ~500ms typical latency.
-    Bounded concurrency (semaphore) + UA rotation + jitter + retry-once.
-    """
-
-    def __init__(self, concurrency: int = 3, timeout: float = 10.0) -> None:
+    def __init__(self, concurrency: int = 3, timeout: float = 12.0) -> None:
         self._sem = asyncio.Semaphore(concurrency)
         self._timeout = timeout
 
     async def resolve(self, google_url: str) -> ResolvedOffer:
         async with self._sem:
-            # jitter before request to spread load
             await asyncio.sleep(random.uniform(0.3, 1.0))
             async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
                 return await self._fetch_and_parse(client, google_url)
@@ -138,102 +176,153 @@ class GoogleShoppingResolver:
         if resp.status_code >= 400:
             return ResolvedOffer(failure_reason="http_error")
 
-        return await self._parse_html(client, resp.text)
+        return await self._parse_pages(client, resp.text)
 
-    async def _parse_html(self, client: httpx.AsyncClient, html: str) -> ResolvedOffer:
-        """Parse Google's primary offer block as a unit so prices + URL are correlated.
+    async def _parse_pages(self, client: httpx.AsyncClient, page1_html: str) -> ResolvedOffer:
+        """Parse Page 1 for headline offer data, then fetch Page 2 for the
+        direct retailer URL and any additional price data."""
 
-        Strategy: locate <div data-attrid="apg-product-result">, extract aria-label
-        for prices, walk to its parent <a> for the click target, then resolve any
-        Google redirect to a direct retailer URL.
-        """
-        soup = BeautifulSoup(html, "html.parser")
-        offer_div = soup.find("div", attrs={"data-attrid": "apg-product-result"})
+        soup1 = BeautifulSoup(page1_html, "html.parser")
+        offer_div = soup1.find("div", attrs={"data-attrid": "apg-product-result"})
+
         if offer_div is None:
-            return ResolvedOffer(failure_reason="no_primary_offer")
+            # Fallback: organic_offers_grid — layout used when there's no featured
+            # comparison offer (e.g., full-price/new products). Has direct retailer
+            # URLs and prices but no Was/discount data.
+            return self._parse_offers_grid(soup1)
 
-        aria = offer_div.get("aria-label", "") or ""
+        # Extract initial offer data from Page 1 aria-label
+        p1 = _extract_offer_data(offer_div.get("aria-label", "") or "")
 
-        current_match = _RE_CURRENT_PRICE.search(aria)
-        was_match = _RE_WAS_PRICE.search(aria)
-        pct_match = _RE_PERCENT_OFF.search(aria)
+        # Get inner anchor for Page 2
+        inner_a = offer_div.find("a", href=True)
+        if not inner_a:
+            return ResolvedOffer(failure_reason="no_inner_anchor")
 
-        sale_price = _parse_money(current_match.group(1)) if current_match else None
-        listed_price = _parse_money(was_match.group(1)) if was_match else None
-        discount_pct = float(pct_match.group(1)) if pct_match else None
+        href = inner_a["href"]
+        full_href = href if href.startswith("http") else f"https://www.google.com{href}"
 
-        if discount_pct is None and sale_price and listed_price and listed_price > sale_price:
+        # Fetch Page 2 — the nested headlineOfferDocid page
+        direct_url, p2 = await self._fetch_nested(client, full_href)
+
+        # If nested page gave no direct URL, fall back to organic_offers_grid on page 1
+        if not direct_url:
+            grid_result = self._parse_offers_grid(soup1)
+            if grid_result.direct_url:
+                direct_url = grid_result.direct_url
+                # Use grid price data only if nested page gave us nothing
+                if not p2.get("sale_price"):
+                    p2["sale_price"] = grid_result.sale_price
+
+        # Merge: Page 2 price data takes priority (more specific to this offer)
+        sale_price    = p2.get("sale_price")    or p1.get("sale_price")
+        listed_price  = p2.get("listed_price")  or p1.get("listed_price")
+        discount_pct  = p2.get("discount_pct")  or p1.get("discount_pct")
+        condition     = p2.get("condition")      or p1.get("condition")
+
+        # Sanity check: listed_price must be >= sale_price, otherwise it's cross-page noise
+        if listed_price is not None and sale_price is not None and listed_price < sale_price:
+            listed_price = None
+            discount_pct = None
+
+        # Recompute discount if merge produced both prices
+        if sale_price and listed_price and listed_price > sale_price and not discount_pct:
             discount_pct = round((listed_price - sale_price) / listed_price * 100, 1)
 
-        # Find the click-target anchor — it's nested inside the offer_div, not a parent
-        direct_url: str | None = None
-        anchor = offer_div.find("a", href=True)
-        if anchor and anchor.get("href"):
-            direct_url = await self._resolve_href(client, anchor["href"])
-
-        # Successful if listed_price is recovered (the field Serper doesn't give us)
-        success = listed_price is not None
+        success = direct_url is not None
 
         return ResolvedOffer(
             sale_price=sale_price,
             listed_price=listed_price,
             real_discount_pct=discount_pct,
+            condition=condition,
             direct_url=direct_url,
             success=success,
-            failure_reason=None if success else "no_match",
+            failure_reason=None if success else "no_direct_url",
         )
 
-    async def _resolve_href(self, client: httpx.AsyncClient, href: str) -> str | None:
-        """Resolve an anchor href to a direct retailer URL.
+    def _parse_offers_grid(self, soup: BeautifulSoup) -> ResolvedOffer:
+        """Fallback for pages without apg-product-result.
 
-        Four cases handled:
-        - Direct retailer URL (matches known domain) → return as-is
-        - Google /url?q=... wrapper → extract q param
-        - Google /aclk?... tracking URL → follow with HEAD, return final location
-        - Google /search?ibp=oshop&...headlineOfferDocid:... nested offer page →
-          fetch it and find the first direct retailer href inside
+        organic_offers_grid contains a list of retailer offers with direct URLs
+        and prices. We take the cheapest offer with a known retailer URL.
+        No Was/discount data available — this is always Type B (sale_price only).
         """
-        if not href:
-            return None
+        grid = soup.find("div", attrs={"data-attrid": "organic_offers_grid"})
+        if grid is None:
+            return ResolvedOffer(failure_reason="no_offer_layout")
 
-        # Direct retailer URL on a known domain
+        # Find cheapest price from aria-labels in the grid
+        best_price: float | None = None
+        for el in grid.find_all(attrs={"aria-label": True}):
+            aria = el.get("aria-label", "")
+            m = _RE_CURRENT_PRICE.search(aria)
+            if m:
+                price = _parse_money(m.group(1))
+                if price and (best_price is None or price < best_price):
+                    best_price = price
+
+        # Find first direct retailer URL in the grid
+        direct_url: str | None = None
+        for a in grid.find_all("a", href=True):
+            h = a["href"]
+            if not h.startswith("http"):
+                continue
+            if any(domain in h for domain in _RETAILER_DOMAINS):
+                direct_url = h
+                break
+
+        success = direct_url is not None
+        return ResolvedOffer(
+            sale_price=best_price,
+            listed_price=None,
+            real_discount_pct=None,
+            condition=None,
+            direct_url=direct_url,
+            success=success,
+            failure_reason=None if success else "no_direct_url_in_grid",
+        )
+
+    async def _fetch_nested(
+        self, client: httpx.AsyncClient, url: str,
+    ) -> tuple[str | None, dict]:
+        """Fetch the nested Google offer page.
+
+        Returns:
+          (direct_retailer_url, price_data_dict)
+        Price data dict may be empty if the nested page yielded nothing useful.
+        """
+        # Handle direct retailer URL (no nested fetch needed)
         for domain in _RETAILER_DOMAINS:
-            if domain in href and href.startswith("http"):
-                return href
+            if domain in url and url.startswith("http"):
+                return url, {}
 
-        # Google /url?q=... wrapper
-        if href.startswith("/url?") or "google.com/url?" in href:
+        # Google /url?q= wrapper
+        if "/url?" in url:
             try:
-                qs = parse_qs(urlparse(href).query)
+                qs = parse_qs(urlparse(url).query)
                 q = qs.get("q", [None])[0]
                 if q and q.startswith("http"):
-                    return q
+                    return q, {}
             except Exception:
                 pass
-            return None
+            return None, {}
 
-        full_url = href if href.startswith("http") else f"https://www.google.com{href}"
-
-        # Google /aclk?... tracking redirect — HEAD follow
-        if "google.com/aclk" in full_url:
+        # Google /aclk redirect — follow to final destination
+        if "google.com/aclk" in url:
             try:
-                resp = await client.head(
-                    full_url,
-                    headers={"User-Agent": random.choice(_USER_AGENTS)},
-                    follow_redirects=True,
-                    timeout=5.0,
-                )
-                return str(resp.url)
+                resp = await client.head(url, headers={"User-Agent": random.choice(_USER_AGENTS)},
+                                         follow_redirects=True, timeout=5.0)
+                return str(resp.url), {}
             except Exception as exc:
                 logger.debug("google_resolver: aclk follow failed: %s", exc)
-                return None
+            return None, {}
 
-        # Nested Google offer page (ibp=oshop with headlineOfferDocid) —
-        # fetch HTML and pick the first retailer-domain anchor inside
-        if "ibp=oshop" in full_url or "/search?" in full_url:
+        # Nested Google offer page — fetch and parse
+        if "ibp=oshop" in url or "/search?" in url:
             try:
                 resp = await client.get(
-                    full_url,
+                    url,
                     headers={
                         "User-Agent": random.choice(_USER_AGENTS),
                         "Accept-Language": "en-CA,en;q=0.9",
@@ -241,17 +330,29 @@ class GoogleShoppingResolver:
                     timeout=self._timeout,
                 )
                 if resp.status_code != 200:
-                    return None
+                    return None, {}
+
                 nested = BeautifulSoup(resp.text, "html.parser")
+
+                # Extract price data from the nested page's headline offer
+                nested_offer = nested.find("div", attrs={"data-attrid": "apg-product-result"})
+                price_data = _extract_offer_data(nested_offer.get("aria-label", "") or "") \
+                    if nested_offer else {}
+
+                # First direct retailer URL on the nested page
+                direct_url = None
                 for a in nested.find_all("a", href=True):
                     h = a["href"]
                     if not h.startswith("http"):
                         continue
-                    for domain in _RETAILER_DOMAINS:
-                        if domain in h:
-                            return h
+                    if any(domain in h for domain in _RETAILER_DOMAINS):
+                        direct_url = h
+                        break
+
+                return direct_url, price_data
+
             except Exception as exc:
                 logger.debug("google_resolver: nested fetch failed: %s", exc)
-            return None
+            return None, {}
 
-        return None
+        return None, {}

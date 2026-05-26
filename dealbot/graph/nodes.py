@@ -234,7 +234,26 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
             deal.listed_price = offer.listed_price
         if offer.sale_price is not None:
             deal.sale_price = offer.sale_price
-        logger.info("score_and_persist_node: resolved %r → %s", deal.title, deal.url[:80])
+        # Resolver may detect condition (refurb/used) from aria-label
+        if offer.condition and deal.condition == "unknown":
+            from dealbot.schemas import Condition
+            _cond_map = {
+                "refurbished": Condition.refurb,
+                "certified refurbished": Condition.refurb,
+                "renewed": Condition.refurb,
+                "open box": Condition.refurb,
+                "pre-owned": Condition.used,
+                "used": Condition.used,
+                "as is": Condition.used,
+            }
+            mapped = _cond_map.get(offer.condition.lower())
+            if mapped:
+                deal.condition = mapped
+        logger.info(
+            "score_and_persist_node: resolved %r → %s (listed=$%s disc=%s%% cond=%s)",
+            deal.title, deal.url[:70],
+            offer.listed_price, offer.real_discount_pct, offer.condition,
+        )
 
     # Stage 2: validation
     try:

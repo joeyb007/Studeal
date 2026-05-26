@@ -83,9 +83,15 @@ Each turn you have ONE tool:
 You can also call stop() when you're satisfied or have exhausted promising angles.
 
 Strategy:
-- First turn: search the user's core product_query with locale/budget context baked in
-- Subsequent turns: explore different angles — refurbished, specific brands, retailer-specific, \
-  alternative product categories ("gaming laptop" → "RTX 4060 laptop")
+- First turn: search the user's core product_query with locale AND a deal-signal term \
+  (e.g. "airpods max deal canada", "gaming laptop sale canada")
+- Subsequent turns: vary both the product angle AND the deal framing:
+    * Condition variants: "refurbished [product] canada", "open box [product]", "used [product]"
+    * Discount framing: "[product] discount canada", "[product] clearance", "[product] on sale"
+    * Price framing: "[product] under $[budget]" if budget is known
+    * Model/brand specifics: narrow to a model name when relevant
+- ALWAYS include at least one deal-signal term per query. Plain product names without \
+  deal framing return full-price inventory and waste your turn budget.
 - Observe: high pool_count means this area is well-covered; high cache_hit means a similar \
   query was just run by another agent
 - Stop when: you have 30+ deals, OR diminishing returns (multiple low-yield turns), OR \

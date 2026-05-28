@@ -4,6 +4,8 @@ import asyncio
 import codecs
 import logging
 import os
+import re
+from dataclasses import dataclass
 from urllib.parse import quote_plus
 
 import httpx
@@ -18,6 +20,33 @@ from dealbot.llm.base import LLMClient
 logger = logging.getLogger(__name__)
 
 _BROWSERBASE_API = "https://api.browserbase.com/v1"
+_PAGE_RENDER_WAIT_MS = 2_500
+# Configurable via env — bump when upgrading Browserbase plan
+BROWSERBASE_MAX_SESSIONS = int(os.environ.get("BROWSERBASE_MAX_SESSIONS", "3"))
+
+_RE_MONEY = re.compile(r"\$([0-9]+(?:[,.][0-9]{1,2})?)")
+_RE_PCT_OFF = re.compile(r"([0-9]+)%\s*off", re.IGNORECASE)
+
+
+@dataclass
+class OfferData:
+    """A single retailer offer extracted from a Google Shopping aria snapshot."""
+
+    merchant: str
+    url: str
+    sale_price: float | None = None
+    listed_price: float | None = None
+    discount_pct: float | None = None
+    condition: str | None = None  # "refurbished" | "pre-owned" | "used" | None
+
+
+def _parse_money(s: str | None) -> float | None:
+    if not s:
+        return None
+    try:
+        return float(s.replace(",", ""))
+    except ValueError:
+        return None
 _PAGE_TIMEOUT = 20_000  # ms
 
 
@@ -324,70 +353,102 @@ def _dump_snap(
         logger.debug("find_url: snap dump failed: %s", exc)
 
 
-def _extract_merchant_urls(snap: str) -> list[tuple[str, str]]:
+def _extract_merchant_urls(snap: str) -> list[OfferData]:
+    """Parse a Google Shopping aria snapshot for all retailer offer data.
+
+    Three patterns (in priority order):
+
+    A — "Best price" headline offer (has full price breakdown):
+        link "Best price {Merchant} Current price is $X. N% off Old price was $Y ..."
+          /url: https://retailer.com/...
+
+    B — Per-listing offer (current price only):
+        link "{Merchant} Current price: $X ..."
+          /url: https://retailer.com/...
+
+    C — "Compare prices" section:
+        link "for from {Merchant}"
+          /url: https://retailer.com/...
+
+    Returns deduplicated OfferData list. Pattern A results first (richer data).
     """
-    Parse the detail panel aria snapshot for merchant → URL pairs.
-
-    Extracts from two patterns in Google Shopping's detail panel:
-
-    Pattern A — per-listing offer (specific to the clicked product):
-        link "{Merchant} Current price: $XX.XX ..."
-          /url: https://retailer.com/product/...
-
-    Pattern B — "Compare prices" section (shared across product family):
-        link "for from {Merchant}":
-          /url: https://retailer.com/product/...
-
-    Pattern A results come first (more specific). Returns deduplicated
-    (merchant_name, url) tuples.
-    """
-    import re
-
     lines = snap.splitlines()
-    offer_results: list[tuple[str, str]] = []  # Pattern A — per-listing
-    compare_results: list[tuple[str, str]] = []  # Pattern B — compare prices
+    best_results: list[OfferData] = []   # Pattern A — full price breakdown
+    offer_results: list[OfferData] = []  # Pattern B — per-listing
+    compare_results: list[OfferData] = [] # Pattern C — compare prices
     seen_urls: set[str] = set()
+
+    def _find_url(start: int, window: int = 5) -> str | None:
+        for j in range(start + 1, min(start + window, len(lines))):
+            ns = lines[j].strip()
+            if "/url:" not in ns:
+                continue
+            url = ns.split("/url:", 1)[1].strip()
+            if url.startswith("http") and "google.com" not in url and url not in seen_urls:
+                seen_urls.add(url)
+                return url
+        return None
 
     for i, line in enumerate(lines):
         stripped = line.strip()
 
-        # Pattern A: link "{Merchant} Current price: $..."
-        if 'link "' in stripped and "Current price" in stripped:
-            match = re.search(r'link "(.+?)\s+Current price', stripped)
-            if not match:
-                continue
-            merchant_name = match.group(1).strip()
-
-            for j in range(i + 1, min(i + 5, len(lines))):
-                ns = lines[j].strip()
-                if "/url:" not in ns:
-                    continue
-                url = ns.split("/url:", 1)[1].strip()
-                if url.startswith("http") and "google.com" not in url and url not in seen_urls:
-                    seen_urls.add(url)
-                    offer_results.append((merchant_name, url))
-                    break
+        # Pattern A: "Best price {Merchant} Current price is $X. N% off Old price was $Y"
+        if 'link "Best price' in stripped and "Current price is" in stripped:
+            m_name = re.search(r'Best price\s+(.+?)\s+Current price is', stripped)
+            sale_m = re.search(r'Current price is \$([0-9]+(?:[,.][0-9]{1,2})?)', stripped)
+            pct_m = _RE_PCT_OFF.search(stripped)
+            was_m = re.search(r'Old price was \$([0-9]+(?:[,.][0-9]{1,2})?)', stripped)
+            if m_name and sale_m:
+                url = _find_url(i)
+                if url:
+                    sale = _parse_money(sale_m.group(1))
+                    listed = _parse_money(was_m.group(1)) if was_m else None
+                    pct = float(pct_m.group(1)) if pct_m else None
+                    if not pct and sale and listed and listed > sale:
+                        pct = round((listed - sale) / listed * 100, 1)
+                    best_results.append(OfferData(
+                        merchant=m_name.group(1).strip(),
+                        url=url,
+                        sale_price=sale,
+                        listed_price=listed,
+                        discount_pct=pct,
+                    ))
             continue
 
-        # Pattern B: link "for from {Merchant}" or "for was $X from {Merchant}"
+        # Pattern B: "{Merchant} Current price: $X"
+        if 'link "' in stripped and "Current price" in stripped and "Best price" not in stripped:
+            m_name = re.search(r'link "(.+?)\s+Current price', stripped)
+            sale_m = _RE_MONEY.search(stripped)
+            was_m = re.search(r'[Ww]as\s*\$([0-9]+(?:[,.][0-9]{1,2})?)', stripped)
+            if m_name:
+                url = _find_url(i)
+                if url:
+                    sale = _parse_money(sale_m.group(1)) if sale_m else None
+                    listed = _parse_money(was_m.group(1)) if was_m else None
+                    pct = None
+                    if sale and listed and listed > sale:
+                        pct = round((listed - sale) / listed * 100, 1)
+                    offer_results.append(OfferData(
+                        merchant=m_name.group(1).strip(),
+                        url=url,
+                        sale_price=sale,
+                        listed_price=listed,
+                        discount_pct=pct,
+                    ))
+            continue
+
+        # Pattern C: "for from {Merchant}"
         if 'link "for' in stripped and "from" in stripped:
-            match = re.search(r'from\s+(.+?)(?:\s*")', stripped)
-            if not match:
-                continue
-            merchant_name = match.group(1).strip()
+            m_name = re.search(r'from\s+(.+?)(?:\s*")', stripped)
+            if m_name:
+                url = _find_url(i)
+                if url:
+                    compare_results.append(OfferData(
+                        merchant=m_name.group(1).strip(),
+                        url=url,
+                    ))
 
-            for j in range(i + 1, min(i + 5, len(lines))):
-                ns = lines[j].strip()
-                if "/url:" not in ns:
-                    continue
-                url = ns.split("/url:", 1)[1].strip()
-                if url.startswith("http") and "google.com" not in url and url not in seen_urls:
-                    seen_urls.add(url)
-                    compare_results.append((merchant_name, url))
-                    break
-
-    # Per-listing offers first (more specific), then compare prices
-    return offer_results + compare_results
+    return best_results + offer_results + compare_results
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +536,87 @@ def _filter_aria_snapshot(snap: str) -> str:
 
     return "\n".join(parts)
 
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 link resolution — Browserbase + aria snapshot
+# ---------------------------------------------------------------------------
+
+_tier2_sem: asyncio.Semaphore | None = None
+
+
+def _get_tier2_sem() -> asyncio.Semaphore:
+    """Lazily create semaphore respecting BROWSERBASE_MAX_SESSIONS env var."""
+    global _tier2_sem
+    if _tier2_sem is None:
+        _tier2_sem = asyncio.Semaphore(BROWSERBASE_MAX_SESSIONS)
+    return _tier2_sem
+
+
+async def resolve_serper_url(google_url: str) -> OfferData | None:
+    """Render a Google Shopping product URL via Browserbase and extract the
+    best retailer offer from the fully-rendered aria tree.
+
+    Called as Tier 2 fallback when httpx static-HTML parsing fails.
+    Uses residential proxies (proxies=True) to bypass Google bot detection.
+
+    Returns the cheapest OfferData with a direct URL, or None on failure.
+    """
+    api_key = os.environ.get("BROWSERBASE_API_KEY", "")
+    project_id = os.environ.get("BROWSERBASE_PROJECT_ID", "")
+    if not api_key or not project_id:
+        logger.debug("resolve_serper_url: BROWSERBASE credentials not set")
+        return None
+
+    async with _get_tier2_sem():
+        session_id = None
+        try:
+            session_id, connect_url = await _create_session(
+                api_key, project_id, proxies=True,
+            )
+            async with async_playwright() as pw:
+                browser = await pw.chromium.connect_over_cdp(connect_url)
+                ctx = browser.contexts[0]
+                page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+
+                await page.goto(
+                    google_url,
+                    wait_until="domcontentloaded",
+                    timeout=_PAGE_TIMEOUT,
+                )
+                await page.wait_for_timeout(_PAGE_RENDER_WAIT_MS)
+
+                snap = await page.locator("body").aria_snapshot()
+                await browser.close()
+
+            if len(snap) < 300:
+                logger.warning(
+                    "resolve_serper_url: short snapshot (%d chars) — possible CAPTCHA",
+                    len(snap),
+                )
+                return None
+
+            offers = _extract_merchant_urls(snap)
+            if not offers:
+                logger.debug("resolve_serper_url: no offers extracted from snapshot")
+                return None
+
+            # Prefer the cheapest offer; fall back to first with a URL
+            with_price = [o for o in offers if o.sale_price is not None]
+            best = min(with_price, key=lambda o: o.sale_price) if with_price else offers[0]
+
+            logger.info(
+                "resolve_serper_url: %d offers found, best=%r url=%s price=$%s",
+                len(offers), best.merchant, best.url[:70], best.sale_price,
+            )
+            return best
+
+        except Exception as exc:
+            logger.warning("resolve_serper_url: failed: %s", exc)
+            return None
+        finally:
+            if session_id:
+                await _terminate_session(api_key, session_id)
 
 
 # ---------------------------------------------------------------------------

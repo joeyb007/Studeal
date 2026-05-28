@@ -151,7 +151,31 @@ class GoogleShoppingResolver:
         async with self._sem:
             await asyncio.sleep(random.uniform(0.3, 1.0))
             async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
-                return await self._fetch_and_parse(client, google_url)
+                tier1 = await self._fetch_and_parse(client, google_url)
+
+        if tier1.direct_url:
+            return tier1
+
+        # Tier 2: Browserbase + aria snapshot
+        logger.info("google_resolver: Tier 1 failed (%s), escalating to Tier 2 for %s",
+                    tier1.failure_reason, google_url[:60])
+        return await self._resolve_tier2(google_url)
+
+    async def _resolve_tier2(self, google_url: str) -> ResolvedOffer:
+        """Tier 2: render via Browserbase with residential proxies, extract from aria."""
+        from dealbot.scrapers.browser_agent import resolve_serper_url
+        offer = await resolve_serper_url(google_url)
+        if offer is None or not offer.url:
+            return ResolvedOffer(failure_reason="tier2_no_offer")
+        return ResolvedOffer(
+            sale_price=offer.sale_price,
+            listed_price=offer.listed_price,
+            real_discount_pct=offer.discount_pct,
+            condition=offer.condition,
+            direct_url=offer.url,
+            success=True,
+            failure_reason=None,
+        )
 
     async def _fetch_and_parse(
         self, client: httpx.AsyncClient, url: str, _attempt: int = 0,

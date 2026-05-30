@@ -217,7 +217,7 @@ def build_batch_requests(examples: list[DealFeatures]) -> list[dict]:
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": "gpt-4o",
+                "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": f"Rate this deal:\n{json.dumps(asdict(f), indent=2)}"},
@@ -230,50 +230,60 @@ def build_batch_requests(examples: list[DealFeatures]) -> list[dict]:
     return requests
 
 
-def submit_batch(requests: list[dict]) -> str:
-    """Upload JSONL file and submit batch. Returns batch_id."""
-    # Write requests to temp JSONL
-    tmp = Path("/tmp/deal_scorer_batch.jsonl")
-    with open(tmp, "w") as f:
-        for r in requests:
-            f.write(json.dumps(r) + "\n")
+BATCH_CHUNK_SIZE = 100  # stay under 90k enqueued token limit per batch
 
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
 
-    # Upload file
-    print("Uploading batch file...")
-    with open(tmp, "rb") as f:
-        resp = httpx.post(
-            f"{OPENAI_API}/files",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            files={"file": ("batch.jsonl", f, "application/json")},
-            data={"purpose": "batch"},
-            timeout=60,
-        )
-    resp.raise_for_status()
-    file_id = resp.json()["id"]
-    print(f"File uploaded: {file_id}")
+def submit_batch(requests: list[dict]) -> list[str]:
+    """Split into chunks, upload and submit one batch per chunk. Returns list of batch_ids."""
+    chunks = [requests[i:i+BATCH_CHUNK_SIZE] for i in range(0, len(requests), BATCH_CHUNK_SIZE)]
+    batch_ids = []
 
-    # Submit batch
-    resp = httpx.post(
-        f"{OPENAI_API}/batches",
-        headers=headers,
-        json={
-            "input_file_id": file_id,
-            "endpoint": "/v1/chat/completions",
-            "completion_window": "24h",
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    batch = resp.json()
-    batch_id = batch["id"]
-    print(f"Batch submitted: {batch_id}")
-    print(f"Status: {batch['status']}")
-    return batch_id
+    # Save IDs incrementally so a crash doesn't lose already-submitted batches
+    BATCH_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    for ci, chunk in enumerate(chunks):
+        tmp = Path(f"/tmp/deal_scorer_batch_{ci}.jsonl")
+        with open(tmp, "w") as f:
+            for r in chunk:
+                f.write(json.dumps(r) + "\n")
+
+        print(f"Uploading chunk {ci+1}/{len(chunks)} ({len(chunk)} requests)...")
+
+        # Retry on transient SSL / connection errors
+        for attempt in range(3):
+            try:
+                with open(tmp, "rb") as f:
+                    resp = httpx.post(
+                        f"{OPENAI_API}/files",
+                        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                        files={"file": (f"batch_{ci}.jsonl", f, "application/json")},
+                        data={"purpose": "batch"},
+                        timeout=60,
+                    )
+                resp.raise_for_status()
+                file_id = resp.json()["id"]
+
+                resp = httpx.post(
+                    f"{OPENAI_API}/batches",
+                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                    json={"input_file_id": file_id, "endpoint": "/v1/chat/completions", "completion_window": "24h"},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                batch = resp.json()
+                batch_ids.append(batch["id"])
+                # Append immediately so partial progress survives crashes
+                with open(BATCH_ID_PATH, "a") as bf:
+                    bf.write(batch["id"] + "\n")
+                print(f"  → batch {batch['id']} ({batch['status']})")
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise
+                print(f"  Attempt {attempt+1} failed ({exc}), retrying...")
+                time.sleep(3)
+
+    return batch_ids
 
 
 def check_batch(batch_id: str) -> dict:
@@ -287,13 +297,12 @@ def check_batch(batch_id: str) -> dict:
     return resp.json()
 
 
-def fetch_results(batch: dict, examples: list[DealFeatures]) -> None:
-    """Download completed batch results, parse, save to training_data.jsonl."""
+def _download_batch(batch: dict, id_to_features: dict) -> tuple[list[dict], int]:
+    """Download one batch's results. Returns (records, error_count)."""
     output_file_id = batch.get("output_file_id")
     if not output_file_id:
-        print(f"ERROR: no output_file_id on batch. Status: {batch['status']}")
-        print(f"Errors: {batch.get('errors')}")
-        return
+        print(f"  ⚠ Batch {batch['id']} has no output_file_id")
+        return [], 0
 
     resp = httpx.get(
         f"{OPENAI_API}/files/{output_file_id}/content",
@@ -302,11 +311,7 @@ def fetch_results(batch: dict, examples: list[DealFeatures]) -> None:
     )
     resp.raise_for_status()
 
-    # Map custom_id → features
-    id_to_features = {f"deal-{i:04d}": f for i, f in enumerate(examples)}
-
-    records = []
-    errors = 0
+    records, errors = [], 0
     for line in resp.text.strip().splitlines():
         result = json.loads(line)
         custom_id = result["custom_id"]
@@ -320,33 +325,41 @@ def fetch_results(batch: dict, examples: list[DealFeatures]) -> None:
             score = int(data.get("score", -1))
             reasoning = data.get("reasoning", "")
             if 0 <= score <= 100:
-                records.append({
-                    "features": asdict(features),
-                    "score": score,
-                    "reasoning": reasoning,
-                })
+                records.append({"features": asdict(features), "score": score, "reasoning": reasoning})
             else:
                 errors += 1
         except Exception:
             errors += 1
+    return records, errors
 
-    print(f"\nParsed {len(records)} records ({errors} errors)")
+
+def fetch_all_results(batches: list[dict], examples: list[DealFeatures]) -> None:
+    """Merge results from all completed batches and save to training_data.jsonl."""
+    id_to_features = {f"deal-{i:04d}": f for i, f in enumerate(examples)}
+    all_records, total_errors = [], 0
+
+    for batch in batches:
+        records, errors = _download_batch(batch, id_to_features)
+        all_records.extend(records)
+        total_errors += errors
+        print(f"  Batch {batch['id']}: {len(records)} records, {errors} errors")
+
+    print(f"\nTotal: {len(all_records)} records ({total_errors} errors)")
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w") as f:
-        for r in records:
+        for r in all_records:
             f.write(json.dumps(r) + "\n")
     print(f"Saved → {OUTPUT_PATH}")
 
-    # Score distribution
-    scores = [r["score"] for r in records]
+    scores = [r["score"] for r in all_records]
     print("\nScore distribution:")
     for lo, hi in [(0, 20), (21, 40), (41, 60), (61, 80), (81, 100)]:
         count = sum(1 for s in scores if lo <= s <= hi)
         bar = "█" * (count // 5)
         print(f"  {lo:3d}-{hi:3d}: {bar} ({count})")
 
-    consistency_check(records)
+    consistency_check(all_records)
 
 
 def consistency_check(records: list[dict]) -> None:
@@ -374,24 +387,33 @@ def consistency_check(records: list[dict]) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def poll_until_done(batch_id: str, examples: list[DealFeatures]) -> None:
-    """Poll batch status and fetch results when complete."""
-    print(f"\nPolling batch {batch_id}...")
-    while True:
-        batch = check_batch(batch_id)
-        status = batch["status"]
-        counts = batch.get("request_counts", {})
-        print(f"  Status: {status} | completed: {counts.get('completed', 0)}/{counts.get('total', '?')}")
+def poll_until_done(batch_ids: list[str], examples: list[DealFeatures]) -> None:
+    """Poll all batches, collect results when all complete."""
+    print(f"\nPolling {len(batch_ids)} batches...")
+    pending = list(batch_ids)
+    completed_batches = []
 
-        if status == "completed":
-            fetch_results(batch, examples)
-            BATCH_ID_PATH.unlink(missing_ok=True)
-            return
-        elif status in ("failed", "expired", "cancelled"):
-            print(f"Batch {status}. Check OpenAI dashboard.")
-            return
+    while pending:
+        still_pending = []
+        for bid in pending:
+            batch = check_batch(bid)
+            status = batch["status"]
+            counts = batch.get("request_counts", {})
+            print(f"  {bid}: {status} ({counts.get('completed',0)}/{counts.get('total','?')})")
+            if status == "completed":
+                completed_batches.append(batch)
+            elif status in ("failed", "expired", "cancelled"):
+                print(f"  ⚠ Batch {bid} {status} — skipping")
+            else:
+                still_pending.append(bid)
+        pending = still_pending
+        if pending:
+            print(f"  Waiting 30s... ({len(pending)} still running)")
+            time.sleep(30)
 
-        time.sleep(30)
+    if completed_batches:
+        fetch_all_results(completed_batches, examples)
+        BATCH_ID_PATH.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -402,18 +424,18 @@ def main() -> None:
 
     if args.check:
         if not BATCH_ID_PATH.exists():
-            print("No batch ID saved. Run without flags to submit a new batch.")
+            print("No batch IDs saved. Run without flags to submit.")
             return
-        batch_id = BATCH_ID_PATH.read_text().strip()
-        batch = check_batch(batch_id)
-        print(json.dumps(batch, indent=2))
+        for bid in BATCH_ID_PATH.read_text().strip().splitlines():
+            batch = check_batch(bid.strip())
+            counts = batch.get("request_counts", {})
+            print(f"{bid}: {batch['status']} ({counts.get('completed',0)}/{counts.get('total','?')})")
         return
 
     if args.fetch:
-        print(f"Fetching batch {args.fetch}...")
         examples = generate_examples(500)
-        batch = check_batch(args.fetch)
-        fetch_results(batch, examples)
+        batches = [check_batch(bid.strip()) for bid in args.fetch.split(",")]
+        fetch_all_results(batches, examples)
         return
 
     # Default: generate + submit + poll
@@ -422,14 +444,13 @@ def main() -> None:
     print(f"Generated {len(examples)} examples")
 
     requests = build_batch_requests(examples)
-    batch_id = submit_batch(requests)
+    # Clear any stale batch IDs before starting fresh
+    BATCH_ID_PATH.unlink(missing_ok=True)
+    batch_ids = submit_batch(requests)
 
-    # Save batch ID so we can check later
-    BATCH_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
-    BATCH_ID_PATH.write_text(batch_id)
-    print(f"\nBatch ID saved to {BATCH_ID_PATH}")
-    print("Polling for completion (checks every 30s, up to 24h)...")
-    poll_until_done(batch_id, examples)
+    print(f"\n{len(batch_ids)} batch IDs saved to {BATCH_ID_PATH}")
+    print("Polling for completion (checks every 30s)...")
+    poll_until_done(batch_ids, examples)
 
 
 if __name__ == "__main__":

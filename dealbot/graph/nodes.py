@@ -15,6 +15,7 @@ from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.graph.state import PipelineState
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
+from dealbot.scorer import compute_deal_score
 from dealbot.schemas import Condition, DealRaw
 from dealbot.search import SearchResult
 from dealbot.search.google_resolver import GoogleShoppingResolver
@@ -272,9 +273,16 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
 
     now = datetime.now(timezone.utc)
     affiliate_url = affiliate_rewrite(deal.url)
-    # score + alert_tier still populated for back-compat until 0019 drops the columns
     legacy_score = 50 if validation.legitimate else 0
     legacy_tier = "digest" if validation.legitimate else "none"
+
+    deal_score = compute_deal_score(
+        discount_pct=validation.real_discount_pct,
+        validation_confidence=validation.validation_confidence,
+        condition=validation.condition.value,
+        student_eligible=validation.student_eligible or deal.student_eligible,
+        source=deal.source,
+    ) if validation.legitimate else 0
 
     values = dict(
         title=deal.title,
@@ -296,6 +304,7 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
         legitimate=validation.legitimate,
         validation_confidence=validation.validation_confidence,
         validation_reason=validation.validation_reason,
+        deal_score=deal_score,
         hunt_date=date.today(),
         first_seen_at=now,
         scraped_at=now,
@@ -322,6 +331,7 @@ async def score_and_persist_node(state: PipelineState, llm: LLMClient) -> dict:
                         "legitimate": values["legitimate"],
                         "validation_confidence": values["validation_confidence"],
                         "validation_reason": values["validation_reason"],
+                        "deal_score": values["deal_score"],
                         "scraped_at": values["scraped_at"],
                     },
                 )

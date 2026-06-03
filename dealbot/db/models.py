@@ -22,8 +22,6 @@ class Deal(Base):
     listed_price: Mapped[float] = mapped_column(Float, nullable=False)
     sale_price: Mapped[float] = mapped_column(Float, nullable=False)
     asin: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    score: Mapped[int] = mapped_column(Integer, nullable=False)
-    alert_tier: Mapped[str] = mapped_column(String(16), nullable=False)
     category: Mapped[str] = mapped_column(String(128), nullable=False)
     tags: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
     confidence: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -84,7 +82,6 @@ class Watchlist(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     min_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
-    alert_tier_threshold: Mapped[str] = mapped_column(String(16), nullable=False, default="digest")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
     intent_embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)

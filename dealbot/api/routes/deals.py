@@ -24,8 +24,7 @@ class DealResponse(BaseModel):
     listed_price: float
     sale_price: float
     asin: Optional[str]
-    score: int
-    alert_tier: str
+    deal_score: Optional[int]
     category: str
     tags: str
     confidence: str
@@ -47,8 +46,7 @@ def _to_response(deal: Deal) -> DealResponse:
         listed_price=deal.listed_price,
         sale_price=deal.sale_price,
         asin=deal.asin,
-        score=deal.score,
-        alert_tier=deal.alert_tier,
+        deal_score=deal.deal_score,
         category=deal.category,
         tags=deal.tags,
         confidence=deal.confidence,
@@ -61,7 +59,6 @@ def _to_response(deal: Deal) -> DealResponse:
 
 @router.get("", response_model=list[DealResponse])
 async def list_deals(
-    tier: Optional[str] = Query(None, description="Filter by alert tier: push, digest, none"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     _: User = Depends(get_current_user),
@@ -69,12 +66,10 @@ async def list_deals(
     async with get_async_session() as session:
         stmt = (
             select(Deal)
-            .order_by(Deal.scraped_at.desc())
+            .order_by(Deal.deal_score.desc().nulls_last(), Deal.scraped_at.desc())
             .offset(offset)
             .limit(limit)
         )
-        if tier is not None:
-            stmt = stmt.where(Deal.alert_tier == tier)
         result = await session.execute(stmt)
         deals = result.scalars().all()
     return [_to_response(d) for d in deals]
@@ -108,7 +103,7 @@ async def search_deals(
             result = await session.execute(
                 select(Deal)
                 .where(Deal.title.ilike(f"%{q}%"))
-                .order_by(Deal.score.desc())
+                .order_by(Deal.deal_score.desc().nulls_last())
                 .limit(limit)
             )
             deals = list(result.scalars().all())

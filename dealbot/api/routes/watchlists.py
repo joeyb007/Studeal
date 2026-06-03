@@ -54,7 +54,6 @@ class WatchlistCreate(BaseModel):
     description: str | None = None
     context: WatchlistContext | None = None
     min_score: int = 50
-    alert_tier_threshold: str = "digest"
 
     @model_validator(mode="after")
     def require_description_or_context(self) -> "WatchlistCreate":
@@ -67,7 +66,6 @@ class WatchlistResponse(BaseModel):
     id: int
     name: str
     min_score: int
-    alert_tier_threshold: str
     expires_at: Optional[str]
     context: Optional[dict] = None
 
@@ -79,8 +77,7 @@ class WatchlistDealResponse(BaseModel):
     url: Optional[str]
     listed_price: float
     sale_price: float
-    score: int
-    alert_tier: str
+    deal_score: Optional[int]
     category: str
     real_discount_pct: Optional[float]
     student_eligible: bool
@@ -139,7 +136,6 @@ async def create_watchlist(
             user_id=current_user.id,
             name=body.name,
             min_score=body.min_score,
-            alert_tier_threshold=body.alert_tier_threshold,
             expires_at=_expiry(),
             context=body.context.model_dump_json(),
             intent_embedding=intent_embedding or None,
@@ -160,7 +156,6 @@ async def create_watchlist(
         id=wl_id,
         name=watchlist.name,
         min_score=watchlist.min_score,
-        alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
         context=json.loads(watchlist.context) if watchlist.context else None,
     )
@@ -222,7 +217,7 @@ async def list_watchlist_deals(
         deals=[WatchlistDealResponse(
             id=d.id, title=d.title, source=d.source, url=d.url,
             listed_price=d.listed_price, sale_price=d.sale_price,
-            score=d.score, alert_tier=d.alert_tier, category=d.category,
+            deal_score=d.deal_score, category=d.category,
             real_discount_pct=d.real_discount_pct,
             student_eligible=d.student_eligible, condition=d.condition,
         ) for d in deals[:limit]],
@@ -249,7 +244,6 @@ async def renew_watchlist(
         id=watchlist.id,
         name=watchlist.name,
         min_score=watchlist.min_score,
-        alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
     )
 
@@ -289,7 +283,6 @@ async def patch_watchlist(
         id=watchlist.id,
         name=watchlist.name,
         min_score=watchlist.min_score,
-        alert_tier_threshold=watchlist.alert_tier_threshold,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
         context=json.loads(watchlist.context) if watchlist.context else None,
     )
@@ -329,7 +322,6 @@ async def list_watchlists(
                 id=wl.id,
                 name=wl.name,
                 min_score=wl.min_score,
-                alert_tier_threshold=wl.alert_tier_threshold,
                 expires_at=wl.expires_at.isoformat() if wl.expires_at else None,
                 context=json.loads(wl.context) if wl.context else None,
             ))

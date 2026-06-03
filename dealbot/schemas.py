@@ -6,12 +6,6 @@ from typing import Optional
 from pydantic import BaseModel, HttpUrl
 
 
-class AlertTier(str, Enum):
-    none = "none"
-    digest = "digest"
-    push = "push"
-
-
 class Condition(str, Enum):
     new = "new"
     used = "used"
@@ -55,26 +49,8 @@ class DealRaw(BaseModel):
     search_query: Optional[str] = None      # Google Shopping query that produced this listing
 
 
-class DealScore(BaseModel):
-    """DEPRECATED. Use ValidationResult. Kept for backward compat in tests/skipped paths."""
-
-    deal: DealRaw
-    score: int  # 0-100
-    alert_tier: AlertTier
-    category: Category
-    tags: list[str]
-    real_discount_pct: Optional[float] = None
-    confidence: str = "high"
-    condition: Condition = Condition.unknown
-
-
 class ValidationResult(BaseModel):
-    """Output of the validation layer (replaces DealScore).
-
-    The scorer no longer ranks deals — it decides whether they're real and safe
-    to surface. Ranking is handled by cosine similarity to the user's intent
-    embedding at view time.
-    """
+    """Output of the validation layer. Decides deal legitimacy; ranking is by cosine similarity."""
 
     deal: DealRaw
     legitimate: bool

@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from typing import NotRequired, TypedDict
 
-from dealbot.schemas import DealRaw, DealScore
+from dealbot.schemas import DealRaw
 
 
 class PipelineState(TypedDict):
     """State object that flows through every node in the LangGraph pipeline."""
 
-    # --- scorer flow (build_graph) ---
     deal: NotRequired[DealRaw]
-    score_result: NotRequired[DealScore]
     embedding: NotRequired[list[float]]
     error: NotRequired[str]
 

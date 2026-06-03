@@ -11,6 +11,8 @@ class PipelineState(TypedDict):
     deal: NotRequired[DealRaw]
     embedding: NotRequired[list[float]]
     error: NotRequired[str]
+    outcome: NotRequired[str]
+    deal_id: NotRequired[int]
 
     # --- hunter flow (build_hunter_graph) ---
     keyword: NotRequired[str]

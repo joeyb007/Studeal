@@ -6,15 +6,11 @@ from typing import Any
 import pytest
 
 from dealbot.agents.scorer import ScorerAgent
-from dealbot.llm.base import LLMClient, LLMResponse, ToolCall
-from dealbot.schemas import AlertTier, DealRaw
+from dealbot.llm.base import LLMClient, LLMResponse
+from dealbot.schemas import DealRaw
 
-
-# --- Mock LLMClient ---------------------------------------------------------
 
 class MockLLMClient(LLMClient):
-    """Returns a pre-scripted sequence of LLMResponse objects."""
-
     def __init__(self, responses: list[LLMResponse]) -> None:
         self._responses = list(responses)
         self.call_count = 0
@@ -22,95 +18,101 @@ class MockLLMClient(LLMClient):
     async def complete(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         response = self._responses[min(self.call_count, len(self._responses) - 1)]
         self.call_count += 1
         return response
 
 
-# --- Fixtures ----------------------------------------------------------------
-
 DEAL = DealRaw(
-    source="slickdeals",
-    title="Sony WH-1000XM5 Headphones",
-    url="https://example.com/deal/123",
+    source="bestbuy.ca",
+    title="Sony WH-1000XM5 Wireless Headphones",
+    url="https://www.bestbuy.ca/en-ca/product/12345",
     listed_price=349.99,
     sale_price=174.99,
-    asin="B09XS7JWHH",
 )
 
-VALID_SCORE_JSON = json.dumps({
-    "score": 82,
-    "alert_tier": "push",
-    "category": "Electronics",
-    "tags": ["headphones", "sony", "50-off"],
+VALID_VALIDATION_JSON = json.dumps({
+    "legitimate": True,
+    "validation_confidence": 0.92,
+    "validation_reason": "Plausible price for Sony WH-1000XM5 at 50% off from a known retailer.",
+    "category": "Audio",
+    "condition": "new",
+    "student_eligible": False,
     "real_discount_pct": 50.0,
-    "confidence": "high",
+    "tags": ["headphones", "sony", "50-off"],
+})
+
+REJECTION_JSON = json.dumps({
+    "legitimate": False,
+    "validation_confidence": 0.97,
+    "validation_reason": "Price is implausibly low — likely a scam listing.",
+    "category": "Audio",
+    "condition": "unknown",
+    "student_eligible": False,
+    "real_discount_pct": None,
+    "tags": [],
 })
 
 
-# --- Tests -------------------------------------------------------------------
-
 @pytest.mark.asyncio
-async def test_scorer_calls_tool_then_scores():
-    """Model calls fetch_price_history on turn 1, returns DealScore on turn 2."""
-    llm = MockLLMClient([
-        LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCall(
-                    id="call_1",
-                    name="fetch_price_history",
-                    arguments={"asin": "B09XS7JWHH"},
-                )
-            ],
-        ),
-        LLMResponse(content=VALID_SCORE_JSON, tool_calls=[]),
-    ])
+async def test_validate_legitimate_deal():
+    llm = MockLLMClient([LLMResponse(content=VALID_VALIDATION_JSON, tool_calls=[])])
+    result = await ScorerAgent(llm=llm).validate(DEAL)
 
-    scorer = ScorerAgent(llm=llm)
-    result = await scorer.score(DEAL)
-
-    assert result.score == 82
-    assert result.alert_tier == AlertTier.push
-    assert result.category == "Electronics"
-    assert result.confidence == "high"
-    assert llm.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_scorer_returns_immediately_without_tools():
-    """Model skips tool calls and returns a DealScore directly."""
-    llm = MockLLMClient([
-        LLMResponse(content=VALID_SCORE_JSON, tool_calls=[]),
-    ])
-
-    scorer = ScorerAgent(llm=llm)
-    result = await scorer.score(DEAL)
-
-    assert result.score == 82
+    assert result.legitimate is True
+    assert result.validation_confidence == pytest.approx(0.92)
+    assert result.category.value == "Audio"
+    assert result.condition.value == "new"
+    assert result.real_discount_pct == pytest.approx(50.0)
     assert llm.call_count == 1
 
 
 @pytest.mark.asyncio
-async def test_scorer_emits_low_confidence_on_max_iterations():
-    """Model keeps calling tools past the 6-iteration limit."""
-    repeated_tool_call = LLMResponse(
-        content=None,
-        tool_calls=[
-            ToolCall(
-                id="call_n",
-                name="fetch_price_history",
-                arguments={"asin": "B09XS7JWHH"},
-            )
-        ],
-    )
+async def test_validate_rejected_deal():
+    llm = MockLLMClient([LLMResponse(content=REJECTION_JSON, tool_calls=[])])
+    result = await ScorerAgent(llm=llm).validate(DEAL)
 
-    llm = MockLLMClient([repeated_tool_call])  # returns same response forever
-    scorer = ScorerAgent(llm=llm)
-    result = await scorer.score(DEAL)
+    assert result.legitimate is False
+    assert result.validation_confidence == pytest.approx(0.97)
+    assert "implausibly" in result.validation_reason
 
-    assert result.confidence == "low"
-    assert result.score >= 0
-    assert llm.call_count == 6
+
+@pytest.mark.asyncio
+async def test_validate_empty_response_falls_back_to_rejection():
+    llm = MockLLMClient([LLMResponse(content=None, tool_calls=[])])
+    result = await ScorerAgent(llm=llm).validate(DEAL)
+
+    assert result.legitimate is False
+    assert result.validation_confidence == 0.0
+    assert "empty" in result.validation_reason
+
+
+@pytest.mark.asyncio
+async def test_validate_invalid_json_falls_back_to_rejection():
+    llm = MockLLMClient([LLMResponse(content="not json at all", tool_calls=[])])
+    result = await ScorerAgent(llm=llm).validate(DEAL)
+
+    assert result.legitimate is False
+    assert result.validation_confidence == 0.0
+
+
+@pytest.mark.asyncio
+async def test_validate_llm_exception_falls_back_to_rejection():
+    class FailingLLM(LLMClient):
+        async def complete(self, messages, **kwargs):
+            raise RuntimeError("network error")
+
+    result = await ScorerAgent(llm=FailingLLM()).validate(DEAL)
+
+    assert result.legitimate is False
+    assert "LLM error" in result.validation_reason
+
+
+@pytest.mark.asyncio
+async def test_score_method_raises():
+    """score() was removed — callers that haven't migrated should fail loudly."""
+    llm = MockLLMClient([LLMResponse(content=VALID_VALIDATION_JSON, tool_calls=[])])
+    with pytest.raises(RuntimeError, match="removed"):
+        await ScorerAgent(llm=llm).score(DEAL)

@@ -6,15 +6,14 @@ from typing import Any
 from collections.abc import AsyncGenerator
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from dealbot.db.models import Base, Deal
-from dealbot.graph.graph import build_graph
-from dealbot.llm.base import LLMClient, LLMResponse, ToolCall
-from dealbot.schemas import AlertTier, DealRaw
+from dealbot.graph.graph import build_scorer_graph
+from dealbot.llm.base import LLMClient, LLMResponse
+from dealbot.schemas import DealRaw
 
-
-# --- Mock LLMClient ----------------------------------------------------------
 
 class MockLLMClient(LLMClient):
     def __init__(self, responses: list[LLMResponse]) -> None:
@@ -24,37 +23,46 @@ class MockLLMClient(LLMClient):
     async def complete(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         response = self._responses[min(self.call_count, len(self._responses) - 1)]
         self.call_count += 1
         return response
 
 
-# --- Fixtures ----------------------------------------------------------------
-
 DEAL = DealRaw(
-    source="slickdeals",
-    title="Sony WH-1000XM5 Headphones",
-    url="https://example.com/deal/123",
+    source="bestbuy.ca",
+    title="Sony WH-1000XM5 Wireless Headphones",
+    url="https://www.bestbuy.ca/en-ca/product/12345",
     listed_price=349.99,
     sale_price=174.99,
-    asin="B09XS7JWHH",
 )
 
-VALID_SCORE_JSON = json.dumps({
-    "score": 82,
-    "alert_tier": "push",
-    "category": "Electronics",
-    "tags": ["headphones", "sony", "50-off"],
+LEGITIMATE_JSON = json.dumps({
+    "legitimate": True,
+    "validation_confidence": 0.92,
+    "validation_reason": "Plausible price from a known retailer.",
+    "category": "Audio",
+    "condition": "new",
+    "student_eligible": False,
     "real_discount_pct": 50.0,
-    "confidence": "high",
+    "tags": ["headphones", "sony"],
+})
+
+REJECTION_JSON = json.dumps({
+    "legitimate": False,
+    "validation_confidence": 0.95,
+    "validation_reason": "Price implausibly low — likely a scam.",
+    "category": "Audio",
+    "condition": "unknown",
+    "student_eligible": False,
+    "real_discount_pct": None,
+    "tags": [],
 })
 
 
 @pytest.fixture()
 async def db_session_factory():
-    """In-memory SQLite engine with schema created. Yields the sessionmaker."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -65,7 +73,6 @@ async def db_session_factory():
 
 @pytest.fixture()
 def patch_session(db_session_factory, monkeypatch):
-    """Replace get_async_session with one backed by the in-memory test DB."""
     factory = db_session_factory
 
     @asynccontextmanager
@@ -77,73 +84,84 @@ def patch_session(db_session_factory, monkeypatch):
     return factory
 
 
-# --- Tests -------------------------------------------------------------------
+@pytest.fixture()
+def patch_embed(monkeypatch):
+    """Stub out embed_text so tests don't hit the OpenAI embeddings API."""
+    async def _fake_embed(text: str):
+        return None
+
+    monkeypatch.setattr("dealbot.graph.nodes.embed_text", _fake_embed)
+
 
 @pytest.mark.asyncio
-async def test_graph_scores_and_persists(patch_session):
-    """Full pipeline: DealRaw in → DealScore out → row written to DB."""
-    llm = MockLLMClient([
-        LLMResponse(content=VALID_SCORE_JSON, tool_calls=[]),
-    ])
+async def test_pipeline_persists_legitimate_deal(patch_session, patch_embed):
+    llm = MockLLMClient([LLMResponse(content=LEGITIMATE_JSON, tool_calls=[])])
+    app = build_scorer_graph(llm)
 
-    app = build_graph(llm)
-    final_state = await app.ainvoke({"deal": DEAL})
+    result = await app.ainvoke({"deal": DEAL})
 
-    assert "score_result" in final_state
-    result = final_state["score_result"]
-    assert result.score == 82
-    assert result.alert_tier == AlertTier.push
-    assert result.confidence == "high"
-    assert "error" not in final_state
+    assert result["outcome"] == "persisted_legitimate"
+    assert "deal_id" in result
 
-    # Row was written to DB
     async with patch_session() as session:
-        rows = (await session.execute(
-            __import__("sqlalchemy").select(Deal)
-        )).scalars().all()
+        rows = (await session.execute(select(Deal))).scalars().all()
 
     assert len(rows) == 1
-    assert rows[0].title == "Sony WH-1000XM5 Headphones"
-    assert rows[0].score == 82
-    assert rows[0].alert_tier == "push"
+    row = rows[0]
+    assert row.title == "Sony WH-1000XM5 Wireless Headphones"
+    assert row.legitimate is True
+    assert row.deal_score is not None
+    assert 0 <= row.deal_score <= 100
 
 
 @pytest.mark.asyncio
-async def test_graph_deduplicates_by_url(patch_session):
+async def test_pipeline_persists_rejected_deal(patch_session, patch_embed):
+    """Rejected deals are persisted with legitimate=False, not dropped."""
+    llm = MockLLMClient([LLMResponse(content=REJECTION_JSON, tool_calls=[])])
+    app = build_scorer_graph(llm)
+
+    result = await app.ainvoke({"deal": DEAL})
+
+    assert result["outcome"] == "persisted_rejected"
+
+    async with patch_session() as session:
+        rows = (await session.execute(select(Deal))).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].legitimate is False
+    assert rows[0].deal_score == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_deduplicates_by_url(patch_session, patch_embed):
     """Running the pipeline twice for the same URL writes only one row."""
-    llm = MockLLMClient([
-        LLMResponse(content=VALID_SCORE_JSON, tool_calls=[]),
-    ])
+    llm = MockLLMClient([LLMResponse(content=LEGITIMATE_JSON, tool_calls=[])])
+    app = build_scorer_graph(llm)
 
-    app = build_graph(llm)
     await app.ainvoke({"deal": DEAL})
-    await app.ainvoke({"deal": DEAL})  # same URL — should be silently skipped
+    await app.ainvoke({"deal": DEAL})
 
     async with patch_session() as session:
-        rows = (await session.execute(
-            __import__("sqlalchemy").select(Deal)
-        )).scalars().all()
+        rows = (await session.execute(select(Deal))).scalars().all()
 
     assert len(rows) == 1
 
 
 @pytest.mark.asyncio
-async def test_graph_skips_persist_on_score_error(patch_session):
-    """If scoring raises, error is set in state and persist is skipped."""
-    class BrokenLLMClient(LLMClient):
-        async def complete(self, messages, tools=None):
+async def test_pipeline_llm_failure_persists_as_rejected(patch_session, patch_embed):
+    """LLM exceptions are caught by ScorerAgent and produce a fallback rejection.
+    The deal is still persisted (legitimate=False) so it's not silently lost."""
+    class FailingLLM(LLMClient):
+        async def complete(self, messages, **kwargs):
             raise RuntimeError("LLM unavailable")
 
-    app = build_graph(BrokenLLMClient())
-    final_state = await app.ainvoke({"deal": DEAL})
+    app = build_scorer_graph(FailingLLM())
+    result = await app.ainvoke({"deal": DEAL})
 
-    assert "error" in final_state
-    assert "score_result" not in final_state
+    assert result["outcome"] == "persisted_rejected"
 
-    # Nothing written to DB
     async with patch_session() as session:
-        rows = (await session.execute(
-            __import__("sqlalchemy").select(Deal)
-        )).scalars().all()
+        rows = (await session.execute(select(Deal))).scalars().all()
 
-    assert len(rows) == 0
+    assert len(rows) == 1
+    assert rows[0].legitimate is False

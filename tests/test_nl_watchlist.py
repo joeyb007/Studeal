@@ -169,7 +169,7 @@ def test_patch_watchlist_404_on_missing(authed_client):
 
 
 def test_create_watchlist_with_context(authed_client):
-    with patch("dealbot.worker.tasks.hunt_keyword.delay"):
+    with patch("dealbot.worker.tasks.research_for_agent.delay"):
         resp = authed_client.post(
             "/watchlists",
             json={
@@ -191,7 +191,7 @@ def test_create_watchlist_with_context(authed_client):
 
     assert resp.status_code == 201
     data = resp.json()
-    assert set(data["keywords"]) == {
+    assert set(data["context"]["keywords"]) == {
         "gaming laptop deal",
         "rtx laptop sale canada",
         "budget gaming laptop",

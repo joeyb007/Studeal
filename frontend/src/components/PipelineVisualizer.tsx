@@ -2,10 +2,10 @@
 
 import styles from "./PipelineVisualizer.module.css";
 
-const STAGES = ["Search", "Fetch", "Extract", "Score"];
+const STAGES = ["Hunt", "Resolve", "Validate", "Score", "Persist"];
 
 interface PipelineVisualizerProps {
-  activeStage: number; // 0-3, -1 = none
+  activeStage: number; // 0-4, -1 = none
 }
 
 export default function PipelineVisualizer({ activeStage }: PipelineVisualizerProps) {

@@ -15,8 +15,7 @@ interface Deal {
   affiliate_url: string | null;
   listed_price: number;
   sale_price: number;
-  score: number;
-  alert_tier: string;
+  deal_score: number | null;
   category: string;
   condition: string;
   real_discount_pct: number | null;
@@ -26,7 +25,6 @@ interface Deal {
 
 const CATEGORIES = ["Electronics", "Laptops", "Tablets", "Phones", "Audio", "Gaming", "Accessories", "Software", "Books", "Clothing", "Food & Drink", "Travel", "Home", "Other"];
 const CONDITIONS = ["new", "used", "refurb"];
-const TIERS = ["push", "digest", "none"];
 
 const CONDITION_LABELS: Record<string, string> = { new: "New", used: "Used", refurb: "Refurb" };
 const CONDITION_CLASS: Record<string, string> = {
@@ -34,12 +32,13 @@ const CONDITION_CLASS: Record<string, string> = {
   used: styles.condUsed,
   refurb: styles.condRefurb,
 };
-const TIER_LABELS: Record<string, string> = { push: "Hot", digest: "Good", none: "Mild" };
-const TIER_CLASS: Record<string, string> = {
-  push: styles.tierPush,
-  digest: styles.tierDigest,
-  none: styles.tierNone,
-};
+
+function scoreColor(score: number | null): string {
+  if (score == null) return "transparent";
+  const s = Math.round((score / 100) * 75);
+  const l = Math.round(32 + (score / 100) * 16);
+  return `hsl(142, ${s}%, ${l}%)`;
+}
 
 const PLACEHOLDERS = [
   "noise cancelling headphones under $100",
@@ -92,7 +91,7 @@ function DealCard({ deal, index }: { deal: Deal; index: number }) {
   const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
   const buyUrl = deal.affiliate_url ?? deal.url;
   return (
-    <div className={styles.card} style={{ animationDelay: `${index * 60}ms` }}>
+    <div className={styles.card} style={{ animationDelay: `${index * 60}ms`, borderLeft: `3px solid ${scoreColor(deal.deal_score)}` }}>
       <div className={styles.cardBody}>
         <div className={styles.cardTop}>
           <span className={styles.source}>{deal.source}</span>
@@ -151,7 +150,6 @@ function DashboardPageInner() {
   const [phase, setPhase] = useState<"idle" | "fading" | "shifted">("idle");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const [selectedTiers, setSelectedTiers] = useState<string[]>([]);
   const [studentOnly, setStudentOnly] = useState(false);
   const phaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -249,12 +247,11 @@ function DashboardPageInner() {
   const filtered = deals
     .filter(d => selectedCategories.length === 0 || selectedCategories.includes(d.category))
     .filter(d => selectedConditions.length === 0 || selectedConditions.includes(d.condition))
-    .filter(d => selectedTiers.length === 0 || selectedTiers.includes(d.alert_tier))
     .filter(d => !studentOnly || d.student_eligible);
 
   const hasResults = hasSearched && deals.length > 0;
   const isEmpty = hasSearched && deals.length === 0 && !searching;
-  const hasFilters = selectedCategories.length > 0 || selectedConditions.length > 0 || selectedTiers.length > 0 || studentOnly;
+  const hasFilters = selectedCategories.length > 0 || selectedConditions.length > 0 || studentOnly;
 
   return (
     <>
@@ -292,15 +289,6 @@ function DashboardPageInner() {
               ))}
             </div>
             <div className={styles.sidebarSection}>
-              <h3 className={styles.sidebarTitle}>Deal Tier</h3>
-              {TIERS.map(t => (
-                <label key={t} className={styles.checkLabel}>
-                  <input type="checkbox" className={styles.checkbox} checked={selectedTiers.includes(t)} onChange={() => setSelectedTiers(prev => toggleSet(prev, t))} />
-                  {TIER_LABELS[t]}
-                </label>
-              ))}
-            </div>
-            <div className={styles.sidebarSection}>
               <label className={styles.toggleLabel}>
                 <span>Student only</span>
                 <div className={[styles.toggle, studentOnly ? styles.toggleOn : ""].join(" ")} onClick={() => setStudentOnly(v => !v)}>
@@ -309,7 +297,7 @@ function DashboardPageInner() {
               </label>
             </div>
             {hasFilters && (
-              <button className={styles.clearBtn} onClick={() => { setSelectedCategories([]); setSelectedConditions([]); setSelectedTiers([]); setStudentOnly(false); }}>
+              <button className={styles.clearBtn} onClick={() => { setSelectedCategories([]); setSelectedConditions([]); setStudentOnly(false); }}>
                 Clear filters
               </button>
             )}

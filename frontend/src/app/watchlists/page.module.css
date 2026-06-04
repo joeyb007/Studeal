@@ -334,27 +334,10 @@
   color: var(--text-primary);
 }
 
-.dealTier {
-  font-size: 10px;
+.dealScore {
+  font-size: 11px;
   font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 5px;
-  letter-spacing: 0.04em;
-}
-
-.tierPush {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
-}
-
-.tierDigest {
-  background: rgba(22, 163, 74, 0.1);
-  color: #16a34a;
-}
-
-.tierNone {
-  background: rgba(26, 47, 94, 0.07);
-  color: var(--text-secondary);
+  letter-spacing: 0.02em;
 }
 
 .dealBuyBtn {

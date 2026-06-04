@@ -25,7 +25,6 @@ interface Watchlist {
   id: number;
   name: string;
   min_score: number;
-  alert_tier_threshold: string;
   expires_at: string | null;
   context: WatchlistContext | null;
 }
@@ -38,20 +37,19 @@ interface Deal {
   affiliate_url: string | null;
   listed_price: number;
   sale_price: number;
-  score: number;
-  alert_tier: string;
+  deal_score: number | null;
   category: string;
   real_discount_pct: number | null;
   student_eligible: boolean;
   condition: string;
 }
 
-const TIER_LABELS: Record<string, string> = { push: "Hot", digest: "Good", none: "Mild" };
-const TIER_CLASS: Record<string, string> = {
-  push: styles.tierPush,
-  digest: styles.tierDigest,
-  none: styles.tierNone,
-};
+function scoreColor(score: number | null): string {
+  if (score == null) return "transparent";
+  const s = Math.round((score / 100) * 75);
+  const l = Math.round(32 + (score / 100) * 16);
+  return `hsl(142, ${s}%, ${l}%)`;
+}
 
 function daysUntil(isoString: string): number {
   const ms = new Date(isoString).getTime() - Date.now();
@@ -76,9 +74,11 @@ function DealRow({ deal }: { deal: Deal }) {
       </div>
       <div className={styles.dealRowRight}>
         <span className={styles.dealPrice}>${deal.sale_price.toFixed(2)}</span>
-        <span className={[styles.dealTier, TIER_CLASS[deal.alert_tier] ?? ""].join(" ")}>
-          {TIER_LABELS[deal.alert_tier] ?? deal.alert_tier}
-        </span>
+        {deal.deal_score != null && (
+          <span className={styles.dealScore} style={{ color: scoreColor(deal.deal_score) }}>
+            {deal.deal_score}
+          </span>
+        )}
         {buyUrl && (
           <a href={buyUrl} target="_blank" rel="noopener noreferrer" className={styles.dealBuyBtn}>
             Buy →

@@ -8,21 +8,21 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
-import httpx
 from playwright.async_api import (
     Page,
     async_playwright,
-    BrowserContext,
 )
 
 from dealbot.llm.base import LLMClient
+from dealbot.scrapers.browserbase_session import (
+    BROWSERBASE_MAX_SESSIONS,
+    create_session as _create_session,
+    terminate_session as _terminate_session,
+)
 
 logger = logging.getLogger(__name__)
 
-_BROWSERBASE_API = "https://api.browserbase.com/v1"
 _PAGE_RENDER_WAIT_MS = 2_500
-# Configurable via env — bump when upgrading Browserbase plan
-BROWSERBASE_MAX_SESSIONS = int(os.environ.get("BROWSERBASE_MAX_SESSIONS", "3"))
 
 _RE_MONEY = re.compile(r"\$([0-9]+(?:[,.][0-9]{1,2})?)")
 _RE_PCT_OFF = re.compile(r"([0-9]+)%\s*off", re.IGNORECASE)
@@ -48,53 +48,6 @@ def _parse_money(s: str | None) -> float | None:
     except ValueError:
         return None
 _PAGE_TIMEOUT = 20_000  # ms
-
-
-# ---------------------------------------------------------------------------
-# Session lifecycle
-# ---------------------------------------------------------------------------
-
-class BrowserSession:
-    """
-    Async context manager owning a single Browserbase session.
-    Provides a Playwright Page shared across all tool calls in one run().
-    """
-
-    def __init__(self) -> None:
-        self._api_key = os.environ.get("BROWSERBASE_API_KEY", "")
-        self._project_id = os.environ.get("BROWSERBASE_PROJECT_ID", "")
-        self._session_id: str | None = None
-        self._pw_context = None
-        self._browser = None
-        self.page: Page | None = None
-
-    async def __aenter__(self) -> BrowserSession:
-        if not self._api_key or not self._project_id:
-            raise RuntimeError("BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID not set")
-
-        self._session_id, connect_url = await _create_session(
-            self._api_key, self._project_id,
-        )
-        self._pw_context = async_playwright()
-        pw = await self._pw_context.__aenter__()
-        self._browser = await pw.chromium.connect_over_cdp(connect_url)
-        ctx: BrowserContext = self._browser.contexts[0]
-        self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        if self._browser:
-            try:
-                await self._browser.close()
-            except Exception:
-                pass
-        if self._pw_context:
-            try:
-                await self._pw_context.__aexit__(None, None, None)
-            except Exception:
-                pass
-        if self._session_id:
-            await _terminate_session(self._api_key, self._session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -619,48 +572,3 @@ async def resolve_serper_url(google_url: str) -> OfferData | None:
                 await _terminate_session(api_key, session_id)
 
 
-# ---------------------------------------------------------------------------
-# Browserbase session management
-# ---------------------------------------------------------------------------
-
-_MAX_SESSION_RETRIES = 5
-
-
-async def _create_session(api_key: str, project_id: str, proxies: bool = False) -> tuple[str, str]:
-    """Returns (session_id, connect_url). Retries on 429 using retry-after header."""
-    payload: dict = {"projectId": project_id, "keepAlive": True, "timeout": 3600}
-    if proxies:
-        payload["proxies"] = True
-    for attempt in range(_MAX_SESSION_RETRIES):
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{_BROWSERBASE_API}/sessions",
-                headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"},
-                json=payload,
-            )
-        if resp.status_code == 429:
-            if attempt == _MAX_SESSION_RETRIES - 1:
-                resp.raise_for_status()
-            retry_after = int(resp.headers.get("retry-after", 2))
-            wait = retry_after * (2 ** attempt)
-            logger.debug("browser_agent: 429, retrying in %ds (attempt %d)", wait, attempt + 1)
-            await asyncio.sleep(wait)
-            continue
-        resp.raise_for_status()
-        data = resp.json()
-        return data["id"], data["connectUrl"]
-    resp.raise_for_status()
-    return "", ""  # unreachable
-
-
-async def _terminate_session(api_key: str, session_id: str) -> None:
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(
-                f"{_BROWSERBASE_API}/sessions/{session_id}",
-                headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"},
-                json={"status": "REQUEST_RELEASE"},
-            )
-        logger.debug("browser_agent: terminated session %s", session_id)
-    except Exception as exc:
-        logger.debug("browser_agent: failed to terminate session %s: %s", session_id, exc)

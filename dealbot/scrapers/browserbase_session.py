@@ -1,3 +1,16 @@
+"""Browserbase HTTP helpers + shared session semaphore.
+
+This module owns the low-level Browserbase REST calls (session create /
+terminate, 429 retry) and the process-wide concurrency cap. It does NOT
+own the lifecycle abstraction — that lives in `browser_session.py` as
+`BrowserbaseSession`, which composes these helpers.
+
+Splitting this way lets us:
+  - Unit-test the HTTP helpers independent of the lifecycle ABC.
+  - Reuse the semaphore from any caller that talks to Browserbase
+    (e.g. resolve_serper_url before its Phase 0 deletion).
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,11 +18,6 @@ import logging
 import os
 
 import httpx
-from playwright.async_api import (
-    BrowserContext,
-    Page,
-    async_playwright,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +28,12 @@ _MAX_SESSION_RETRIES = 5
 _session_sem: asyncio.Semaphore | None = None
 
 
-def _get_session_sem() -> asyncio.Semaphore:
+def get_session_sem() -> asyncio.Semaphore:
+    """Process-wide semaphore capping concurrent Browserbase sessions.
+
+    Imported by `browser_session.BrowserbaseSession` to gate session opens.
+    Lazy because asyncio.Semaphore needs a running event loop.
+    """
     global _session_sem
     if _session_sem is None:
         _session_sem = asyncio.Semaphore(BROWSERBASE_MAX_SESSIONS)
@@ -67,73 +80,3 @@ async def terminate_session(api_key: str, session_id: str) -> None:
         logger.debug("browserbase: terminated session %s", session_id)
     except Exception as exc:
         logger.debug("browserbase: failed to terminate session %s: %s", session_id, exc)
-
-
-class BrowserSession:
-    """Async context manager owning a single Browserbase session.
-
-    Acquires a slot from the module-level semaphore (capped at
-    BROWSERBASE_MAX_SESSIONS) before opening a Playwright Page over CDP.
-    Access the page via `self.page` after `__aenter__`.
-
-    Usage:
-        async with BrowserSession(proxies=True) as bs:
-            await bs.page.goto("https://amazon.ca")
-            ...
-    """
-
-    def __init__(self, *, proxies: bool = False) -> None:
-        self._api_key = os.environ.get("BROWSERBASE_API_KEY", "")
-        self._project_id = os.environ.get("BROWSERBASE_PROJECT_ID", "")
-        self._proxies = proxies
-        self._sem: asyncio.Semaphore | None = None
-        self._sem_acquired = False
-        self._session_id: str | None = None
-        self._pw_context = None
-        self._browser = None
-        self.page: Page | None = None
-
-    async def __aenter__(self) -> BrowserSession:
-        if not self._api_key or not self._project_id:
-            raise RuntimeError("BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID not set")
-
-        self._sem = _get_session_sem()
-        await self._sem.acquire()
-        self._sem_acquired = True
-
-        try:
-            self._session_id, connect_url = await create_session(
-                self._api_key, self._project_id, proxies=self._proxies,
-            )
-            self._pw_context = async_playwright()
-            pw = await self._pw_context.__aenter__()
-            self._browser = await pw.chromium.connect_over_cdp(connect_url)
-            ctx: BrowserContext = self._browser.contexts[0]
-            self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-            return self
-        except Exception:
-            await self._cleanup()
-            raise
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self._cleanup()
-
-    async def _cleanup(self) -> None:
-        if self._browser:
-            try:
-                await self._browser.close()
-            except Exception:
-                pass
-            self._browser = None
-        if self._pw_context:
-            try:
-                await self._pw_context.__aexit__(None, None, None)
-            except Exception:
-                pass
-            self._pw_context = None
-        if self._session_id:
-            await terminate_session(self._api_key, self._session_id)
-            self._session_id = None
-        if self._sem_acquired and self._sem is not None:
-            self._sem.release()
-            self._sem_acquired = False

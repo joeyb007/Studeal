@@ -26,7 +26,6 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 
 from playwright.async_api import BrowserContext, Page, async_playwright
 
@@ -36,37 +35,12 @@ from dealbot.scrapers.browserbase_session import (
     get_session_sem as _bb_get_session_sem,
     terminate_session as _bb_terminate_session,
 )
+from dealbot.scrapers.dom_settlement import (
+    DomSettlementWatchdog,
+    InterceptedResponse,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Phase 1.2c stubs — replaced by real classes in dom_settlement.py
-# ---------------------------------------------------------------------------
-
-class DomSettlementWatchdog:
-    """No-op placeholder until Phase 1.2c lands the real CDP-driven watchdog.
-
-    Tools that call `wait_for_settlement()` get a fast return that doesn't
-    block, so the rest of Phase 1 can proceed without DOM settlement
-    guarantees. This is a documented limitation: PageReader may snapshot
-    prematurely on JS-heavy SPAs until 1.2c.
-    """
-
-    async def wait_for_settlement(
-        self,
-        after_action: str = "",
-        timeout_ms: int = 5000,
-        debounce_ms: int = 300,
-    ) -> None:
-        return
-
-
-@dataclass
-class InterceptedResponse:
-    """Phase 1.2c placeholder. Real fields: url, status, content_type, body."""
-    url: str = ""
-    body: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +82,6 @@ class LocalPlaywrightSession(BrowserSession):
         self._headless = headless
         self._pw_context = None
         self._browser = None
-        self.watchdog = DomSettlementWatchdog()
         self.intercepted_responses = []
 
     async def __aenter__(self) -> "LocalPlaywrightSession":
@@ -117,9 +90,20 @@ class LocalPlaywrightSession(BrowserSession):
         self._browser = await pw.chromium.launch(headless=self._headless)
         ctx = await self._browser.new_context()
         self.page = await ctx.new_page()
+        # Watchdog needs a live Page, so construct + start after the page exists.
+        self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
+        try:
+            await self.watchdog.start()
+        except Exception as exc:
+            logger.warning("LocalPlaywrightSession: watchdog start failed: %s", exc)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        if self.watchdog is not None:
+            try:
+                await self.watchdog.stop()
+            except Exception:
+                pass
         if self._browser:
             try:
                 await self._browser.close()
@@ -156,7 +140,6 @@ class BrowserbaseSession(BrowserSession):
         self._session_id: str | None = None
         self._pw_context = None
         self._browser = None
-        self.watchdog = DomSettlementWatchdog()
         self.intercepted_responses = []
 
     async def __aenter__(self) -> "BrowserbaseSession":
@@ -176,6 +159,11 @@ class BrowserbaseSession(BrowserSession):
             self._browser = await pw.chromium.connect_over_cdp(connect_url)
             ctx: BrowserContext = self._browser.contexts[0]
             self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
+            try:
+                await self.watchdog.start()
+            except Exception as exc:
+                logger.warning("BrowserbaseSession: watchdog start failed: %s", exc)
             return self
         except Exception:
             await self._cleanup()
@@ -185,6 +173,12 @@ class BrowserbaseSession(BrowserSession):
         await self._cleanup()
 
     async def _cleanup(self) -> None:
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is not None:
+            try:
+                await watchdog.stop()
+            except Exception:
+                pass
         if self._browser:
             try:
                 await self._browser.close()

@@ -375,20 +375,32 @@ class ClickTool(BrowserTool):
                 if candidate.is_interactive and candidate.name == action.fallback_name:
                     elem = candidate
                     break
-        if elem is None or elem.bbox is None:
+        if elem is None:
             return ActionResult(success=False, error=ActionError(
                 error_type="not_found", retriable=False,
                 message=f"click: element_id {action.element_id} not in snapshot",
             ))
 
-        x, y, w, h = elem.bbox
-        cx, cy = x + w / 2, y + h / 2
-        try:
-            await ctx.page.mouse.click(cx, cy)
-        except Exception as exc:
-            return ActionResult(success=False, error=ActionError(
-                error_type="detached", retriable=True, message=str(exc)[:200],
-            ))
+        # Prefer CDP-native click: scrolls into view + uses fresh post-scroll
+        # coordinates + dispatches real mouse events. Falls back to pixel
+        # mouse click on the snapshot bbox if CDP isn't available (e.g. in
+        # unit-test mocks) or any CDP step fails.
+        clicked = await _try_cdp_native_click(ctx.page, elem.backend_node_id)
+        if not clicked:
+            if elem.bbox is None:
+                return ActionResult(success=False, error=ActionError(
+                    error_type="not_found", retriable=False,
+                    message="click: CDP path failed and no bbox available for fallback",
+                ))
+            x, y, w, h = elem.bbox
+            cx, cy = x + w / 2, y + h / 2
+            try:
+                await ctx.page.mouse.click(cx, cy)
+            except Exception as exc:
+                return ActionResult(success=False, error=ActionError(
+                    error_type="detached", retriable=True, message=str(exc)[:200],
+                ))
+
         await ctx.session.watchdog.wait_for_settlement(
             after_action="click", timeout_ms=_SETTLEMENT_TIMEOUT_MS,
         )

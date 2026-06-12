@@ -176,6 +176,10 @@ class OrchestratorDecision(BaseModel):
         "offer_extractor", "validator", "stop",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
+    # The folding directive the LLM emits alongside its worker pick.
+    # Stored as a raw dict to avoid coupling — the orchestrator's
+    # _apply_folding() interprets it defensively.
+    folding_directive: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

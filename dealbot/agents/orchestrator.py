@@ -172,6 +172,11 @@ class DealHuntOrchestrator:
                         cost_usd=0.0, duration_ms=0,
                         folding_directive=decision.folding_directive,
                     ))
+                    # A rejected stop still consumes a turn of "nothing
+                    # happened" — bump no-progress counters so the
+                    # sufficiency window doesn't stall indefinitely.
+                    state.sufficiency.turns_since_offer_improvement += 1
+                    state.consecutive_no_progress += 1
                     state.turn += 1
                     continue
 
@@ -198,6 +203,7 @@ class DealHuntOrchestrator:
                     state.consecutive_no_progress = 0
                 else:
                     state.consecutive_no_progress += 1
+                    state.sufficiency.turns_since_offer_improvement += 1
 
                 state.turn += 1
 
@@ -489,15 +495,25 @@ class DealHuntOrchestrator:
     def _find_thread(
         self, state: OrchestratorState, thread_id: str | None,
     ) -> Thread | None:
-        """Find a thread by ID without removing it (for non-mutating workers)."""
-        if not thread_id:
+        """Find a thread by ID without removing it (for non-mutating workers).
+
+        Fallbacks when no ID is supplied: prefer the most-recently-parked
+        thread (typically the one PageReader just finished exploring),
+        then the highest-value frontier item, then None.
+        """
+        if thread_id:
+            for t in state.frontier:
+                if t.id.startswith(thread_id) or t.id == thread_id:
+                    return t
+            for t in state.parked:
+                if t.id.startswith(thread_id) or t.id == thread_id:
+                    return t
             return None
-        for t in state.frontier:
-            if t.id.startswith(thread_id) or t.id == thread_id:
-                return t
-        for t in state.parked:
-            if t.id.startswith(thread_id) or t.id == thread_id:
-                return t
+        # No ID — pick the most natural default.
+        if state.parked:
+            return state.parked[-1]
+        if state.frontier:
+            return max(state.frontier, key=lambda t: t.estimated_value)
         return None
 
     # ---------------------------------------------------------------------

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from dealbot.agents.research import ResearchAgent
+from dealbot.agents.composition import build_orchestrator_from_env
+from dealbot.agents.state import DealOffer, OrchestratorState
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Watchlist
-from dealbot.graph.graph import build_scorer_graph
+from dealbot.db.models import Deal, Watchlist
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.ollama import OllamaClient
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_llm() -> LLMClient:
+    """Legacy LLM picker. Kept for `daily_rehunt` until Phase 0 deletes it."""
     backend = os.environ.get("LLM_BACKEND", "openai")
     if backend == "openai":
         return OpenAIClient()
@@ -33,19 +36,23 @@ def _get_llm() -> LLMClient:
     return OllamaClient()
 
 
+# ---------------------------------------------------------------------------
+# research_for_agent — Phase 1.6 rewrite. Drives DealHuntOrchestrator end-to-
+# end + persists DealOffers to the Deal table.
+# ---------------------------------------------------------------------------
+
 @app.task(name="dealbot.worker.tasks.research_for_agent", bind=True, max_retries=3)
 def research_for_agent(self, watchlist_id: int) -> dict:
-    """Run the ResearchAgent for a single watchlist, then score+persist all deals."""
+    """Run the autonomous browser agent for a single watchlist; persist offers."""
     try:
-        llm = _get_llm()
-        return asyncio.run(_run_research(llm, watchlist_id))
+        return asyncio.run(_run_dealhunt(watchlist_id))
     except Exception as exc:
         logger.exception("research_for_agent failed for wl=%d: %s", watchlist_id, exc)
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 
 
-async def _run_research(llm: LLMClient, watchlist_id: int) -> dict:
-    # Load the watchlist context
+async def _run_dealhunt(watchlist_id: int) -> dict:
+    # 1. Load watchlist context.
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None:
@@ -56,63 +63,98 @@ async def _run_research(llm: LLMClient, watchlist_id: int) -> dict:
             return {"watchlist_id": watchlist_id, "error": "no_context"}
         context = WatchlistContext.model_validate_json(watchlist.context)
 
-    # Run the agent (no event sink in this task — SSE is wired separately in Phase F)
-    agent = ResearchAgent(llm=llm)
-    state = await agent.run(watchlist_id=watchlist_id, context=context)
+    # 2. Build + run orchestrator. AGENT_BROWSER_BACKEND env var picks
+    # Browserbase (production) or local Playwright (dev/eval).
+    orchestrator = build_orchestrator_from_env()
+    state = await orchestrator.run(context)
 
     logger.info(
-        "research_for_agent: wl=%d turns=%d deals=%d cost=$%.4f reason=%s",
-        watchlist_id, state.turns_used, state.deal_count,
-        state.total_cost_usd, state.stop_reason,
+        "research_for_agent: wl=%d turns=%d offers=%d cost=$%.4f "
+        "domains_visited=%d action_memory_urls=%d vision_fallbacks=%d",
+        watchlist_id, state.turn, len(state.offers), state.cost_usd,
+        state.sufficiency.distinct_domains_visited,
+        len(state.action_memory),
+        len(state.vision_fallback_log),
     )
 
-    # Fan out scoring + persistence for every accumulated deal.
-    # Each branch returns an outcome dict; aggregate for per-hunt telemetry.
-    outcomes: dict[str, int] = {
-        "persisted_legitimate": 0,
-        "persisted_rejected": 0,
-        "dropped_resolution": 0,
-        "errored": 0,
-    }
-    if state.deals_by_url:
-        sem = asyncio.Semaphore(5)
-        graph = build_scorer_graph(llm)
-
-        async def _score_one(deal):
-            async with sem:
-                try:
-                    result = await graph.ainvoke({"deal": deal})
-                    outcome = (result or {}).get("outcome", "errored")
-                    outcomes[outcome] = outcomes.get(outcome, 0) + 1
-                except Exception:
-                    logger.exception("scorer graph failed for %r", deal.title)
-                    outcomes["errored"] += 1
-
-        await asyncio.gather(*[_score_one(d) for d in state.deals_by_url.values()])
-
-    seen = len(state.deals_by_url)
-    visible = outcomes["persisted_legitimate"]
-    dropped_total = (
-        outcomes["persisted_rejected"]
-        + outcomes["dropped_resolution"]
-        + outcomes["errored"]
-    )
-    drop_rate = (dropped_total / seen * 100) if seen else 0.0
-    logger.info(
-        "research_for_agent: outcomes wl=%d seen=%d → visible=%d "
-        "persisted_rejected=%d dropped_resolution=%d errored=%d (drop_rate=%.0f%%)",
-        watchlist_id, seen, visible,
-        outcomes["persisted_rejected"], outcomes["dropped_resolution"], outcomes["errored"],
-        drop_rate,
-    )
+    # 3. Persist offers as Deal rows (upsert on url).
+    persisted = await _persist_offers(state.offers, context)
 
     return {
         "watchlist_id": watchlist_id,
-        "turns_used": state.turns_used,
-        "deal_count": state.deal_count,
-        "cost_usd": state.total_cost_usd,
-        "stop_reason": state.stop_reason,
+        "turns_used": state.turn,
+        "offer_count": len(state.offers),
+        "persisted": persisted,
+        "domains_visited": state.sufficiency.distinct_domains_visited,
+        "vision_fallback_count": len(state.vision_fallback_log),
+        "stop_reason": _stop_reason(state),
     }
+
+
+def _stop_reason(state: OrchestratorState) -> str:
+    if state.sufficiency.can_stop():
+        return "sufficiency_met"
+    if state.cost_usd > 0:
+        return "budget_or_turns_exhausted"
+    return "turns_exhausted"
+
+
+async def _persist_offers(
+    offers: list[DealOffer], context: WatchlistContext,
+) -> int:
+    """Upsert DealOffer → deals table. Returns count successfully written."""
+    if not offers:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    written = 0
+    async with get_async_session() as session:
+        for offer in offers:
+            listed = offer.listed_price if offer.listed_price else offer.price
+            real_disc = None
+            if listed and listed > offer.price:
+                real_disc = round((listed - offer.price) / listed * 100.0, 1)
+
+            stmt = (
+                pg_insert(Deal)
+                .values(
+                    title=offer.title,
+                    source=offer.retailer,
+                    url=offer.url,
+                    listed_price=listed,
+                    sale_price=offer.price,
+                    category=context.product_query[:128],
+                    tags=json.dumps([]),
+                    confidence="high",       # validator-approved
+                    real_discount_pct=real_disc,
+                    student_eligible=False,
+                    condition=offer.condition,
+                    legitimate=True,
+                    hunt_date=date.today(),
+                    first_seen_at=now,
+                    scraped_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=["url"],
+                    set_={
+                        "title": offer.title,
+                        "sale_price": offer.price,
+                        "listed_price": listed,
+                        "real_discount_pct": real_disc,
+                        "condition": offer.condition,
+                        "scraped_at": now,
+                    },
+                )
+            )
+            try:
+                await session.execute(stmt)
+                written += 1
+            except Exception:
+                logger.exception(
+                    "research_for_agent: persist failed for offer %r", offer.title,
+                )
+        await session.commit()
+    return written
 
 
 @app.task(name="dealbot.worker.tasks.daily_rehunt", bind=True, max_retries=3)

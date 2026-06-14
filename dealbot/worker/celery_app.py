@@ -41,7 +41,6 @@ app = Celery(
     include=[
         "dealbot.worker.tasks",
         "dealbot.worker.digest",
-        "dealbot.worker.seed",
         "dealbot.worker.celery_app",
     ],
 )
@@ -53,16 +52,6 @@ app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
-        # 06:00 UTC — seed editorial catalog before users wake up
-        "seed-deals": {
-            "task": "dealbot.worker.seed.seed_deals",
-            "schedule": crontab(hour=6, minute=0),
-        },
-        # 07:00 UTC — hunt watchlist keywords on fresh seed data
-        "hunt-deals": {
-            "task": "dealbot.worker.tasks.hunt_deals",
-            "schedule": crontab(hour=7, minute=0),
-        },
         # 08:00 UTC — email digest to pro users with yesterday's matches
         "send-daily-digest": {
             "task": "dealbot.worker.digest.send_daily_digest",

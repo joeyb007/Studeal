@@ -3,37 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from dealbot.agents.composition import build_orchestrator_from_env
 from dealbot.agents.state import DealOffer, OrchestratorState
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal, Watchlist
-from dealbot.llm.base import LLMClient
-from dealbot.llm.groq_client import GroqClient
-from dealbot.llm.ollama import OllamaClient
-from dealbot.llm.openai_client import OpenAIClient
-from dealbot.llm.vllm import vLLMClient
 from dealbot.schemas import WatchlistContext
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
-
-
-def _get_llm() -> LLMClient:
-    """Legacy LLM picker. Kept for `daily_rehunt` until Phase 0 deletes it."""
-    backend = os.environ.get("LLM_BACKEND", "openai")
-    if backend == "openai":
-        return OpenAIClient()
-    if backend == "groq":
-        return GroqClient()
-    if backend == "vllm":
-        return vLLMClient()
-    return OllamaClient()
 
 
 # ---------------------------------------------------------------------------
@@ -157,60 +138,3 @@ async def _persist_offers(
     return written
 
 
-@app.task(name="dealbot.worker.tasks.daily_rehunt", bind=True, max_retries=3)
-def daily_rehunt(self) -> dict:
-    """Cron task: replay every HuntQuery row through the SearchRouter (no LLM)
-    to refresh deals cheaply. Full ResearchAgent re-runs handled separately."""
-    try:
-        return asyncio.run(_run_daily_rehunt())
-    except Exception as exc:
-        logger.exception("daily_rehunt failed: %s", exc)
-        raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
-
-
-async def _run_daily_rehunt() -> dict:
-    from dealbot.db.models import HuntQuery
-    from dealbot.graph.graph import build_scorer_graph
-    from dealbot.search import SearchRouter, SearchResult
-
-    router = SearchRouter()
-    llm = _get_llm()
-    scorer = build_scorer_graph(llm)
-    sem = asyncio.Semaphore(3)
-    stats = {"queries_replayed": 0, "deals_persisted": 0, "errors": 0}
-
-    async with get_async_session() as session:
-        now = datetime.now(timezone.utc)
-        result = await session.execute(
-            select(HuntQuery)
-            .join(Watchlist, HuntQuery.watchlist_id == Watchlist.id)
-            .where((Watchlist.expires_at == None) | (Watchlist.expires_at > now))  # noqa: E711
-        )
-        queries = list(result.scalars().all())
-
-    logger.info("daily_rehunt: replaying %d queries", len(queries))
-
-    async def _replay(hq):
-        nonlocal stats
-        async with sem:
-            try:
-                results, _cost = await router.search(hq.query_text, locale="ca")
-                stats["queries_replayed"] += 1
-                # Fan out scoring for each result
-                from dealbot.graph.nodes import _result_to_deal_raw
-                for r in results:
-                    deal = _result_to_deal_raw(r, hq.query_text)
-                    if deal:
-                        try:
-                            await scorer.ainvoke({"deal": deal})
-                            stats["deals_persisted"] += 1
-                        except Exception:
-                            stats["errors"] += 1
-            except Exception:
-                logger.exception("daily_rehunt: replay failed for %r", hq.query_text)
-                stats["errors"] += 1
-
-    await asyncio.gather(*[_replay(q) for q in queries])
-
-    logger.info("daily_rehunt complete: %s", stats)
-    return stats

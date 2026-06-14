@@ -5,10 +5,9 @@ terminate, 429 retry) and the process-wide concurrency cap. It does NOT
 own the lifecycle abstraction — that lives in `browser_session.py` as
 `BrowserbaseSession`, which composes these helpers.
 
-Splitting this way lets us:
-  - Unit-test the HTTP helpers independent of the lifecycle ABC.
-  - Reuse the semaphore from any caller that talks to Browserbase
-    (e.g. resolve_serper_url before its Phase 0 deletion).
+Splitting this way lets us unit-test the HTTP helpers independent of the
+lifecycle ABC and share the semaphore across any callers that talk to
+Browserbase.
 """
 
 from __future__ import annotations

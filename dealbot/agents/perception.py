@@ -70,9 +70,9 @@ _SKIP_TAGS: frozenset[str] = frozenset({
 })
 
 # Truncation limits for serialized text — guards against runaway page content.
-_NAME_MAX = 100
-_ATTR_VALUE_MAX = 60
-_TEXT_NODE_MAX = 80
+_NAME_MAX = 200
+_ATTR_VALUE_MAX = 500     # need full URLs in href so LLM records real links
+_TEXT_NODE_MAX = 200
 
 # Containment threshold for the 0.99 collapse — a child whose bbox sits ≥99%
 # inside an interactive parent's bbox is hidden from the LLM. Inputs / selects /

@@ -76,10 +76,22 @@ class LocalPlaywrightSession(BrowserSession):
     No remote API calls, no semaphore, no proxy rotation. Just a local
     Chromium instance launched directly. Cheap, fast, and good enough for
     integration tests against saved fixture HTML files.
+
+    Optional `storage_state` loads a previously-saved cookie + localStorage
+    snapshot (Playwright's standard auth-persistence format). Used for sites
+    that require a logged-in session (e.g., FB Marketplace) — run the auth
+    helper once to produce the state file, then sessions can reuse it for
+    days/weeks until the cookies expire.
     """
 
-    def __init__(self, *, headless: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        headless: bool = True,
+        storage_state: str | None = None,
+    ) -> None:
         self._headless = headless
+        self._storage_state = storage_state
         self._pw_context = None
         self._browser = None
         self.intercepted_responses = []
@@ -88,7 +100,17 @@ class LocalPlaywrightSession(BrowserSession):
         self._pw_context = async_playwright()
         pw = await self._pw_context.__aenter__()
         self._browser = await pw.chromium.launch(headless=self._headless)
-        ctx = await self._browser.new_context()
+        ctx_kwargs = {}
+        if self._storage_state:
+            from pathlib import Path
+            if Path(self._storage_state).exists():
+                ctx_kwargs["storage_state"] = self._storage_state
+            else:
+                logger.warning(
+                    "LocalPlaywrightSession: storage_state %r not found; "
+                    "starting fresh context", self._storage_state,
+                )
+        ctx = await self._browser.new_context(**ctx_kwargs)
         self.page = await ctx.new_page()
         # Watchdog needs a live Page, so construct + start after the page exists.
         self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)

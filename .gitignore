@@ -7,3 +7,12 @@ CLAUDE.md
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Spike eval artifacts — local dev data, regenerable
+docs/spike-cases/
+docs/spike-snapshots/
+docs/spike-results.md
+docs/spike-traces/
+
+# Auth state — contains FB session cookies; NEVER commit
+tests/evals/_fb_state.json

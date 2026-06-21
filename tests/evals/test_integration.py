@@ -234,11 +234,11 @@ async def test_full_pipeline_against_fixture_page(monkeypatch):
 
     llm = ScriptedLLM({
         # Match strings unique to each worker's system prompt
-        "strategic LLM controlling a deal-hunting agent": orchestrator_replies,
+        "strategic LLM controlling a marketplace-hunting agent": orchestrator_replies,
         "deal-hunting search planner": search_planner_replies,
-        "deal-hunting browser agent exploring": page_reader_replies,
-        "deal-hunting offer extractor": offer_extractor_replies,
-        "deal-hunting validator": validator_replies,
+        "marketplace-hunting browser agent exploring": page_reader_replies,
+        "marketplace listing extractor": offer_extractor_replies,
+        "marketplace listing validator": validator_replies,
         "deal-hunting lead-quality scorer": [],   # unused in this script
     })
 

@@ -66,6 +66,10 @@ class Thread(BaseModel):
     current_url: str | None = None
     findings: list[Finding] = Field(default_factory=list)
     visited_urls: list[str] = Field(default_factory=list)
+    # Leaf URLs the agent has already extracted offers from. PageReader is
+    # told not to click into these again; this lets the agent go deeper on
+    # the same search results page instead of re-extracting the same items.
+    extracted_leaf_urls: list[str] = Field(default_factory=list)
     depth: int = 0
     estimated_value: float = 0.5    # set by LeadScorer when spawned
     last_explored_at: int = 0       # turn number

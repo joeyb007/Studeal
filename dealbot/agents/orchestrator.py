@@ -39,6 +39,7 @@ from dealbot.agents.state import (
     Thread,
 )
 from dealbot.agents.tools import DomainRateLimiter
+from dealbot.agents.tracing import NullTraceWriter, TraceWriter
 from dealbot.agents.workers import (
     LeadScorer,
     OfferExtractor,
@@ -104,6 +105,7 @@ class DealHuntOrchestrator:
         max_turns: int = _MAX_TURNS,
         max_cost_usd: float = _MAX_COST_USD,
         max_replans: int = _MAX_REPLANS,
+        trace_writer: TraceWriter | None = None,
     ) -> None:
         self.llm = orchestrator_llm
         self.search_planner = search_planner
@@ -114,6 +116,9 @@ class DealHuntOrchestrator:
         self.session_factory = session_factory
         self.rate_limiter = rate_limiter or DomainRateLimiter()
         self.max_turns = max_turns
+        self.trace_writer = trace_writer or NullTraceWriter()
+        # Page reader also writes traces; propagate the writer.
+        self.page_reader.trace_writer = self.trace_writer
         self.max_cost_usd = max_cost_usd
         self.max_replans = max_replans
 
@@ -125,6 +130,8 @@ class DealHuntOrchestrator:
         state = OrchestratorState(spec=spec)
         replans_used = 0
         last_offer_count = 0
+        extracted_thread_ids: set[str] = set()
+        search_planner_calls = 0
 
         async with self.session_factory() as session:
             while state.turn < self.max_turns and state.cost_usd < self.max_cost_usd:
@@ -144,6 +151,71 @@ class DealHuntOrchestrator:
                     logger.warning("orchestrator: bad LLM output on turn %d", state.turn)
                     state.turn += 1
                     continue
+
+                # 2.5a. Cap search_planner. The orchestrator's prompt says
+                # "use once at the start," but smaller LLMs ignore this and spam
+                # it every other turn — generating duplicate threads and never
+                # advancing past exploration. After the first call, any further
+                # search_planner pick is rerouted to page_reader on the
+                # highest-value available thread.
+                if decision.worker == "search_planner":
+                    if search_planner_calls >= 1 and (state.frontier or state.parked):
+                        pool = list(state.frontier) + list(state.parked)
+                        best = max(pool, key=lambda t: t.estimated_value)
+                        logger.info(
+                            "orchestrator: blocking duplicate search_planner; "
+                            "rerouting to page_reader on %s", best.id[:6],
+                        )
+                        decision = OrchestratorDecision(
+                            reasoning=(
+                                f"BLOCKED: search_planner already called "
+                                f"{search_planner_calls}×; rerouting to "
+                                f"page_reader on {best.id[:6]}"
+                            ),
+                            worker="page_reader",
+                            args={"thread_id": best.id},
+                            folding_directive={},
+                        )
+                    else:
+                        search_planner_calls += 1
+
+                # 2.5b. Deterministic guardrail: if any thread has enough findings
+                # to be harvested and offer_extractor hasn't run on it, force the
+                # decision regardless of LLM choice. Without this, smaller models
+                # tend to spam search_planner + page_reader forever and never
+                # advance to extraction. (See spike trajectory: orchestrator
+                # called search_planner 49× and offer_extractor 0×.)
+                forced = self._maybe_force_offer_extractor(state, extracted_thread_ids)
+                if forced is not None and decision.worker != "offer_extractor":
+                    logger.info(
+                        "orchestrator: forcing offer_extractor on thread %s "
+                        "(findings=%d, LLM picked %s)",
+                        forced.id[:6], len(forced.findings), decision.worker,
+                    )
+                    decision = OrchestratorDecision(
+                        reasoning=(
+                            f"FORCED: thread {forced.id[:6]} has "
+                            f"{len(forced.findings)} findings; LLM had picked "
+                            f"{decision.worker}"
+                        ),
+                        worker="offer_extractor",
+                        args={"thread_id": forced.id},
+                        folding_directive={},
+                    )
+                # 2.6. Observability: record the orchestrator's decision now,
+                # before dispatch — so traces capture the LLM I/O even if
+                # the subsequent dispatch crashes.
+                try:
+                    self.trace_writer.record_orchestrator_turn(
+                        turn=state.turn,
+                        prompt=messages,
+                        response_content=response.content,
+                        decision_summary=decision.reasoning,
+                        worker_chosen=decision.worker,
+                        forced=decision.reasoning.startswith(("FORCED:", "BLOCKED:")),
+                    )
+                except Exception as exc:
+                    logger.warning("trace: orchestrator turn write failed: %s", exc)
 
                 # 3. Apply folding directive (in-place on multi_scale_summary).
                 self._apply_folding(state, decision.folding_directive)
@@ -183,6 +255,26 @@ class DealHuntOrchestrator:
                 # 5. Dispatch worker; record StepRecord; mutate state.
                 step = await self._dispatch_worker(state, session, decision)
                 state.history.append(step)
+                # Trace dispatch errors so the report shows them.
+                if step.result_summary.startswith("ERROR"):
+                    try:
+                        self.trace_writer.record_error(
+                            orchestrator_turn=state.turn,
+                            worker=decision.worker,
+                            error=step.result_summary,
+                        )
+                    except Exception:
+                        pass
+                # Mark extractor's source thread only on successful dispatch
+                # (errored/timed-out extractions should be retryable). The
+                # extracted-count grows when offers were actually persisted.
+                if (
+                    decision.worker == "offer_extractor"
+                    and not step.result_summary.startswith("ERROR")
+                ):
+                    tid = decision.args.get("thread_id")
+                    if isinstance(tid, str):
+                        extracted_thread_ids.add(tid)
 
                 # 6. Validator replan handling.
                 if decision.worker == "validator":
@@ -207,6 +299,11 @@ class DealHuntOrchestrator:
 
                 state.turn += 1
 
+        # Flush trace report regardless of how the loop exits.
+        try:
+            self.trace_writer.finalize()
+        except Exception:
+            logger.warning("trace: finalize failed", exc_info=True)
         return state
 
     # ---------------------------------------------------------------------
@@ -402,6 +499,7 @@ class DealHuntOrchestrator:
                     state.current_thread = thread
                     page_reader_result = await self.page_reader.explore(
                         thread, session, state, self.rate_limiter,
+                        orchestrator_turn=state.turn,
                     )
                     # Push spawned leads onto frontier with default est_value
                     for lead in page_reader_result.new_leads:
@@ -438,6 +536,11 @@ class DealHuntOrchestrator:
                 else:
                     offers = await self.offer_extractor.extract(thread, state.spec)
                     state.offers.extend(offers)
+                    # Blacklist the URLs we just turned into offers so PageReader
+                    # doesn't re-extract them on subsequent dispatches.
+                    for offer in offers:
+                        if offer.url and offer.url not in thread.extracted_leaf_urls:
+                            thread.extracted_leaf_urls.append(offer.url)
                     result_summary = f"extracted {len(offers)} offer(s) from thread {thread.id[:6]}"
 
             elif worker == "validator":
@@ -515,6 +618,31 @@ class DealHuntOrchestrator:
         if state.frontier:
             return max(state.frontier, key=lambda t: t.estimated_value)
         return None
+
+    def _maybe_force_offer_extractor(
+        self,
+        state: OrchestratorState,
+        extracted_thread_ids: set[str],
+    ) -> Thread | None:
+        """Find a thread with enough findings to be extractable that hasn't
+        had offer_extractor run on it yet. Returns None if no such thread.
+
+        Threshold matches the orchestrator prompt's guidance ("≥2 observation-
+        grade findings"). We require 3 to give the page a chance to yield
+        title + price + url.
+        """
+        threshold = 3
+        all_threads = list(state.frontier) + list(state.parked)
+        if state.current_thread is not None:
+            all_threads.append(state.current_thread)
+        rich_unextracted = [
+            t for t in all_threads
+            if t.id not in extracted_thread_ids and len(t.findings) >= threshold
+        ]
+        if not rich_unextracted:
+            return None
+        # Prefer the thread with the most findings.
+        return max(rich_unextracted, key=lambda t: len(t.findings))
 
     # ---------------------------------------------------------------------
     # Sufficiency update

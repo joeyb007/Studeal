@@ -35,6 +35,7 @@ from dealbot.agents.state import (
     Thread,
     ToolCallRecord,
 )
+from dealbot.agents.tracing import NullTraceWriter, TraceWriter
 from dealbot.agents.tools import (
     Action,
     ActionResult,
@@ -57,10 +58,12 @@ from dealbot.scrapers.browser_session import BrowserSession
 logger = logging.getLogger(__name__)
 
 
-_MAX_TURNS = 12
+_MAX_TURNS = 20
 _MAX_RETRIES_PER_ACTION = 1
-_MAX_SCROLLS_PER_PAGE = 3
+_MAX_SCROLLS_PER_PAGE = 5
 _LOOP_DETECT_THRESHOLD = 3       # consecutive no-change snapshots → stop
+_INITIAL_HYDRATION_GRACE_S = 1.5  # post-goto sleep before first snapshot
+_SETTLEMENT_TIMEOUT_MS = 10_000   # SPAs need more than the 5s default
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +120,12 @@ class PageReader:
         llm: LLMClient,
         tools: list[BrowserTool],
         max_turns: int = _MAX_TURNS,
+        trace_writer: TraceWriter | None = None,
     ) -> None:
         self.llm = llm
         self.tools: dict[str, BrowserTool] = {t.name: t for t in tools}
         self.max_turns = max_turns
+        self.trace_writer: TraceWriter = trace_writer or NullTraceWriter()
 
     async def explore(
         self,
@@ -128,6 +133,7 @@ class PageReader:
         session: BrowserSession,
         state: OrchestratorState,
         rate_limiter: DomainRateLimiter,
+        orchestrator_turn: int = 0,
     ) -> PageReaderResult:
         # Initial bookkeeping.
         initial_finding_count = len(thread.findings)
@@ -139,6 +145,37 @@ class PageReader:
         # Inject action_memory for the current URL into the first turn.
         url_for_memory = thread.current_url or session.page.url
         failed_history = state.action_memory.get(url_for_memory, [])
+
+        # Auto-navigate to the thread's target URL when the browser isn't
+        # already there. Without this, the agent starts at about:blank and
+        # would have to choose navigate() as its first action — a contract
+        # too loose for smaller models. Keeps PageReader self-sufficient.
+        if thread.current_url and session.page.url != thread.current_url:
+            try:
+                await rate_limiter.acquire(thread.current_url)
+                # networkidle waits for fetches to settle — critical for SPAs
+                # where domcontentloaded fires before hydration completes.
+                await session.page.goto(
+                    thread.current_url, wait_until="networkidle", timeout=30_000,
+                )
+                try:
+                    await session.watchdog.wait_for_settlement(
+                        after_action="goto",
+                        timeout_ms=_SETTLEMENT_TIMEOUT_MS,
+                        debounce_ms=500,
+                    )
+                except Exception:
+                    pass
+                # Pragmatic hydration grace — many SPAs paint content in a
+                # micro-task after the network goes quiet.
+                import asyncio
+                await asyncio.sleep(_INITIAL_HYDRATION_GRACE_S)
+                if not thread.visited_urls or thread.visited_urls[-1] != thread.current_url:
+                    thread.visited_urls.append(thread.current_url)
+            except Exception as exc:
+                logger.warning(
+                    "PageReader: initial goto(%r) failed: %s", thread.current_url, exc,
+                )
 
         # Build LLM message history. System prompt + initial context only;
         # we'll append per-turn user messages + assistant replies as we go.
@@ -153,6 +190,43 @@ class PageReader:
             # 1. Take a snapshot of the current page.
             snap = await snapshot_page(session.page)
             snap_key = _snapshot_key(snap)
+
+            # 1b. Visual screenshot for observability (best-effort).
+            try:
+                png = await session.page.screenshot(full_page=False, type="png")
+                self.trace_writer.record_screenshot(
+                    orchestrator_turn=orchestrator_turn,
+                    sub_turn=turn,
+                    label="snapshot",
+                    png_bytes=png,
+                )
+            except Exception as exc:
+                logger.debug("trace: screenshot failed: %s", exc)
+
+            # Optional diagnostic: dump first snapshot per dispatch to disk
+            # so we can see what the agent actually perceives on real pages.
+            # Activated by SPIKE_SNAPSHOT_DIR env var.
+            if turn == 0:
+                import os
+                diag_dir = os.environ.get("SPIKE_SNAPSHOT_DIR")
+                if diag_dir:
+                    try:
+                        from pathlib import Path
+                        import time as _time
+                        Path(diag_dir).mkdir(parents=True, exist_ok=True)
+                        stamp = int(_time.time() * 1000)
+                        fname = Path(diag_dir) / f"snap_{stamp}_elems{len(snap.element_map)}.txt"
+                        fname.write_text(
+                            f"URL: {snap.url}\n"
+                            f"TITLE: {snap.title}\n"
+                            f"CHARS: {snap.char_count}\n"
+                            f"ELEMENT_MAP_SIZE: {len(snap.element_map)}\n"
+                            f"DETECTED_MODALS: {snap.detected_modals}\n"
+                            f"REDACTIONS: {snap.redactions}\n"
+                            f"---TEXT---\n{snap.text[:8000]}"
+                        )
+                    except Exception as exc:
+                        logger.warning("snapshot diag dump failed: %s", exc)
 
             # 2. Loop detection — same key N consecutive times → stop.
             if recent_snapshot_keys and recent_snapshot_keys[-1] == snap_key:
@@ -179,8 +253,13 @@ class PageReader:
                 turn=turn,
                 scroll_count=scroll_count,
                 findings_count=len(thread.findings),
+                extracted_leaf_urls=thread.extracted_leaf_urls,
             )
             messages.append({"role": "user", "content": turn_user})
+
+            # Capture the prompt that's about to be sent (snapshot the list
+            # because we'll mutate it afterwards).
+            prompt_snapshot = [dict(m) for m in messages]
 
             # 4. LLM call asking for an Action JSON.
             response = await self.llm.complete(
@@ -227,6 +306,26 @@ class PageReader:
                 continue
 
             result = await self._dispatch_with_retry(tool, action, ctx)
+
+            # Observability hook: record this PageReader sub-turn with full
+            # LLM I/O + the snapshot text the agent saw.
+            try:
+                self.trace_writer.record_page_reader_turn(
+                    orchestrator_turn=orchestrator_turn,
+                    sub_turn=turn,
+                    url=snap.url,
+                    snapshot_text=snap.text,
+                    element_map_size=len(snap.element_map),
+                    prompt=prompt_snapshot,
+                    response_content=response.content,
+                    action_summary=f"{tool.name}({_short(action.model_dump_json(), 100)})",
+                    result_summary=(
+                        f"success={result.success}"
+                        + (f" error={result.error.error_type}" if result.error else "")
+                    ),
+                )
+            except Exception as exc:
+                logger.debug("trace: page_reader turn record failed: %s", exc)
 
             # 8. Side effects: record sub-trace, handle done/spawn/finding/error.
             sub_trace.append(_to_record(tool.name, action, result))
@@ -312,17 +411,29 @@ class PageReader:
         turn: int,
         scroll_count: int,
         findings_count: int,
+        extracted_leaf_urls: list[str] | None = None,
     ) -> str:
         scroll_left = max(0, _MAX_SCROLLS_PER_PAGE - scroll_count)
         turn_left = self.max_turns - turn
-        # Heavily truncate the page text to control token usage; PageReader
-        # generally only needs the top portion for decision-making.
-        page_text = snap.text if len(snap.text) < 4000 else snap.text[:4000] + "\n[…truncated]"
+        # Full page text — no truncation. The 4000-char cap was hiding real
+        # listings (spike found they start at ~7k chars after modal/privacy
+        # banner noise). Cost is fine at this scale.
+        page_text = snap.text
+        extracted_block = ""
+        if extracted_leaf_urls:
+            recent = extracted_leaf_urls[-10:]
+            extracted_block = (
+                "\nAlready extracted from these URLs — do NOT click into them again, "
+                "find DIFFERENT listings on this page:\n"
+                + "\n".join(f"  - {u}" for u in recent)
+                + "\n"
+            )
         return (
             f"Turn {turn + 1}/{self.max_turns} (remaining: {turn_left}).\n"
             f"Scroll budget left: {scroll_left}/3.\n"
             f"Findings recorded this dispatch: {findings_count}.\n"
-            f"Current URL: {snap.url}\n\n"
+            f"Current URL: {snap.url}\n"
+            f"{extracted_block}\n"
             f"Page state (CDP perception):\n{page_text}\n\n"
             "Emit the next action as JSON."
         )

@@ -383,12 +383,14 @@ async def test_page_reader_loop_detection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_page_reader_scroll_budget_enforced(monkeypatch):
-    """4th scroll is rejected before tool dispatch; loop continues."""
+    """6th scroll is rejected before tool dispatch; loop continues."""
     llm = StubLLM([
         '{"thought": "s1", "action": {"type": "scroll", "direction": "down"}}',
         '{"thought": "s2", "action": {"type": "scroll", "direction": "down"}}',
         '{"thought": "s3", "action": {"type": "scroll", "direction": "down"}}',
         '{"thought": "s4", "action": {"type": "scroll", "direction": "down"}}',
+        '{"thought": "s5", "action": {"type": "scroll", "direction": "down"}}',
+        '{"thought": "s6", "action": {"type": "scroll", "direction": "down"}}',
         '{"thought": "done", "action": {"type": "done", "reason": "budget"}}',
     ])
 
@@ -406,8 +408,8 @@ async def test_page_reader_scroll_budget_enforced(monkeypatch):
     thread = Thread(id="t", intent="x", current_url="https://x.com/")
 
     result = await pr.explore(thread, session, state, DomainRateLimiter(0.001))
-    # 3 scrolls executed (wheel called 3x), 4th rejected, then done
-    assert len(page.mouse.wheel_calls) == 3
+    # 5 scrolls executed (wheel called 5x), 6th rejected, then done
+    assert len(page.mouse.wheel_calls) == 5
     assert result.stop_reason == "done"
 
 

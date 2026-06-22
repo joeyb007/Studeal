@@ -64,6 +64,18 @@ _MAX_REPLANS = 1
 _DEEP_CONSOLIDATE_THRESHOLD = 5
 _FRONTIER_PROMPT_TOP_N = 5
 _RECENT_HISTORY_PROMPT_N = 5
+# Threads with this many consecutive 0-finding PageReader dispatches are
+# considered exhausted; the orchestrator skips them when picking dispatch
+# targets. Prevents the "scroll an exhausted search page 19× in a row"
+# pathology found in spike trace analysis. Set generously to allow recovery
+# strategies after the first extraction (post-extraction agent needs a few
+# dispatches to find unblacklisted listings).
+_THREAD_EXHAUSTION_THRESHOLD = 6
+# After this many failed offer_extractor calls on a thread, the forced-
+# extraction guardrail stops re-firing on it. Prevents the infinite-retry
+# loop when the extractor LLM repeatedly produces malformed JSON for a
+# specific findings payload (spike found 18× WorkerOutputError in one run).
+_MAX_EXTRACTION_FAILS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -270,17 +282,19 @@ class DealHuntOrchestrator:
                 # Re-extraction guardrail fires when len(findings) grows by ≥3
                 # past this watermark, so PageReader exploration after a
                 # successful extract still translates into more offers.
-                # Errored/timed-out extractions leave the watermark untouched,
-                # so the guardrail keeps trying.
-                if (
-                    decision.worker == "offer_extractor"
-                    and not step.result_summary.startswith("ERROR")
-                ):
+                if decision.worker == "offer_extractor":
                     tid = decision.args.get("thread_id")
                     if isinstance(tid, str):
                         thread = self._find_thread(state, tid)
                         if thread is not None:
-                            thread.findings_at_last_extraction = len(thread.findings)
+                            if step.result_summary.startswith("ERROR"):
+                                # Failed extraction bumps the per-thread failure
+                                # counter; once the cap is hit the guardrail
+                                # stops re-firing on this thread (prevents the
+                                # 18×-WorkerOutputError infinite loop).
+                                thread.failed_extractions += 1
+                            else:
+                                thread.findings_at_last_extraction = len(thread.findings)
 
                 # 6. Validator replan handling.
                 if decision.worker == "validator":
@@ -304,6 +318,32 @@ class DealHuntOrchestrator:
                     state.sufficiency.turns_since_offer_improvement += 1
 
                 state.turn += 1
+
+                # Hard stop when every thread is exhausted AND we have at
+                # least one offer. Prevents the orchestrator from burning
+                # remaining turns dispatching exhausted threads. If we have
+                # zero offers, keep trying — exhausted threads may still be
+                # all we have to work with.
+                all_threads = list(state.frontier) + list(state.parked)
+                if (
+                    all_threads
+                    and len(state.offers) > 0
+                    and all(
+                        t.consecutive_empty_dispatches >= _THREAD_EXHAUSTION_THRESHOLD
+                        for t in all_threads
+                    )
+                ):
+                    state.history.append(StepRecord(
+                        turn=state.turn, worker="stop",
+                        args_summary="(exhausted)",
+                        result_summary=(
+                            f"All {len(all_threads)} threads exhausted; "
+                            f"stopping with {len(state.offers)} offers."
+                        ),
+                        cost_usd=0.0, duration_ms=0,
+                        folding_directive=None,
+                    ))
+                    break
 
         # Flush trace report regardless of how the loop exits.
         try:
@@ -490,6 +530,7 @@ class DealHuntOrchestrator:
         start = time.monotonic()
         worker = decision.worker
         args_summary = _short(json.dumps(decision.args), 80)
+        sub_trace: list[Any] | None = None
 
         try:
             if worker == "search_planner":
@@ -517,6 +558,11 @@ class DealHuntOrchestrator:
                             depth=thread.depth + 1,
                             estimated_value=0.5,
                         ))
+                    # Bump exhaustion counter for diagnostic + scheduling.
+                    if len(page_reader_result.findings_added) == 0:
+                        thread.consecutive_empty_dispatches += 1
+                    else:
+                        thread.consecutive_empty_dispatches = 0
                     # Park the current thread back for potential future use
                     state.parked.append(thread)
                     state.current_thread = None
@@ -525,6 +571,10 @@ class DealHuntOrchestrator:
                         f"findings_added={len(page_reader_result.findings_added)} "
                         f"new_leads={len(page_reader_result.new_leads)}"
                     )
+                    # Capture sub_trace so the trajectory shows what tools
+                    # PageReader actually called per dispatch — critical for
+                    # debugging why a dispatch returned 0 vs N findings.
+                    sub_trace = list(page_reader_result.sub_trace)
 
             elif worker == "lead_scorer":
                 thread = self._find_thread(state, decision.args.get("thread_id"))
@@ -576,6 +626,18 @@ class DealHuntOrchestrator:
             result_summary = f"ERROR {type(exc).__name__}: {str(exc)[:120]}"
 
         duration_ms = int((time.monotonic() - start) * 1000)
+        # Capture the folding directive the LLM emitted so trajectory shows
+        # whether multi-scale memory folding is being exercised (vs the LLM
+        # always defaulting to "none"). Safe-parse since the LLM may emit
+        # a malformed dict.
+        folding_for_record: FoldingDirective | None = None
+        if decision.folding_directive:
+            try:
+                folding_for_record = FoldingDirective.model_validate(
+                    decision.folding_directive,
+                )
+            except Exception:
+                folding_for_record = None
         return StepRecord(
             turn=state.turn,
             worker=worker,
@@ -583,15 +645,17 @@ class DealHuntOrchestrator:
             result_summary=result_summary,
             cost_usd=0.0,                 # Phase 1 doesn't measure cost
             duration_ms=duration_ms,
-            folding_directive=None,
-            sub_trace=None,
+            folding_directive=folding_for_record,
+            sub_trace=sub_trace,
         )
 
     def _pop_thread_for_dispatch(
         self, state: OrchestratorState, thread_id: str | None,
     ) -> Thread | None:
         """Pop the requested thread from frontier OR parked. If no ID, pop
-        the highest-value frontier item."""
+        the highest-value frontier item. Skips exhausted threads (≥3
+        consecutive empty PageReader dispatches) unless they're the only
+        option AND we don't have a parked-but-non-exhausted alternative."""
         if thread_id:
             for i, t in enumerate(state.frontier):
                 if t.id.startswith(thread_id) or t.id == thread_id:
@@ -600,11 +664,18 @@ class DealHuntOrchestrator:
                 if t.id.startswith(thread_id) or t.id == thread_id:
                     return state.parked.pop(i)
             return None
-        if not state.frontier:
+        # No ID → pick highest-value NON-EXHAUSTED thread.
+        candidates = [
+            (i, t) for i, t in enumerate(state.frontier)
+            if t.consecutive_empty_dispatches < _THREAD_EXHAUSTION_THRESHOLD
+        ]
+        if not candidates:
+            # All frontier threads exhausted. Try parked next.
+            for i, t in enumerate(state.parked):
+                if t.consecutive_empty_dispatches < _THREAD_EXHAUSTION_THRESHOLD:
+                    return state.parked.pop(i)
             return None
-        # No ID → highest est_value.
-        idx = max(range(len(state.frontier)),
-                  key=lambda i: state.frontier[i].estimated_value)
+        idx = max(candidates, key=lambda pair: pair[1].estimated_value)[0]
         return state.frontier.pop(idx)
 
     def _find_thread(
@@ -642,6 +713,9 @@ class DealHuntOrchestrator:
         lets sustained PageReader exploration translate into additional
         extractions instead of accumulating wasted findings.
 
+        Threads that have repeatedly failed extraction (>= _MAX_EXTRACTION_FAILS)
+        are skipped to prevent infinite retry loops on malformed LLM output.
+
         Threshold matches the orchestrator prompt's guidance ("≥2 observation-
         grade findings"). We require 3 to give the page a chance to yield
         title + price + url.
@@ -653,6 +727,7 @@ class DealHuntOrchestrator:
         rich = [
             t for t in all_threads
             if len(t.findings) - t.findings_at_last_extraction >= threshold
+            and t.failed_extractions < _MAX_EXTRACTION_FAILS
         ]
         if not rich:
             return None

@@ -242,11 +242,34 @@ Available workers:
   - stop — Declare the run complete. ONLY VALID when can_stop is True. The
     system will reject premature stops.
 
-Folding directives — emit one per turn alongside your worker pick:
-  - "granular_condense" — compress the most recent step into a 1-line summary
-  - "deep_consolidate" — fuse N prior steps into one coarse line (use when
-    the fine-grained recent block has grown beyond 5 entries)
-  - "none" — no folding this turn
+FOLDING DIRECTIVES — REQUIRED: emit one per turn alongside your worker pick.
+This isn't optional decoration; folding is how the agent stays coherent over
+long horizons by replacing raw history with compact summaries.
+
+  - "granular_condense" — fire after ANY page_reader dispatch. Summarize
+    that one PageReader sub-trace into a single line capturing: URL visited,
+    key findings count, and any spawned leads. target_steps = the turn
+    number of that page_reader step. new_summary = the 1-line summary.
+
+  - "deep_consolidate" — fire when the recent (fine) block in multi-scale
+    memory has accumulated 5+ entries. Fuse them into one coarse line that
+    captures the THEME of those steps (e.g., "Visited 5 Craigslist Aeron
+    listings; recorded prices $400-$900"). target_steps = the range of
+    turn numbers covered. new_summary = the coarse line.
+
+  - "none" — only when literally no prior step is worth condensing yet
+    (typically only turn 0).
+
+Concrete example for a page_reader step at turn 7 that recorded 3 findings:
+  "folding_directive": {
+    "type": "granular_condense",
+    "target_steps": [7],
+    "new_summary": "Visited Kijiji Aeron search; recorded 3 listings ($500-$900) with observation provenance"
+  }
+
+If you keep emitting "none" you will lose context as the run progresses.
+Default behavior is to fold AGGRESSIVELY. The system will not penalize
+over-folding; it will degrade hard from under-folding past turn ~15.
 
 Goal anchor: the user's spec is at the top of every prompt you see. Re-read
 it every turn. Drift is the #1 long-horizon failure mode.

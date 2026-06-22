@@ -423,10 +423,22 @@ class PageReader:
         if extracted_leaf_urls:
             recent = extracted_leaf_urls[-10:]
             extracted_block = (
-                "\nAlready extracted from these URLs — do NOT click into them again, "
-                "find DIFFERENT listings on this page:\n"
+                "\n[Already extracted — skip these SPECIFIC URLs only:]\n"
                 + "\n".join(f"  - {u}" for u in recent)
                 + "\n"
+                + "WORKFLOW for finding more listings on this search page:\n"
+                "  1. Find a listing card visible on the page whose URL is "
+                "NOT in the blacklist above.\n"
+                "  2. Click it — your browser navigates to the listing's "
+                "detail page.\n"
+                "  3. CRITICAL: On the detail page, call record_finding "
+                "with the title + price + condition + source_url. Do this "
+                "BEFORE clicking anything else.\n"
+                "  4. Navigate back (browser-back, OR click a 'back' link) "
+                "to the search page. Repeat from step 1.\n"
+                "If you click multiple listings without record_finding "
+                "between them, the data is lost. ONE click → ONE record → "
+                "ONE back navigation. Always.\n"
             )
         captcha_block = ""
         if snap.captcha_detected:

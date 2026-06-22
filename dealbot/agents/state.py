@@ -75,6 +75,17 @@ class Thread(BaseModel):
     # when len(findings) - this >= 3, so growing exploration translates into
     # additional offer extractions instead of wasted PageReader work.
     findings_at_last_extraction: int = 0
+    # Number of PageReader dispatches in a row that returned 0 findings.
+    # When this hits the exhaustion threshold (3), the orchestrator skips
+    # this thread when picking a dispatch target — preventing the "agent
+    # scrolls an exhausted Kijiji search results page 19× in a row"
+    # pathology surfaced by spike trace inspection.
+    consecutive_empty_dispatches: int = 0
+    # Number of times offer_extractor has errored on this thread. After
+    # the cap, the forced-extraction guardrail stops re-firing on it —
+    # prevents the infinite-retry-loop pathology where a malformed LLM
+    # output causes 18+ wasted offer_extractor calls per run.
+    failed_extractions: int = 0
     depth: int = 0
     estimated_value: float = 0.5    # set by LeadScorer when spawned
     last_explored_at: int = 0       # turn number

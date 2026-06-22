@@ -70,6 +70,11 @@ class Thread(BaseModel):
     # told not to click into these again; this lets the agent go deeper on
     # the same search results page instead of re-extracting the same items.
     extracted_leaf_urls: list[str] = Field(default_factory=list)
+    # Number of findings present when offer_extractor last ran successfully
+    # on this thread. The orchestrator's forced-extraction guardrail re-fires
+    # when len(findings) - this >= 3, so growing exploration translates into
+    # additional offer extractions instead of wasted PageReader work.
+    findings_at_last_extraction: int = 0
     depth: int = 0
     estimated_value: float = 0.5    # set by LeadScorer when spawned
     last_explored_at: int = 0       # turn number

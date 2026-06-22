@@ -36,7 +36,10 @@ class OfferExtractor:
         self.llm = llm
 
     async def extract(
-        self, thread: Thread, spec: WatchlistContext,
+        self,
+        thread: Thread,
+        spec: WatchlistContext,
+        exclude_urls: list[str] | None = None,
     ) -> list[DealOffer]:
         if not thread.findings:
             return []
@@ -47,10 +50,21 @@ class OfferExtractor:
             for i, f in enumerate(thread.findings)
         )
 
+        exclude_block = ""
+        if exclude_urls:
+            recent = exclude_urls[-20:]  # cap prompt size
+            exclude_block = (
+                "\n\nThe following URLs have ALREADY been extracted in a "
+                "prior call. Do NOT produce offers for them — find DIFFERENT "
+                "listings in the findings:\n"
+                + "\n".join(f"  - {u}" for u in recent)
+            )
+
         user = (
             f"User's spec: {render_spec_summary(spec)}\n\n"
             f"Findings collected from thread '{thread.intent}':\n"
-            f"{findings_str}\n\n"
+            f"{findings_str}"
+            f"{exclude_block}\n\n"
             "Extract DealOffer JSON. Skip anything you'd have to infer. "
             "Required: price_provenance MUST be 'observation', url_provenance MUST be 'observation'."
         )
@@ -61,12 +75,15 @@ class OfferExtractor:
 
         # Hard filter: drop anything that violates the provenance rule,
         # regardless of what the LLM said. Defense in depth.
+        exclude_set = set(exclude_urls or [])
         result: list[DealOffer] = []
         for o in parsed.offers:
             if o.price_provenance != "observation":
                 continue
             if o.url_provenance != "observation":
                 continue
+            if o.url in exclude_set:
+                continue  # defense in depth — LLM may have ignored the exclude hint
             result.append(DealOffer(
                 title=o.title,
                 price=o.price,

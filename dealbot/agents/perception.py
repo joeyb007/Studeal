@@ -137,6 +137,34 @@ class PageSnapshot:
     char_count: int                        # for context-budget monitoring
     detected_modals: list[int] = field(default_factory=list)  # backend_node_ids
     redactions: int = 0                    # count of prompt-injection redactions applied
+    captcha_detected: bool = False         # CAPTCHA / bot-challenge text on page
+
+
+# CAPTCHA / anti-bot challenge text patterns. Case-insensitive substring matches
+# in PageSnapshot.text trigger captcha_detected=True so PageReader can bail
+# instead of looping pointlessly.
+_CAPTCHA_PATTERNS: tuple[str, ...] = (
+    "i'm not a robot",
+    "verify you are human",
+    "verify you're human",
+    "verify that you are not a robot",
+    "unusual traffic",
+    "complete the security check",
+    "press and hold",  # cloudflare turnstile
+    "checking your browser",
+    "ddos protection by",
+    "captcha",
+    "recaptcha",
+    "hcaptcha",
+)
+
+
+def _detect_captcha(text: str) -> bool:
+    """Cheap substring scan for known CAPTCHA / challenge text."""
+    if not text:
+        return False
+    haystack = text.lower()
+    return any(p in haystack for p in _CAPTCHA_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +264,8 @@ async def snapshot_page(page: Page) -> PageSnapshot:
     except Exception:
         title = ""
 
+    captcha_detected = _detect_captcha(text)
+
     return PageSnapshot(
         text=text,
         element_map=element_map,
@@ -244,6 +274,7 @@ async def snapshot_page(page: Page) -> PageSnapshot:
         char_count=len(text),
         detected_modals=detected_modals,
         redactions=redactions,
+        captcha_detected=captcha_detected,
     )
 
 

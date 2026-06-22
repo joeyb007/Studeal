@@ -428,11 +428,19 @@ class PageReader:
                 + "\n".join(f"  - {u}" for u in recent)
                 + "\n"
             )
+        captcha_block = ""
+        if snap.captcha_detected:
+            captcha_block = (
+                "\n⚠ CAPTCHA / bot-challenge detected on this page. Do NOT try "
+                "to solve it. Either spawn_lead to a different domain or call "
+                "done() with reason='captcha_blocked'.\n"
+            )
         return (
             f"Turn {turn + 1}/{self.max_turns} (remaining: {turn_left}).\n"
             f"Scroll budget left: {scroll_left}/3.\n"
             f"Findings recorded this dispatch: {findings_count}.\n"
             f"Current URL: {snap.url}\n"
+            f"{captcha_block}"
             f"{extracted_block}\n"
             f"Page state (CDP perception):\n{page_text}\n\n"
             "Emit the next action as JSON."

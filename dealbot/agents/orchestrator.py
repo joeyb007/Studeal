@@ -130,7 +130,6 @@ class DealHuntOrchestrator:
         state = OrchestratorState(spec=spec)
         replans_used = 0
         last_offer_count = 0
-        extracted_thread_ids: set[str] = set()
         search_planner_calls = 0
 
         async with self.session_factory() as session:
@@ -185,12 +184,14 @@ class DealHuntOrchestrator:
                 # tend to spam search_planner + page_reader forever and never
                 # advance to extraction. (See spike trajectory: orchestrator
                 # called search_planner 49× and offer_extractor 0×.)
-                forced = self._maybe_force_offer_extractor(state, extracted_thread_ids)
+                forced = self._maybe_force_offer_extractor(state)
                 if forced is not None and decision.worker != "offer_extractor":
+                    new_findings = len(forced.findings) - forced.findings_at_last_extraction
                     logger.info(
                         "orchestrator: forcing offer_extractor on thread %s "
-                        "(findings=%d, LLM picked %s)",
-                        forced.id[:6], len(forced.findings), decision.worker,
+                        "(findings=%d new=%d, LLM picked %s)",
+                        forced.id[:6], len(forced.findings), new_findings,
+                        decision.worker,
                     )
                     decision = OrchestratorDecision(
                         reasoning=(
@@ -265,16 +266,21 @@ class DealHuntOrchestrator:
                         )
                     except Exception:
                         pass
-                # Mark extractor's source thread only on successful dispatch
-                # (errored/timed-out extractions should be retryable). The
-                # extracted-count grows when offers were actually persisted.
+                # Record findings-count snapshot at successful extraction time.
+                # Re-extraction guardrail fires when len(findings) grows by ≥3
+                # past this watermark, so PageReader exploration after a
+                # successful extract still translates into more offers.
+                # Errored/timed-out extractions leave the watermark untouched,
+                # so the guardrail keeps trying.
                 if (
                     decision.worker == "offer_extractor"
                     and not step.result_summary.startswith("ERROR")
                 ):
                     tid = decision.args.get("thread_id")
                     if isinstance(tid, str):
-                        extracted_thread_ids.add(tid)
+                        thread = self._find_thread(state, tid)
+                        if thread is not None:
+                            thread.findings_at_last_extraction = len(thread.findings)
 
                 # 6. Validator replan handling.
                 if decision.worker == "validator":
@@ -534,10 +540,16 @@ class DealHuntOrchestrator:
                 if thread is None:
                     result_summary = "no thread to extract from"
                 else:
-                    offers = await self.offer_extractor.extract(thread, state.spec)
+                    # Pass already-extracted URLs so OfferExtractor skips them.
+                    # Critical for re-extraction runs — without this, the LLM
+                    # would re-extract the same listings from accumulated findings.
+                    offers = await self.offer_extractor.extract(
+                        thread, state.spec,
+                        exclude_urls=list(thread.extracted_leaf_urls),
+                    )
                     state.offers.extend(offers)
                     # Blacklist the URLs we just turned into offers so PageReader
-                    # doesn't re-extract them on subsequent dispatches.
+                    # doesn't re-click them and so future extractions skip them.
                     for offer in offers:
                         if offer.url and offer.url not in thread.extracted_leaf_urls:
                             thread.extracted_leaf_urls.append(offer.url)
@@ -622,10 +634,13 @@ class DealHuntOrchestrator:
     def _maybe_force_offer_extractor(
         self,
         state: OrchestratorState,
-        extracted_thread_ids: set[str],
     ) -> Thread | None:
-        """Find a thread with enough findings to be extractable that hasn't
-        had offer_extractor run on it yet. Returns None if no such thread.
+        """Find a thread with enough NEW findings since its last extraction.
+
+        First-time extraction: fires when len(findings) >= 3. Re-extraction:
+        fires when len(findings) - findings_at_last_extraction >= 3. This
+        lets sustained PageReader exploration translate into additional
+        extractions instead of accumulating wasted findings.
 
         Threshold matches the orchestrator prompt's guidance ("≥2 observation-
         grade findings"). We require 3 to give the page a chance to yield
@@ -635,14 +650,17 @@ class DealHuntOrchestrator:
         all_threads = list(state.frontier) + list(state.parked)
         if state.current_thread is not None:
             all_threads.append(state.current_thread)
-        rich_unextracted = [
+        rich = [
             t for t in all_threads
-            if t.id not in extracted_thread_ids and len(t.findings) >= threshold
+            if len(t.findings) - t.findings_at_last_extraction >= threshold
         ]
-        if not rich_unextracted:
+        if not rich:
             return None
-        # Prefer the thread with the most findings.
-        return max(rich_unextracted, key=lambda t: len(t.findings))
+        # Prefer the thread with the most NEW findings to extract.
+        return max(
+            rich,
+            key=lambda t: len(t.findings) - t.findings_at_last_extraction,
+        )
 
     # ---------------------------------------------------------------------
     # Sufficiency update

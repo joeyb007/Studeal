@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import ssl
 from typing import Any
 
 import httpx
@@ -74,7 +75,15 @@ class OpenAIClient(LLMClient):
                 resp.raise_for_status()
                 data = resp.json()
                 break
-            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
+            except (
+                httpx.ReadTimeout,
+                httpx.ConnectTimeout,
+                httpx.RemoteProtocolError,
+                httpx.NetworkError,    # connect/read/write errors
+                httpx.ConnectError,    # explicit, in case Pool wraps SSL as this
+                ssl.SSLError,          # raw SSL errors leaking past anyio TLS layer
+                ConnectionError,       # generic stdlib network failures
+            ) as exc:
                 if attempt < _MAX_RETRIES_ON_RATE_LIMIT:
                     wait = _BACKOFF_SCHEDULE_S[attempt] + random.uniform(0, 2)
                     logger.warning(

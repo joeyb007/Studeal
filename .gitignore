@@ -16,6 +16,7 @@ docs/spike-cases/
 docs/spike-snapshots/
 docs/spike-results.md
 docs/spike-traces/
+docs/evals/
 
 # Auth state — contains FB session cookies; NEVER commit
 tests/evals/_fb_state.json

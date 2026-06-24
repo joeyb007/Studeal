@@ -334,33 +334,56 @@ def _emit_summary_at_end():
     print(f"\n\n→ Spike results written to {out_path}\n")
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
-async def test_capability_spike(case: SpikeCase) -> None:
-    """One real marketplace search; captures everything, asserts loosely."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        pytest.skip("OPENAI_API_KEY not set; cannot run live spike")
+async def run_spike_case(
+    case: SpikeCase,
+    *,
+    trial_index: int | None = None,
+    use_cache: bool = True,
+    write_trajectory: bool = True,
+    inter_case_sleep_s: float | None = None,
+) -> SpikeResult:
+    """Run one spike case end-to-end and return a SpikeResult.
 
-    # Resumability: skip cases that already produced a sidecar in a prior run.
-    cached = _load_sidecar(case.name)
-    if cached is not None:
-        print(f"\n=== SPIKE: {case.name} (cached, skipping live run) ===")
-        print(f"    listings={cached.listing_count} turns={cached.turn_count} "
-              f"latency={cached.latency_sec:.1f}s stop={cached.stop_reason}")
-        _RESULTS.append(cached)
-        return
+    Extracted from the pytest wrapper so the eval framework
+    (scripts/run_evals.py) can call it directly in a multi-trial loop
+    without going through pytest.
+
+    - `trial_index`: when given, sidecar path becomes `<name>_t<N>.json`
+      so different trials don't overwrite each other. Default (None) uses
+      the legacy `<name>.json` path for backward compatibility.
+    - `use_cache`: if True, returns a cached sidecar when one exists.
+      Eval runs typically pass False to force fresh trials.
+    - `write_trajectory`: if False, skips the full history JSON dump
+      (the report.md from the trace writer is still produced).
+    - `inter_case_sleep_s`: post-run pause for OpenAI TPM refill. None
+      = read from SPIKE_INTER_CASE_SLEEP env var. Set 0 to disable.
+    """
+    sidecar_name = (
+        case.name if trial_index is None
+        else f"{case.name}_t{trial_index:02d}"
+    )
+
+    if use_cache:
+        cached = _load_sidecar(sidecar_name)
+        if cached is not None:
+            print(f"\n=== {sidecar_name} (cached) ===")
+            print(f"    listings={cached.listing_count} turns={cached.turn_count} "
+                  f"latency={cached.latency_sec:.1f}s stop={cached.stop_reason}")
+            return cached
 
     result = SpikeResult(
-        case_name=case.name,
+        case_name=sidecar_name,
         marketplace=case.marketplace,
         query=case.query,
         start_url=case.start_url,
     )
 
-    print(f"\n\n=== SPIKE: {case.name} ===")
+    trial_tag = "" if trial_index is None else f" (trial {trial_index})"
+    print(f"\n\n=== {case.name}{trial_tag} ===")
     print(f"    {case.marketplace} | query={case.query!r} | geo={case.geo}")
     print(f"    Starting at: {case.start_url}")
 
+    t0 = time.perf_counter()
     try:
         # gpt-4o-mini default — cheap enough for a spike, capable enough
         # to test the architecture. If extraction quality is weak we can
@@ -368,8 +391,6 @@ async def test_capability_spike(case: SpikeCase) -> None:
         llm = OpenAIClient()
         # Headed unless SPIKE_HEADLESS=1 — so you can watch the agent work.
         headless = os.environ.get("SPIKE_HEADLESS", "0") == "1"
-        # Per-case storage_state lets the FB Marketplace case start with
-        # a logged-in session captured by fb_auth_helper.py.
         case_storage = case.storage_state
         orchestrator = build_eval_orchestrator(
             orchestrator_llm=llm,
@@ -377,28 +398,25 @@ async def test_capability_spike(case: SpikeCase) -> None:
                 headless=headless, storage_state=case_storage,
             ),
         )
-        # Tighter budget for the spike — we just need to see it work once.
         orchestrator.max_turns = int(os.environ.get("SPIKE_MAX_TURNS", "25"))
-        # Swap in the fixture search planner — same LLM, hardcoded URL
         orchestrator.search_planner = FixtureSearchPlanner(
             llm=llm,
             start_url=case.start_url,
             intent=f"Find used {case.query} listings on {case.marketplace}",
         )
 
-        # Observability: enable filesystem trace writer for this case.
-        # Set SPIKE_NO_TRACE=1 to skip if you want a faster/smaller run.
+        # Observability: per-trial trace dir so multi-trial runs don't
+        # overwrite each other's traces.
         if os.environ.get("SPIKE_NO_TRACE") != "1":
             from dealbot.agents.tracing import FilesystemTraceWriter
             trace_root = (
                 Path(__file__).resolve().parents[2]
-                / "docs" / "spike-traces" / case.name
+                / "docs" / "spike-traces" / sidecar_name
             )
-            # Wipe stale traces from prior runs of this case.
             if trace_root.exists():
                 import shutil
                 shutil.rmtree(trace_root)
-            trace_writer = FilesystemTraceWriter(trace_root, run_label=case.name)
+            trace_writer = FilesystemTraceWriter(trace_root, run_label=sidecar_name)
             orchestrator.trace_writer = trace_writer
             orchestrator.page_reader.trace_writer = trace_writer
 
@@ -407,7 +425,6 @@ async def test_capability_spike(case: SpikeCase) -> None:
             max_budget=case.max_budget,
         )
 
-        t0 = time.perf_counter()
         state = await orchestrator.run(spec)
         result.latency_sec = time.perf_counter() - t0
         result.completed = True
@@ -428,40 +445,52 @@ async def test_capability_spike(case: SpikeCase) -> None:
             for o in state.offers
         ]
 
-        # Dump the full trajectory for diagnostic inspection
-        try:
-            _save_history(case.name, state)
-            print(f"    → trajectory saved: {_CASES_DIR / (case.name + '_history.json')}")
-        except Exception as exc:
-            logger.warning("trajectory save failed: %s", exc)
+        if write_trajectory:
+            try:
+                _save_history(sidecar_name, state)
+            except Exception as exc:
+                logger.warning("trajectory save failed: %s", exc)
 
         print(f"\n    → completed in {result.latency_sec:.1f}s")
         print(f"    → {result.listing_count} listings, {result.turn_count} turns, "
               f"${result.cost_usd:.4f}, stop={result.stop_reason}")
-        for ll in result.listings[:5]:
-            print(f"       · {ll['title'][:70]!r} ${ll['price']} {ll['url'][:80]}")
 
     except Exception as exc:
         result.error = f"{type(exc).__name__}: {exc}"
-        result.latency_sec = time.perf_counter() - t0 if "t0" in locals() else 0.0
+        result.latency_sec = time.perf_counter() - t0
         print(f"\n    → CRASHED: {result.error}")
-        logger.exception("spike case %s crashed", case.name)
+        logger.exception("spike case %s%s crashed", case.name, trial_tag)
     finally:
-        _RESULTS.append(result)
+        # Save sidecar under per-trial name so resume works correctly.
+        result.case_name = sidecar_name
         try:
             _save_sidecar(result)
-            print(f"    → sidecar saved: {_sidecar_path(case.name)}")
         except Exception as exc:
-            logger.warning("spike sidecar save failed for %s: %s", case.name, exc)
+            logger.warning("sidecar save failed for %s: %s", sidecar_name, exc)
 
-    # Brief pause between cases to let OpenAI's TPM rate-limit window refill.
-    # ~450k tokens per case × tier-1 200k TPM ≈ 2+ min of consumption; a 60s
-    # gap lets the sliding window catch up. SPIKE_INTER_CASE_SLEEP=0 disables.
-    inter_case = float(os.environ.get("SPIKE_INTER_CASE_SLEEP", "60"))
-    if inter_case > 0:
-        print(f"\n    → sleeping {inter_case:.0f}s for OpenAI TPM refill...")
-        await asyncio.sleep(inter_case)
+    # Inter-case pause for OpenAI TPM refill.
+    sleep_s = (
+        inter_case_sleep_s
+        if inter_case_sleep_s is not None
+        else float(os.environ.get("SPIKE_INTER_CASE_SLEEP", "60"))
+    )
+    if sleep_s > 0:
+        print(f"    → sleeping {sleep_s:.0f}s for OpenAI TPM refill...")
+        await asyncio.sleep(sleep_s)
+
+    return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
+async def test_capability_spike(case: SpikeCase) -> None:
+    """Pytest wrapper around run_spike_case. Single-trial, cached-by-default
+    behavior for backward compatibility with the existing spike harness."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set; cannot run live spike")
+
+    result = await run_spike_case(case, trial_index=None, use_cache=True)
+    _RESULTS.append(result)
 
     # The spike's only assertion: it ran (crash or not) and was captured.
-    # We do NOT assert listing_count > 0 — that's the question we're answering.
     assert True

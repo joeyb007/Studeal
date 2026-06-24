@@ -153,11 +153,23 @@ class PageReader:
         if thread.current_url and session.page.url != thread.current_url:
             try:
                 await rate_limiter.acquire(thread.current_url)
-                # networkidle waits for fetches to settle — critical for SPAs
-                # where domcontentloaded fires before hydration completes.
-                await session.page.goto(
-                    thread.current_url, wait_until="networkidle", timeout=30_000,
-                )
+                # `load` waits for the load event — strict enough for SPAs
+                # to hydrate first paint, lenient enough not to deadlock on
+                # sites with persistent connections (FB, Mercari) where
+                # networkidle never fires. The settlement watchdog +
+                # hydration grace afterward catch the rest.
+                try:
+                    await session.page.goto(
+                        thread.current_url, wait_until="load", timeout=20_000,
+                    )
+                except Exception as goto_exc:
+                    # Goto timed out / errored — page may still have loaded
+                    # enough content to be usable. Log and proceed instead
+                    # of bailing, which would leave the agent on about:blank.
+                    logger.info(
+                        "PageReader: goto timeout/error on %r (proceeding anyway): %s",
+                        thread.current_url, type(goto_exc).__name__,
+                    )
                 try:
                     await session.watchdog.wait_for_settlement(
                         after_action="goto",
@@ -174,7 +186,8 @@ class PageReader:
                     thread.visited_urls.append(thread.current_url)
             except Exception as exc:
                 logger.warning(
-                    "PageReader: initial goto(%r) failed: %s", thread.current_url, exc,
+                    "PageReader: initial nav setup failed for %r: %s",
+                    thread.current_url, exc,
                 )
 
         # Build LLM message history. System prompt + initial context only;

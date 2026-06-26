@@ -114,11 +114,13 @@ async def test_search_planner_retries_on_bad_json():
 
 
 @pytest.mark.asyncio
-async def test_search_planner_raises_after_double_failure():
-    llm = StubLLM(["nope", "still nope"])
+async def test_search_planner_raises_after_all_retries_exhausted():
+    # call_with_json_output's retry budget = 3, so 4 total attempts (initial + 3).
+    llm = StubLLM(["nope", "still nope", "more nope", "final nope"])
     planner = SearchPlanner(llm)
     with pytest.raises(WorkerOutputError):
         await planner.plan(_spec())
+    assert len(llm.calls) == 4  # all attempts consumed
 
 
 # ---------------------------------------------------------------------------

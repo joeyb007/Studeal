@@ -622,8 +622,12 @@ class DealHuntOrchestrator:
                 result_summary = f"unknown worker {worker!r}"
 
         except Exception as exc:
+            # Bumped from 120 → 8000 char truncation so WorkerOutputError's
+            # full LLM-content diagnostic surfaces in the trajectory trace
+            # instead of being silently buried (Python logger.exception is
+            # also dropped without a configured handler).
             logger.exception("orchestrator: worker %r raised", worker)
-            result_summary = f"ERROR {type(exc).__name__}: {str(exc)[:120]}"
+            result_summary = f"ERROR {type(exc).__name__}: {str(exc)[:8000]}"
 
         duration_ms = int((time.monotonic() - start) * 1000)
         # Capture the folding directive the LLM emitted so trajectory shows

@@ -63,19 +63,27 @@ async def call_with_json_output(
 
     raise WorkerOutputError(
         f"LLM produced non-conforming output after retry. Schema={schema.__name__}. "
-        f"Got: {response.content[:200]!r}"
+        f"Response length={len(response.content or '')} chars. "
+        f"Full content:\n---\n{response.content}\n---"
     )
 
 
 def _try_parse(text: str, schema: type[_T]) -> _T | None:
-    """Attempt to parse `text` as JSON matching `schema`. Returns None on failure."""
+    """Attempt to parse `text` as JSON matching `schema`. Returns None on failure.
+    Failures logged at WARNING so spike traces surface the actual parser error."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        logger.debug("worker: JSON decode failed: %s", exc)
+        logger.warning(
+            "worker: JSON decode failed for %s (msg=%s, text_len=%d, head=%r)",
+            schema.__name__, exc, len(text or ""), (text or "")[:300],
+        )
         return None
     try:
         return schema.model_validate(data)
     except ValidationError as exc:
-        logger.debug("worker: schema validation failed: %s", exc)
+        logger.warning(
+            "worker: schema validation failed for %s (errors=%s)",
+            schema.__name__, exc.errors()[:3],
+        )
         return None

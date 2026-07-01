@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,12 +59,12 @@ from dealbot.scrapers.browser_session import BrowserSession
 logger = logging.getLogger(__name__)
 
 
-_MAX_TURNS = 20
+_MAX_TURNS = 14    # cut from 20 — v1.1 trials averaged 7 sub-turns/dispatch
 _MAX_RETRIES_PER_ACTION = 1
 _MAX_SCROLLS_PER_PAGE = 5
 _LOOP_DETECT_THRESHOLD = 3       # consecutive no-change snapshots → stop
 _INITIAL_HYDRATION_GRACE_S = 1.5  # post-goto sleep before first snapshot
-_SETTLEMENT_TIMEOUT_MS = 10_000   # SPAs need more than the 5s default
+_SETTLEMENT_TIMEOUT_MS = 5_000    # 10s was wasteful, 2s caused FB SPA-hydration zero-trials; 5s threads the needle
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,8 @@ class PageReader:
         new_leads: list[SpawnedLead] = []
         scroll_count = 0
         recent_snapshot_keys: list[tuple] = []   # for loop detection
+        last_action_was_record: bool = False     # skip re-snapshot if no DOM change
+        prior_snap: PageSnapshot | None = None   # cached when last action was a no-op
 
         # Inject action_memory for the current URL into the first turn.
         url_for_memory = thread.current_url or session.page.url
@@ -201,26 +204,38 @@ class PageReader:
 
         for turn in range(self.max_turns):
             # 1. Take a snapshot of the current page.
-            snap = await snapshot_page(session.page)
+            # If the prior action was `record_finding` (a tool that doesn't
+            # navigate or click — pure side-effect on thread.findings), the
+            # DOM is identical to last turn. Reuse the prior snap to skip
+            # the ~500-1500ms CDP fetch + ~500ms screenshot + later loop-
+            # detection bookkeeping.
+            if last_action_was_record and prior_snap is not None:
+                snap = prior_snap
+                last_action_was_record = False  # only skip ONE turn at a time
+            else:
+                snap = await snapshot_page(session.page)
+                prior_snap = snap
             snap_key = _snapshot_key(snap)
 
-            # 1b. Visual screenshot for observability (best-effort).
-            try:
-                png = await session.page.screenshot(full_page=False, type="png")
-                self.trace_writer.record_screenshot(
-                    orchestrator_turn=orchestrator_turn,
-                    sub_turn=turn,
-                    label="snapshot",
-                    png_bytes=png,
-                )
-            except Exception as exc:
-                logger.debug("trace: screenshot failed: %s", exc)
+            # 1b. Visual screenshot for observability — env-gated.
+            # STUDEAL_DISABLE_SCREENSHOTS=1 skips screenshot capture entirely
+            # (production default). Spike/dev runs keep it on for trace inspect.
+            if os.environ.get("STUDEAL_DISABLE_SCREENSHOTS") != "1":
+                try:
+                    png = await session.page.screenshot(full_page=False, type="png")
+                    self.trace_writer.record_screenshot(
+                        orchestrator_turn=orchestrator_turn,
+                        sub_turn=turn,
+                        label="snapshot",
+                        png_bytes=png,
+                    )
+                except Exception as exc:
+                    logger.debug("trace: screenshot failed: %s", exc)
 
             # Optional diagnostic: dump first snapshot per dispatch to disk
             # so we can see what the agent actually perceives on real pages.
             # Activated by SPIKE_SNAPSHOT_DIR env var.
             if turn == 0:
-                import os
                 diag_dir = os.environ.get("SPIKE_SNAPSHOT_DIR")
                 if diag_dir:
                     try:
@@ -367,6 +382,12 @@ class PageReader:
             if isinstance(action, SpawnLeadAction) and result.success:
                 new_leads.append(SpawnedLead(intent=action.intent, url=action.url))
 
+            # If the action was a no-op for the DOM (record_finding just
+            # appends to thread.findings), flag for the next turn to reuse
+            # this snapshot instead of re-fetching identical content.
+            if isinstance(action, RecordFindingAction) and result.success:
+                last_action_was_record = True
+
             # 9. Append a compact tool-result message for the LLM's next turn.
             messages.append({"role": "user", "content": _summarize_result_for_llm(
                 tool.name, result,
@@ -428,10 +449,12 @@ class PageReader:
     ) -> str:
         scroll_left = max(0, _MAX_SCROLLS_PER_PAGE - scroll_count)
         turn_left = self.max_turns - turn
-        # Full page text — no truncation. The 4000-char cap was hiding real
-        # listings (spike found they start at ~7k chars after modal/privacy
-        # banner noise). Cost is fine at this scale.
-        page_text = snap.text
+        # Cap at 18000 chars — earlier 4000-char cap hid listings (start at
+        # ~7k chars after modal/banner noise) but anything past ~15k on
+        # marketplace SERPs is footer/related-products. Spike's working
+        # Kijiji runs only ever consumed the first ~15k for extraction.
+        # Bigger prompts add 3-5s LLM latency per turn at no quality gain.
+        page_text = snap.text if len(snap.text) <= 18000 else snap.text[:18000] + "\n[...truncated]"
         extracted_block = ""
         if extracted_leaf_urls:
             recent = extracted_leaf_urls[-10:]

@@ -145,6 +145,16 @@ CASES: list[SpikeCase] = [
         max_budget=1500.0,
         entry_mode="google",
     ),
+    SpikeCase(
+        name="aeron_autonomous_multisite",
+        marketplace="(autonomous)",
+        query="Herman Miller Aeron Toronto used under $700",
+        start_url="(autonomous — SearchPlanner generates)",
+        geo="Toronto",
+        max_budget=700.0,
+        entry_mode="autonomous",
+        storage_state=_FB_STATE,
+    ),
 ]
 
 
@@ -399,11 +409,16 @@ async def run_spike_case(
             ),
         )
         orchestrator.max_turns = int(os.environ.get("SPIKE_MAX_TURNS", "25"))
-        orchestrator.search_planner = FixtureSearchPlanner(
-            llm=llm,
-            start_url=case.start_url,
-            intent=f"Find used {case.query} listings on {case.marketplace}",
-        )
+        # Autonomous mode: skip fixture override, let real SearchPlanner
+        # generate 2-4 starting URLs across marketplaces from the spec alone.
+        # This validates cross-domain frontier seeding — the load-bearing
+        # assumption for RL trajectory diversity.
+        if case.entry_mode != "autonomous":
+            orchestrator.search_planner = FixtureSearchPlanner(
+                llm=llm,
+                start_url=case.start_url,
+                intent=f"Find used {case.query} listings on {case.marketplace}",
+            )
 
         # Observability: per-trial trace dir so multi-trial runs don't
         # overwrite each other's traces.

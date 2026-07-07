@@ -65,6 +65,36 @@ class BrowserSession(ABC):
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         ...
 
+    # -----------------------------------------------------------------
+    # Popup / new-tab handling (shared across subclasses)
+    #
+    # Sites spawn tabs via target="_blank" or window.open(). Without a
+    # handler, those tabs orphan and the main page freezes (v13 spike bug).
+    # Subclasses call `_wire_popup_handler(ctx)` once, after creating the
+    # BrowserContext but before returning from __aenter__.
+    # -----------------------------------------------------------------
+
+    def _wire_popup_handler(self, ctx: BrowserContext) -> None:
+        """Register `_on_new_page` for the context's `page` event.
+
+        Fired every time a new tab/popup spawns in this context. The handler
+        decides whether to promote the new page to `self.page` or discard it.
+        """
+        ctx.on("page", self._on_new_page)
+
+    async def _on_new_page(self, new_page: Page) -> None:
+        """Promote new-tab-with-real-URL to `self.page`; close blank popups.
+
+        - Waits up to 5s for domcontentloaded on `new_page`.
+        - If URL is 'about:blank' or empty: closes `new_page`; `self.page`
+          unchanged.
+        - Otherwise: stops the old watchdog, swaps `self.page = new_page`,
+          starts a fresh watchdog on the new page, closes the old page.
+
+        Day 1: no-op stub. Tests fail via assertion on missing promotion.
+        """
+        return
+
 
 # ---------------------------------------------------------------------------
 # Local Playwright (evals, dev)
@@ -111,6 +141,7 @@ class LocalPlaywrightSession(BrowserSession):
                     "starting fresh context", self._storage_state,
                 )
         ctx = await self._browser.new_context(**ctx_kwargs)
+        self._wire_popup_handler(ctx)
         self.page = await ctx.new_page()
         # Watchdog needs a live Page, so construct + start after the page exists.
         self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
@@ -180,6 +211,7 @@ class BrowserbaseSession(BrowserSession):
             pw = await self._pw_context.__aenter__()
             self._browser = await pw.chromium.connect_over_cdp(connect_url)
             ctx: BrowserContext = self._browser.contexts[0]
+            self._wire_popup_handler(ctx)
             self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
             try:

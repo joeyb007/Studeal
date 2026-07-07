@@ -11,6 +11,8 @@ Skipped if Playwright's Chromium isn't installed in the venv. Run
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from dealbot.agents.perception import snapshot_page
@@ -107,3 +109,89 @@ def test_build_browser_session_unknown_backend_raises(monkeypatch):
     monkeypatch.setenv("AGENT_BROWSER_BACKEND", "weasel")
     with pytest.raises(ValueError, match="Unknown AGENT_BROWSER_BACKEND"):
         build_browser_session()
+
+
+# ---------------------------------------------------------------------
+# Popup / new-tab handling (v14 spec §9)
+#
+# Contract: sites spawn tabs via target="_blank" or window.open(). Handler
+# either promotes the new tab to `self.page` (real URL) or closes it (blank).
+# Without the handler, popups orphan and the session freezes.
+# ---------------------------------------------------------------------
+
+async def _wait_for(
+    predicate, *, timeout_s: float = 3.0, poll_s: float = 0.05,
+) -> None:
+    """Poll until predicate returns True or timeout. Raises on timeout."""
+    async def _spin():
+        while not predicate():
+            await asyncio.sleep(poll_s)
+    await asyncio.wait_for(_spin(), timeout=timeout_s)
+
+
+@pytest.mark.asyncio
+async def test_popup_with_real_url_promotes_to_self_page():
+    """window.open with a real URL → self.page swaps to the new tab; old closes."""
+    async with LocalPlaywrightSession() as bs:
+        await bs.page.set_content(_SAMPLE_HTML)
+        original_page = bs.page
+
+        # Trigger a popup with a real (data:) URL. Playwright's `page` event
+        # fires on the BrowserContext; our handler must promote it.
+        await bs.page.evaluate(
+            "() => window.open('data:text/html,<h1>Popup Page</h1>', '_blank')"
+        )
+
+        # Wait for the handler to swap self.page
+        await _wait_for(lambda: bs.page is not original_page)
+
+        assert bs.page is not original_page
+        assert "Popup Page" in await bs.page.content()
+        # Old page should be closed as part of promotion.
+        assert original_page.is_closed(), (
+            "handler must close the old page after promoting the new tab"
+        )
+
+
+@pytest.mark.asyncio
+async def test_popup_with_blank_url_is_closed_no_promotion():
+    """window.open('about:blank') → new tab closed; self.page unchanged."""
+    async with LocalPlaywrightSession() as bs:
+        await bs.page.set_content(_SAMPLE_HTML)
+        original_page = bs.page
+
+        # about:blank popup — pure noise, should be discarded
+        await bs.page.evaluate(
+            "() => window.open('about:blank', '_blank')"
+        )
+
+        # Give the handler time to fire and close the popup
+        await asyncio.sleep(0.5)
+
+        assert bs.page is original_page, "self.page must not change for blank popup"
+        assert not original_page.is_closed(), "original must remain open"
+        # Context should have exactly one page — the original
+        ctx_pages = original_page.context.pages
+        assert len(ctx_pages) == 1, (
+            f"expected 1 page after blank popup closed, got {len(ctx_pages)}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_popup_promotion_swaps_watchdog():
+    """After promotion, `self.watchdog` targets the new page (not the old)."""
+    async with LocalPlaywrightSession() as bs:
+        await bs.page.set_content(_SAMPLE_HTML)
+        original_watchdog = bs.watchdog
+
+        await bs.page.evaluate(
+            "() => window.open('data:text/html,<h1>New</h1>', '_blank')"
+        )
+        await _wait_for(lambda: bs.watchdog is not original_watchdog)
+
+        assert bs.watchdog is not original_watchdog, (
+            "handler must rebuild the watchdog for the promoted page"
+        )
+        assert bs.watchdog._page is bs.page, (  # type: ignore[attr-defined]
+            "new watchdog must be bound to the current self.page"
+        )

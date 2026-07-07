@@ -85,15 +85,53 @@ class BrowserSession(ABC):
     async def _on_new_page(self, new_page: Page) -> None:
         """Promote new-tab-with-real-URL to `self.page`; close blank popups.
 
-        - Waits up to 5s for domcontentloaded on `new_page`.
-        - If URL is 'about:blank' or empty: closes `new_page`; `self.page`
-          unchanged.
-        - Otherwise: stops the old watchdog, swaps `self.page = new_page`,
-          starts a fresh watchdog on the new page, closes the old page.
-
-        Day 1: no-op stub. Tests fail via assertion on missing promotion.
+        - Waits up to 5s for the popup to navigate away from about:blank
+          (Chrome creates tabs at about:blank and navigates asynchronously).
+        - If URL is still 'about:blank'/empty after the wait: close the popup;
+          `self.page` unchanged.
+        - Otherwise: wait for DOM ready, stop the old watchdog, swap
+          `self.page = new_page`, start a fresh watchdog on the new page,
+          close the old page.
         """
-        return
+        try:
+            # Short window — real navigations from window.open finish in
+            # <100ms. Waiting longer just delays closing trash popups.
+            await new_page.wait_for_url(
+                lambda u: u not in ("about:blank", ""),
+                timeout=1000,
+            )
+        except Exception:
+            # Timed out — popup stayed on about:blank. Treat as trash.
+            pass
+
+        if new_page.url in ("about:blank", ""):
+            try:
+                await new_page.close()
+            except Exception:
+                pass
+            return
+
+        # Have a real URL. Wait for DOM to be usable before wiring watchdog.
+        try:
+            await new_page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+
+        old_page = self.page
+        try:
+            await self.watchdog.stop()
+        except Exception:
+            pass
+        self.page = new_page
+        self.watchdog = DomSettlementWatchdog(new_page, self.intercepted_responses)
+        try:
+            await self.watchdog.start()
+        except Exception as exc:
+            logger.warning("popup handler: new watchdog start failed: %s", exc)
+        try:
+            await old_page.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +179,12 @@ class LocalPlaywrightSession(BrowserSession):
                     "starting fresh context", self._storage_state,
                 )
         ctx = await self._browser.new_context(**ctx_kwargs)
-        self._wire_popup_handler(ctx)
         self.page = await ctx.new_page()
+        # Wire popup handler AFTER the initial page is created — Playwright's
+        # "page" event fires for every new_page(), including this first one.
+        # Registering after means only genuine popups (target=_blank, window.open)
+        # invoke _on_new_page, not the initial page bootstrap.
+        self._wire_popup_handler(ctx)
         # Watchdog needs a live Page, so construct + start after the page exists.
         self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
         try:
@@ -211,8 +253,11 @@ class BrowserbaseSession(BrowserSession):
             pw = await self._pw_context.__aenter__()
             self._browser = await pw.chromium.connect_over_cdp(connect_url)
             ctx: BrowserContext = self._browser.contexts[0]
-            self._wire_popup_handler(ctx)
             self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            # Wire popup handler AFTER the initial page is bound — see
+            # LocalPlaywrightSession for rationale (avoid handler firing on
+            # the initial context page).
+            self._wire_popup_handler(ctx)
             self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
             try:
                 await self.watchdog.start()

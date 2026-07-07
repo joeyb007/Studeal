@@ -129,17 +129,37 @@ async def _wait_for(
     await asyncio.wait_for(_spin(), timeout=timeout_s)
 
 
+async def _mock_popup_url(bs: LocalPlaywrightSession) -> str:
+    """Register a Playwright route that mocks a real HTTP response for popups.
+
+    Chromium blocks `window.open('data:...')` as a security policy, so tests
+    need an http(s):// URL. We use context-level route interception to fulfill
+    a fake URL with mock HTML — no external HTTP server needed.
+    """
+    url = "https://popup-test.local/target"
+    await bs.page.context.route(
+        url,
+        lambda route: route.fulfill(
+            status=200,
+            body="<html><body><h1>Popup Page</h1></body></html>",
+            content_type="text/html",
+        ),
+    )
+    return url
+
+
 @pytest.mark.asyncio
 async def test_popup_with_real_url_promotes_to_self_page():
     """window.open with a real URL → self.page swaps to the new tab; old closes."""
     async with LocalPlaywrightSession() as bs:
         await bs.page.set_content(_SAMPLE_HTML)
         original_page = bs.page
+        popup_url = await _mock_popup_url(bs)
 
-        # Trigger a popup with a real (data:) URL. Playwright's `page` event
-        # fires on the BrowserContext; our handler must promote it.
+        # Trigger the popup. Playwright's `page` event fires on the
+        # BrowserContext; our handler must promote it.
         await bs.page.evaluate(
-            "() => window.open('data:text/html,<h1>Popup Page</h1>', '_blank')"
+            f"() => window.open('{popup_url}', '_blank')"
         )
 
         # Wait for the handler to swap self.page
@@ -165,8 +185,9 @@ async def test_popup_with_blank_url_is_closed_no_promotion():
             "() => window.open('about:blank', '_blank')"
         )
 
-        # Give the handler time to fire and close the popup
-        await asyncio.sleep(0.5)
+        # Give the handler enough time to fire: 1s wait_for_url timeout in
+        # handler + margin for the close call.
+        await asyncio.sleep(1.5)
 
         assert bs.page is original_page, "self.page must not change for blank popup"
         assert not original_page.is_closed(), "original must remain open"
@@ -183,9 +204,10 @@ async def test_popup_promotion_swaps_watchdog():
     async with LocalPlaywrightSession() as bs:
         await bs.page.set_content(_SAMPLE_HTML)
         original_watchdog = bs.watchdog
+        popup_url = await _mock_popup_url(bs)
 
         await bs.page.evaluate(
-            "() => window.open('data:text/html,<h1>New</h1>', '_blank')"
+            f"() => window.open('{popup_url}', '_blank')"
         )
         await _wait_for(lambda: bs.watchdog is not original_watchdog)
 

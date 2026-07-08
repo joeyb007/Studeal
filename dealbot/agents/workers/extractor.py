@@ -1,36 +1,30 @@
-"""Extractor — page-locked LLM sub-worker with fresh context per invocation.
+"""Extractor — stateless snapshot-to-Offers worker.
 
-Design (from `docs/v14-architecture.md`, primitive P4):
+Design (v14 pivot):
 
-    Given a live Playwright Page, uses a bounded ReAct loop (max 5 tool calls)
-    to enumerate every listing card visible on the current URL. Fresh LLM
-    message context per invocation — no history leaks across calls.
+    Given a captured PageSnapshot, a single LLM call enumerates every listing
+    card visible and returns them as structured Offers. No browser interaction
+    (Explorer already handled scrolling / navigation), no tool loop, no
+    accumulated state — pure function of (snapshot, marketplace, spec).
 
-Tools available inside the loop:
-    - scroll (max 3 uses): reveal below-fold cards
-    - read_page (max 2 uses): re-snapshot after DOM mutation
-    - emit_offers (terminal): LLM's final structured output; ends loop
+    Fed by the ExtractorPool consuming an asyncio.Queue that Explorers write
+    to on every URL they visit. Extractor workers run in parallel across the
+    pool.
 
-Non-goals:
-    - click, navigate — extractor is page-locked. Detail enrichment on a
-      candidate URL is a separate sub-worker dispatched from a different page.
-    - accumulating state across invocations. Each `extract_page` call starts
-      with an empty message list.
-
-Rationale: solves the OfferExtractor context-rot bug in v13. The DeepAgents
-"subagent context isolation" pattern applied to marketplace SERP triage.
+Rationale: Explorer captures full-page state as it browses. Extraction becomes
+a downstream concern with no page dependency — cheap to parallelize, fresh
+context per invocation, trivial to test.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Literal
+from typing import Literal
 
-from playwright.async_api import Page
 from pydantic import BaseModel, ValidationError
 
-from dealbot.agents.perception import snapshot_page
+from dealbot.agents.perception import PageSnapshot
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import WatchlistContext
 
@@ -52,40 +46,28 @@ class Offer(BaseModel):
     location: str | None = None
     posted_at_raw: str | None = None  # e.g. "2 days ago" — normalized later
     condition: Literal["new", "refurbished", "used", "unknown"] = "unknown"
-    marketplace: str                  # inferred from URL host
+    marketplace: str                  # supplied by caller (Explorer knew the site)
 
 
 # ---------------------------------------------------------------------------
-# Prompt (inlined; move to prompts.py in Day 2 cleanup)
+# Prompt (inlined; move to prompts.py in Pass 3 cleanup)
 # ---------------------------------------------------------------------------
 
-EXTRACTOR_SYSTEM = """You are a marketplace listing extractor. You are given a
-single web page representing search results on a secondhand marketplace, and
-a user's watchlist spec. Your job is to enumerate every listing card visible
-and return them as structured JSON.
+EXTRACTOR_SYSTEM = """You are a marketplace listing extractor. You receive a
+captured page snapshot and a watchlist spec. Your job is to enumerate every
+listing card visible in the snapshot and return them as structured JSON.
 
-You are PAGE-LOCKED: you cannot click, cannot navigate, cannot open new tabs.
-Your only actions are: scroll down (reveals lazy-loaded / below-fold cards),
-read_page (re-snapshot the current page after scrolling), or emit_offers
-(terminal — return your final structured output).
+Return a single JSON object of the form:
+  {"offers": [<Offer>, ...]}
 
-Each turn, emit ONE action as a JSON object. Valid actions:
-  {"action":"scroll"}
-  {"action":"read_page"}
-  {"action":"emit_offers","offers":[<Offer>, ...]}
+Each Offer must contain: title, price, currency, url. Optional but preferred:
+image_url, location, posted_at_raw, condition ("new"|"refurbished"|"used"|"unknown").
 
-Each Offer object must contain: title, price, currency, url, marketplace.
-Optional: image_url, location, posted_at_raw, condition ("new"|"refurbished"|"used"|"unknown").
-
-Strategy:
-  1. Read the page. If the visible listings look complete (no obvious pagination
-     mid-scroll, no "showing X of Y" indicators higher than what you see),
-     emit_offers directly.
-  2. If there are likely more listings below the fold, scroll and re-read.
-  3. When you have every listing card, emit_offers with all of them.
-  4. Do NOT invent offers. Every field must be grounded in what the DOM shows.
-
-You have a hard budget of 5 total tool calls per page. Use it wisely."""
+Rules:
+  - Only emit offers grounded in the snapshot. Do not invent fields.
+  - Skip cards missing a real URL or a positive price.
+  - Do not filter by relevance to the spec — that's someone else's job. Emit
+    every listing card you can see."""
 
 
 # ---------------------------------------------------------------------------
@@ -93,148 +75,74 @@ You have a hard budget of 5 total tool calls per page. Use it wisely."""
 # ---------------------------------------------------------------------------
 
 class Extractor:
-    """Page-locked LLM sub-worker with bounded ReAct loop."""
-
-    MAX_TOOL_CALLS: int = 5
-    MAX_SCROLLS: int = 3
-    MAX_READ_PAGES: int = 2
+    """Single-shot snapshot-to-Offers worker. Fresh LLM context per call."""
 
     def __init__(self, llm: LLMClient) -> None:
         self.llm = llm
 
-    async def extract_page(
-        self, page: Page, spec: WatchlistContext,
+    async def extract_from_snapshot(
+        self,
+        snap: PageSnapshot,
+        marketplace: str,
+        spec: WatchlistContext,
     ) -> list[Offer]:
-        """Bounded ReAct on the current page. Fresh context. Page-locked.
+        """Emit every listing card the LLM identifies in the snapshot.
 
-        See module docstring for full contract.
+        - Fresh message list per call (no accumulation across invocations).
+        - marketplace is stamped onto every returned Offer (caller's context).
+        - Malformed LLM output → returns [] (no partial data, no crashes).
         """
-        # Fresh message list per invocation — no history leaks across calls.
-        snap = await snapshot_page(page)
-        messages: list[dict[str, Any]] = [
+        messages = [
             {"role": "system", "content": EXTRACTOR_SYSTEM},
-            {"role": "user", "content": _render_initial_prompt(spec, snap)},
+            {"role": "user", "content": _render_user_prompt(snap, marketplace, spec)},
         ]
 
-        scroll_used = 0
-        read_page_used = 0
-
-        for _ in range(self.MAX_TOOL_CALLS):
+        try:
             response = await self.llm.complete(
                 messages, response_format={"type": "json_object"},
             )
-            messages.append({"role": "assistant", "content": response.content})
+        except Exception as exc:
+            logger.warning("extractor: LLM call failed: %s", exc)
+            return []
 
-            action, parse_error = _parse_action(response.content)
-
-            if parse_error is not None:
-                messages.append({"role": "user", "content": (
-                    f"Your action JSON was invalid: {parse_error}. "
-                    "Re-emit one valid action."
-                )})
-                continue
-
-            action_type = action.get("action")
-
-            if action_type == "emit_offers":
-                raw_offers = action.get("offers", [])
-                return _parse_and_filter_offers(raw_offers)
-
-            if action_type == "scroll":
-                if scroll_used >= self.MAX_SCROLLS:
-                    messages.append({"role": "user", "content": (
-                        f"Scroll budget exhausted ({self.MAX_SCROLLS}/{self.MAX_SCROLLS}). "
-                        "Emit read_page or emit_offers."
-                    )})
-                    continue
-                try:
-                    await page.evaluate(
-                        "() => window.scrollBy(0, window.innerHeight)"
-                    )
-                except Exception as exc:
-                    logger.debug("extractor: scroll failed: %s", exc)
-                scroll_used += 1
-                messages.append({"role": "user", "content": (
-                    f"Scrolled ({scroll_used}/{self.MAX_SCROLLS}). "
-                    "Emit next action."
-                )})
-                continue
-
-            if action_type == "read_page":
-                if read_page_used >= self.MAX_READ_PAGES:
-                    messages.append({"role": "user", "content": (
-                        f"read_page budget exhausted ({self.MAX_READ_PAGES}/"
-                        f"{self.MAX_READ_PAGES}). Emit emit_offers now."
-                    )})
-                    continue
-                snap = await snapshot_page(page)
-                read_page_used += 1
-                messages.append({"role": "user", "content": (
-                    f"Re-snapshot ({read_page_used}/{self.MAX_READ_PAGES}). "
-                    f"Updated page:\n{_page_block(snap)}\n"
-                    "Emit next action."
-                )})
-                continue
-
-            # Anything else — click, navigate, unknown — is a page-locked
-            # violation. Feed back an error and keep looping.
-            messages.append({"role": "user", "content": (
-                f"Action {action_type!r} is not permitted. Extractor is "
-                "page-locked. Valid actions: scroll, read_page, emit_offers."
-            )})
-
-        # Budget exhausted without emit_offers. Return empty (LLM never
-        # committed to any offers we can trust).
-        return []
+        return _parse_and_filter(response.content, marketplace)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _render_initial_prompt(spec: WatchlistContext, snap: Any) -> str:
-    spec_str = spec.model_dump_json(indent=2)
+def _render_user_prompt(
+    snap: PageSnapshot, marketplace: str, spec: WatchlistContext,
+) -> str:
+    text = snap.text if len(snap.text) <= 18000 else snap.text[:18000] + "\n[...truncated]"
     return (
-        f"Watchlist spec:\n{spec_str}\n\n"
-        f"Current page:\n{_page_block(snap)}\n\n"
-        "Emit the first action as JSON."
+        f"Marketplace: {marketplace}\n"
+        f"URL: {snap.url}\n"
+        f"Watchlist spec: {spec.model_dump_json(indent=2)}\n\n"
+        f"Page snapshot:\n{text}\n\n"
+        "Emit the JSON object."
     )
 
 
-def _page_block(snap: Any) -> str:
-    """Render a page snapshot as a compact text block for the LLM.
-
-    Caps at 18k chars — anything past that on marketplace SERPs is footer /
-    related-products noise that adds latency without helping extraction.
-    """
-    url = getattr(snap, "url", "")
-    text = getattr(snap, "text", "")
-    if len(text) > 18000:
-        text = text[:18000] + "\n[...truncated]"
-    return f"URL: {url}\n{text}"
-
-
-def _parse_action(content: str) -> tuple[dict[str, Any] | None, str | None]:
+def _parse_and_filter(content: str, marketplace: str) -> list[Offer]:
     try:
         data = json.loads(content)
-    except json.JSONDecodeError as exc:
-        return None, f"invalid JSON: {exc}"
+    except json.JSONDecodeError:
+        return []
     if not isinstance(data, dict):
-        return None, "top-level JSON must be an object"
-    if "action" not in data:
-        return None, "missing 'action' field"
-    return data, None
-
-
-def _parse_and_filter_offers(raw_offers: list[Any]) -> list[Offer]:
-    """Validate each offer via the Offer model; drop rows failing the
-    grounded-data invariant (price > 0, non-empty url) or Pydantic validation."""
-    result: list[Offer] = []
+        return []
+    raw_offers = data.get("offers", [])
     if not isinstance(raw_offers, list):
-        return result
+        return []
+
+    result: list[Offer] = []
     for row in raw_offers:
         if not isinstance(row, dict):
             continue
+        # Stamp marketplace from caller's context; ignore any value the LLM
+        # might have hallucinated in the row itself.
+        row = {**row, "marketplace": marketplace}
         try:
             offer = Offer.model_validate(row)
         except ValidationError:

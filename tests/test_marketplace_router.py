@@ -10,7 +10,6 @@ from dealbot.agents.marketplace_router import (
     CURATED_MARKETPLACES,
     MarketplaceConfig,
     MarketplaceRouter,
-    MarketplaceSearchTarget,
 )
 from dealbot.schemas import WatchlistContext
 
@@ -42,11 +41,11 @@ def _spec() -> WatchlistContext:
 # Two mocked marketplaces for controlled tests.
 _M_A = MarketplaceConfig(
     key="alpha", display_name="Alpha", description="fake alpha",
-    build_search_url=lambda q: f"https://alpha.test/?q={q}",
+    home_url="https://alpha.test",
 )
 _M_B = MarketplaceConfig(
     key="beta", display_name="Beta", description="fake beta",
-    build_search_url=lambda q: f"https://beta.test/?q={q}",
+    home_url="https://beta.test",
 )
 
 
@@ -62,7 +61,7 @@ async def test_routes_to_llm_picked_subset():
 
     assert len(targets) == 1
     assert targets[0].marketplace == "alpha"
-    assert targets[0].search_url == "https://alpha.test/?q=aeron chair"
+    assert targets[0].entry_url == "https://alpha.test"
 
 
 @pytest.mark.asyncio
@@ -118,11 +117,11 @@ async def test_empty_llm_selection_falls_back_to_all_curated():
 
 def test_curated_marketplaces_have_unique_keys():
     keys = [m.key for m in CURATED_MARKETPLACES]
-    assert len(keys) == len(set(keys)), f"duplicate keys in curated list: {keys}"
+    assert len(keys) == len(set(keys)), f"duplicate keys: {keys}"
 
 
-def test_curated_search_urls_build_without_errors():
+def test_curated_home_urls_are_https():
     for m in CURATED_MARKETPLACES:
-        url = m.build_search_url("herman miller aeron")
-        assert url.startswith(("http://", "https://"))
-        assert "herman" in url.lower() or "miller" in url.lower() or "aeron" in url.lower()
+        assert m.home_url.startswith("https://"), (
+            f"{m.key}: home_url must be https:// got {m.home_url!r}"
+        )

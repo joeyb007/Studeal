@@ -52,7 +52,6 @@ class _MockLLM:
         self.calls += 1
         if self._responses:
             return _MockResponse(self._responses.pop(0))
-        # Default: end the loop cleanly if the test forgot to enqueue a done
         return _MockResponse(json.dumps({"action": "done", "reason": "test-fallback"}))
 
 
@@ -61,7 +60,6 @@ def _spec() -> WatchlistContext:
 
 
 async def _sink_collector():
-    """Returns (sink_coro, collected_list)."""
     collected: list[tuple[PageSnapshot, str]] = []
 
     async def sink(snap: PageSnapshot, marketplace: str) -> None:
@@ -71,7 +69,6 @@ async def _sink_collector():
 
 
 async def _mock_page(bs: LocalPlaywrightSession, url: str, html: str) -> None:
-    """Fulfill any request to `url` with the given HTML."""
     await bs.page.context.route(
         url,
         lambda route: route.fulfill(
@@ -80,9 +77,22 @@ async def _mock_page(bs: LocalPlaywrightSession, url: str, html: str) -> None:
     )
 
 
-_START_HTML = """
+# Home page with a labelled search form. Form submits GET to /search which
+# maps to the SERP page below.
+_HOME_HTML = """
 <!doctype html>
-<html><head><title>Marketplace</title></head><body>
+<html><head><title>Marketplace Home</title></head><body>
+  <h1>Welcome</h1>
+  <form action="https://mock.local/search" method="get">
+    <label for="q">Search</label>
+    <input id="q" name="q" type="text" aria-label="Search">
+  </form>
+</body></html>
+"""
+
+_SERP_HTML = """
+<!doctype html>
+<html><head><title>Marketplace SERP</title></head><body>
   <h1>Search results</h1>
   <div>Listing A</div>
   <div>Listing B</div>
@@ -95,7 +105,6 @@ _PAGE2_HTML = """
 <html><head><title>Marketplace P2</title></head><body>
   <h1>Search results — page 2</h1>
   <div>Listing C</div>
-  <div>Listing D</div>
 </body></html>
 """
 
@@ -105,17 +114,18 @@ _PAGE2_HTML = """
 # ---------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_done_immediately_enqueues_start_snap():
-    """LLM says done on turn 1 → sink called once with the start URL snap."""
+async def test_done_immediately_enqueues_entry_snap():
+    """LLM says done on turn 1 → sink called once with the entry URL snap."""
     llm = _MockLLM([{"action": "done", "reason": "no interest"}])
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
 
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://mock.local/start", _START_HTML)
+        await _mock_page(bs, "https://mock.local/home", _HOME_HTML)
         result = await explorer.explore(
-            start_url="https://mock.local/start",
+            entry_url="https://mock.local/home",
             marketplace="kijiji",
+            query="aeron",
             spec=_spec(),
             session=bs,
             sink=sink,
@@ -127,12 +137,47 @@ async def test_done_immediately_enqueues_start_snap():
     assert len(collected) == 1
     snap, marketplace = collected[0]
     assert marketplace == "kijiji"
-    assert snap.url == "https://mock.local/start"
+    assert snap.url == "https://mock.local/home"
+
+
+@pytest.mark.asyncio
+async def test_type_submits_form_and_navigates_to_serp():
+    """LLM types 'aeron' into search bar; form submits; URL becomes /search?q=..."""
+    llm = _MockLLM([
+        {"action": "type", "role": "textbox", "name": "Search", "text": "aeron"},
+        {"action": "done", "reason": "search executed"},
+    ])
+    explorer = Explorer(llm=llm)
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/home", _HOME_HTML)
+        # Any /search?* URL returns the SERP HTML.
+        await bs.page.context.route(
+            "https://mock.local/search*",
+            lambda route: route.fulfill(
+                status=200, body=_SERP_HTML, content_type="text/html",
+            ),
+        )
+        result = await explorer.explore(
+            entry_url="https://mock.local/home",
+            marketplace="kijiji",
+            query="aeron",
+            spec=_spec(),
+            session=bs,
+            sink=sink,
+        )
+
+    assert result.stop_reason == "done"
+    urls = [snap.url for snap, _ in collected]
+    # Both the home and the SERP should have been enqueued.
+    assert any(u.startswith("https://mock.local/home") for u in urls)
+    assert any("mock.local/search" in u for u in urls)
 
 
 @pytest.mark.asyncio
 async def test_click_next_transitions_url_and_enqueues_both():
-    """LLM: click Next → done. Sink receives start snap (on URL change) + page2 snap (on done)."""
+    """LLM: click Next → done. Sink receives entry snap + destination snap."""
     llm = _MockLLM([
         {"action": "click", "role": "link", "name": "Next"},
         {"action": "done", "reason": "paginated"},
@@ -141,63 +186,58 @@ async def test_click_next_transitions_url_and_enqueues_both():
     sink, collected = await _sink_collector()
 
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://mock.local/start", _START_HTML)
+        await _mock_page(bs, "https://mock.local/serp", _SERP_HTML)
         await _mock_page(bs, "https://mock.local/page2", _PAGE2_HTML)
         result = await explorer.explore(
-            start_url="https://mock.local/start",
+            entry_url="https://mock.local/serp",
             marketplace="kijiji",
+            query="aeron",
             spec=_spec(),
             session=bs,
             sink=sink,
         )
 
     assert result.stop_reason == "done"
-    urls_enqueued = [snap.url for snap, _ in collected]
-    assert "https://mock.local/start" in urls_enqueued
-    assert "https://mock.local/page2" in urls_enqueued
-    assert set(result.urls_visited) == {
-        "https://mock.local/start", "https://mock.local/page2",
-    }
+    urls = [snap.url for snap, _ in collected]
+    assert "https://mock.local/serp" in urls
+    assert "https://mock.local/page2" in urls
 
 
 @pytest.mark.asyncio
-async def test_max_turns_exhausted_returns_max_turns_stop_reason():
-    """LLM never emits done → loop exits at MAX_TURNS."""
-    # 40 scrolls > MAX_TURNS=20 — but scroll on a static page keeps snapshot
-    # key constant, so loop detection catches it first.
+async def test_max_turns_or_loop_when_llm_never_done():
+    """LLM only scrolls → loop detection or max_turns stops the run."""
     llm = _MockLLM([{"action": "scroll"}] * 40)
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
 
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://mock.local/start", _START_HTML)
+        await _mock_page(bs, "https://mock.local/home", _HOME_HTML)
         result = await explorer.explore(
-            start_url="https://mock.local/start",
+            entry_url="https://mock.local/home",
             marketplace="kijiji",
+            query="aeron",
             spec=_spec(),
             session=bs,
             sink=sink,
         )
 
     assert result.stop_reason in ("max_turns", "loop")
-    # Whichever stop fired, we should have enqueued at least the start URL.
-    assert any(snap.url == "https://mock.local/start" for snap, _ in collected)
+    assert any(snap.url == "https://mock.local/home" for snap, _ in collected)
 
 
 @pytest.mark.asyncio
 async def test_invalid_action_json_does_not_crash():
-    """Malformed action → feedback message, LLM tries again, eventually done."""
     llm = _MockLLM([])
-    # Manually queue: bad JSON, then valid done
     llm._responses = ["not valid json", json.dumps({"action": "done"})]
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
 
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://mock.local/start", _START_HTML)
+        await _mock_page(bs, "https://mock.local/home", _HOME_HTML)
         result = await explorer.explore(
-            start_url="https://mock.local/start",
+            entry_url="https://mock.local/home",
             marketplace="kijiji",
+            query="aeron",
             spec=_spec(),
             session=bs,
             sink=sink,

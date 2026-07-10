@@ -1,8 +1,9 @@
 """Explorer — LLM-driven marketplace browsing sub-agent.
 
-    Given a starting marketplace URL, the Explorer runs a bounded ReAct
-    loop where the LLM decides how to navigate — click "Next" links,
-    scroll infinite-scroll SPAs, or navigate directly to related URLs.
+    Given a marketplace's HOME URL + a search query, the Explorer runs a
+    bounded ReAct loop where the LLM decides how to use the site's UI —
+    find the search bar, type the query, submit, then paginate through
+    results via "Next" controls or scrolling.
 
     The Explorer does NOT extract listings. Every unique URL it lands on
     is captured as a snapshot and pushed to a sink (typically an
@@ -10,19 +11,25 @@
     continued browsing.
 
 Contract:
-    - Tool set: navigate, click, scroll, done. (No record_finding, no
-      spawn_lead, no extraction.)
+    - Tool set: navigate, click, type, scroll, done.
+        - `type` fills a role-based textbox and presses Enter (submits
+          the surrounding form). Used to drive the marketplace's own
+          search UI from the home page.
+        - `click` uses Playwright's get_by_role(role, name=...) with a
+          case-insensitive word-boundary match on the accessible name.
     - Auto-enqueue: when the URL changes since the previous turn, the
       previous URL's final snapshot is submitted to the sink. At end of
       loop, the current URL's final snapshot is submitted.
     - Bounded: MAX_TURNS caps the loop.
     - Loop detection: N consecutive identical snapshots → stop early.
-    - Click uses Playwright's get_by_role(role, name=...) — matches on
-      standardized accessibility patterns, zero per-site CSS selectors.
+    - Zero per-site adapter code. Everything (search bar location,
+      pagination controls, etc.) is discovered via accessibility roles.
 
 Rationale: solves the v13 context-rot bug by removing extraction from
 the ReAct context. Explorer's context is small (nav decisions only),
-which lets it run to 20 turns without drift.
+which lets it run to 20 turns without drift. Starting from the home
+page — rather than a pre-built SERP URL — removes the last per-site
+adapter (URL templates).
 """
 
 from __future__ import annotations
@@ -70,8 +77,9 @@ Sink = Callable[[PageSnapshot, str], Awaitable[None]]
 class _ActionJSON(BaseModel):
     action: str
     url: str | None = None            # navigate
-    role: str | None = None           # click ("link" | "button")
-    name: str | None = None           # click accessible-name
+    role: str | None = None           # click / type ("link" | "button" | "textbox" | "searchbox")
+    name: str | None = None           # click / type accessible-name
+    text: str | None = None           # type — the text to fill
     reason: str | None = None         # done
 
 
@@ -79,36 +87,46 @@ class _ActionJSON(BaseModel):
 # Prompt
 # ---------------------------------------------------------------------------
 
-EXPLORER_SYSTEM = """You are a marketplace browsing sub-agent. Your job is to
-visit as many search-result and category pages as you can within your turn
-budget. You do NOT extract listings — a separate worker handles that
-downstream by processing every page snapshot you leave behind.
+EXPLORER_SYSTEM = """You are a marketplace browsing sub-agent. You land on a
+marketplace's home page and your job is to reach + paginate the search-result
+pages for a user's query, then stop. You do NOT extract listings — a separate
+worker handles that downstream by processing every page snapshot you leave
+behind.
 
-Your goal is COVERAGE: land on as many distinct URLs as possible that contain
-listing cards for the user's spec.
+Your goal is COVERAGE: land on as many distinct SERP URLs as possible.
 
 Tools (emit ONE per turn as JSON):
+  {"action":"type","role":"textbox","name":"Search","text":"<query>"}
+      Fill a search-bar textbox with the query and press Enter. Used at the
+      start of exploration to submit the query via the site's own search UI.
+      The 'name' field is a case-insensitive substring match against the
+      textbox's accessible name — passing "Search" catches "Search Kijiji",
+      "Search for products", etc.
+  {"action":"click","role":"link","name":"Next"}
+      Click a control identified by its accessibility role + accessible name.
+      Common patterns: role="link" name="Next" or "Next Page", role="button"
+      name="Load more" or ">" or "→". Word-boundary case-insensitive match.
   {"action":"scroll"}
       Scroll down one viewport. Use to reveal below-fold content on
       infinite-scroll marketplaces, or to see the pagination controls at
       the bottom of a SERP.
-  {"action":"click","role":"link","name":"Next"}
-      Click a control identified by its accessibility role + accessible name.
-      Common patterns: role="link" name="Next" or "Next Page", role="button"
-      name="Load more" or ">" or "→".
   {"action":"navigate","url":"https://..."}
-      Navigate directly to a URL (only if you know a specific pagination URL).
+      Navigate directly to a URL. Rarely needed since you drive the site's
+      own UI. Reserve for edge cases (following a specific category link).
   {"action":"done","reason":"..."}
       Stop exploring. Use when: pagination exhausted, page shows no listings,
       or you've hit a CAPTCHA / auth wall.
 
-Strategy:
-  1. Scroll to reveal below-fold content before hunting pagination controls.
-  2. Prefer clicking "Next" or ">" style controls over navigating URLs directly.
-  3. Do NOT click into individual listing cards — those become detail pages,
+Standard flow:
+  1. You land on the marketplace home page.
+  2. Turn 1: type the query into the search bar (this submits the form and
+     navigates to the SERP).
+  3. Subsequent turns: scroll to reveal pagination controls, click "Next" /
+     ">" style controls to walk through result pages.
+  4. Do NOT click into individual listing cards — those become detail pages,
      which the extractor doesn't need.
-  4. Do NOT revisit URLs you've already landed on.
-  5. When you've paginated the current query fully, call done."""
+  5. Do NOT revisit URLs you've already landed on.
+  6. When you've paginated the current query fully, call done."""
 
 
 # ---------------------------------------------------------------------------
@@ -124,30 +142,31 @@ class Explorer:
 
     async def explore(
         self,
-        start_url: str,
+        entry_url: str,
         marketplace: str,
+        query: str,
         spec: WatchlistContext,
         session: BrowserSession,
         sink: Sink,
     ) -> ExplorerResult:
-        # Auto-navigate to start
+        # Auto-navigate to the marketplace home page
         try:
             await session.page.goto(
-                start_url, wait_until="domcontentloaded", timeout=20_000,
+                entry_url, wait_until="domcontentloaded", timeout=20_000,
             )
         except Exception as exc:
-            logger.warning("Explorer: initial goto failed for %r: %s", start_url, exc)
+            logger.warning("Explorer: initial goto failed for %r: %s", entry_url, exc)
             return ExplorerResult(
                 urls_visited=[], turns_used=0, stop_reason="error",
             )
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": EXPLORER_SYSTEM},
-            {"role": "user", "content": _initial_prompt(marketplace, start_url, spec)},
+            {"role": "user", "content": _initial_prompt(marketplace, entry_url, query, spec)},
         ]
 
         # State carried across turns
-        seen_urls: list[str] = []             # insertion order, deduped
+        seen_urls: list[str] = []
         seen_url_set: set[str] = set()
         prev_url: str | None = None
         prev_snap: PageSnapshot | None = None
@@ -187,7 +206,7 @@ class Explorer:
             # Build per-turn prompt with current snapshot state.
             messages.append({"role": "user", "content": _turn_prompt(
                 snap=snap, turn=turn, max_turns=self.MAX_TURNS,
-                urls_visited=seen_urls,
+                urls_visited=seen_urls, query=query,
             )})
 
             # LLM emits an action.
@@ -266,10 +285,22 @@ class Explorer:
                 messages.append({"role": "user", "content": result_msg})
                 continue
 
+            if action_type == "type":
+                if not action.role or not action.name or action.text is None:
+                    messages.append({"role": "user", "content": (
+                        "type requires 'role', 'name', and 'text'. Re-emit."
+                    )})
+                    continue
+                result_msg = await _try_type(
+                    session.page, action.role, action.name, action.text,
+                )
+                messages.append({"role": "user", "content": result_msg})
+                continue
+
             # Unknown action.
             messages.append({"role": "user", "content": (
                 f"Action {action_type!r} is unknown. Valid: navigate, click, "
-                "scroll, done."
+                "type, scroll, done."
             )})
 
         # Turn budget exhausted.
@@ -283,22 +314,23 @@ class Explorer:
 
 
 # ---------------------------------------------------------------------------
-# Click helper
+# Interaction helpers
 # ---------------------------------------------------------------------------
 
 async def _try_click(page: Page, role: str, name: str) -> str:
-    """Click by role + accessible name. Returns a summary string for the LLM."""
-    # Accept only role names Playwright supports for pagination-style controls.
+    """Click by role + accessible name. Word-boundary case-insensitive match
+    on `name` — 'Next' matches 'Next Page' but not 'Nexus'."""
     if role not in ("link", "button"):
         return f"click role={role!r} not supported; use 'link' or 'button'."
     try:
-        # Case-insensitive exact-ish match on the accessible name.
-        pattern = re.compile(f"^{re.escape(name.strip())}$", re.IGNORECASE)
+        pattern = re.compile(
+            rf"\b{re.escape(name.strip())}\b", re.IGNORECASE,
+        )
         locator = page.get_by_role(role, name=pattern)  # type: ignore[arg-type]
         count = await locator.count()
         if count == 0:
             return (
-                f"No {role} with accessible name {name!r} found on the page."
+                f"No {role} with accessible name matching {name!r} found."
             )
         await locator.first.click(timeout=5000)
         try:
@@ -310,19 +342,51 @@ async def _try_click(page: Page, role: str, name: str) -> str:
         return f"Click failed: {type(exc).__name__}: {exc}"
 
 
+async def _try_type(page: Page, role: str, name: str, text: str) -> str:
+    """Fill a textbox by role + accessible name, then press Enter to submit.
+
+    Substring match on `name` (search bars vary in labelling: 'Search',
+    'Search Kijiji', 'Search for products'). Pressing Enter after fill
+    submits the enclosing form — works on all marketplace search bars we
+    care about without needing a separate submit-button click.
+    """
+    if role not in ("textbox", "searchbox"):
+        return f"type role={role!r} not supported; use 'textbox' or 'searchbox'."
+    try:
+        pattern = re.compile(re.escape(name.strip()), re.IGNORECASE)
+        locator = page.get_by_role(role, name=pattern)  # type: ignore[arg-type]
+        count = await locator.count()
+        if count == 0:
+            return (
+                f"No {role} with accessible name matching {name!r} found."
+            )
+        first = locator.first
+        await first.click(timeout=3000)
+        await first.fill(text, timeout=3000)
+        await first.press("Enter", timeout=3000)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        except Exception:
+            pass
+        return f"Typed {text!r} into {role} matching {name!r} and pressed Enter."
+    except Exception as exc:
+        return f"Type failed: {type(exc).__name__}: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _initial_prompt(
-    marketplace: str, start_url: str, spec: WatchlistContext,
+    marketplace: str, entry_url: str, query: str, spec: WatchlistContext,
 ) -> str:
     return (
         f"Marketplace: {marketplace}\n"
-        f"Start URL: {start_url}\n"
+        f"Home URL (already loaded): {entry_url}\n"
+        f"Query to search for: {query!r}\n"
         f"Watchlist spec: {spec.model_dump_json(indent=2)}\n\n"
-        "You will now begin exploring. On each turn you'll see the current page "
-        "snapshot and pick one action."
+        "You are on the marketplace home page. Your first action is typically "
+        "to type the query into the site's search bar. Emit the first action."
     )
 
 
@@ -331,6 +395,7 @@ def _turn_prompt(
     turn: int,
     max_turns: int,
     urls_visited: list[str],
+    query: str,
 ) -> str:
     text = snap.text if len(snap.text) <= 18000 else snap.text[:18000] + "\n[...truncated]"
     visited_block = (
@@ -343,6 +408,7 @@ def _turn_prompt(
     )
     return (
         f"Turn {turn + 1}/{max_turns}.\n"
+        f"Query to search for: {query!r}\n"
         f"Current URL: {snap.url}\n"
         f"Recently visited URLs (unique):\n{visited_block}\n"
         f"{captcha_block}"
@@ -374,13 +440,7 @@ def _snapshot_key(snap: PageSnapshot) -> tuple:
 def _trim_ephemeral(
     messages: list[dict[str, Any]], keep_last_n: int = 2,
 ) -> list[dict[str, Any]]:
-    """Keep system + initial user + last N per-turn user messages.
-
-    Same trimming strategy as v13 PageReader: user messages containing page
-    snapshots grow the context linearly; drop older snapshot turns since the
-    LLM's assistant reasoning still references what it did without needing the
-    old snapshot text.
-    """
+    """Keep system + initial user + last N per-turn user messages."""
     if len(messages) <= 2:
         return messages
     head = messages[:2]

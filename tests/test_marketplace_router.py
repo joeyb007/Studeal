@@ -1,0 +1,128 @@
+"""Tests for MarketplaceRouter."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from dealbot.agents.marketplace_router import (
+    CURATED_MARKETPLACES,
+    MarketplaceConfig,
+    MarketplaceRouter,
+    MarketplaceSearchTarget,
+)
+from dealbot.schemas import WatchlistContext
+
+
+class _MockResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _MockLLM:
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+
+    async def complete(self, messages, response_format=None, **kwargs):
+        if self._responses:
+            return _MockResponse(self._responses.pop(0))
+        return _MockResponse('{"marketplaces":[]}')
+
+
+class _RaisingLLM:
+    async def complete(self, messages, response_format=None, **kwargs):
+        raise RuntimeError("LLM down")
+
+
+def _spec() -> WatchlistContext:
+    return WatchlistContext(product_query="Aeron", max_budget=700.0)
+
+
+# Two mocked marketplaces for controlled tests.
+_M_A = MarketplaceConfig(
+    key="alpha", display_name="Alpha", description="fake alpha",
+    build_search_url=lambda q: f"https://alpha.test/?q={q}",
+)
+_M_B = MarketplaceConfig(
+    key="beta", display_name="Beta", description="fake beta",
+    build_search_url=lambda q: f"https://beta.test/?q={q}",
+)
+
+
+# ---------------------------------------------------------------------
+# Tests — routing behavior
+# ---------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_routes_to_llm_picked_subset():
+    llm = _MockLLM([json.dumps({"marketplaces": ["alpha"]})])
+    router = MarketplaceRouter(llm=llm, marketplaces=[_M_A, _M_B])
+    targets = await router.route("aeron chair", _spec())
+
+    assert len(targets) == 1
+    assert targets[0].marketplace == "alpha"
+    assert targets[0].search_url == "https://alpha.test/?q=aeron chair"
+
+
+@pytest.mark.asyncio
+async def test_ignores_unknown_marketplace_keys_from_llm():
+    llm = _MockLLM([json.dumps({"marketplaces": ["alpha", "hallucinated"]})])
+    router = MarketplaceRouter(llm=llm, marketplaces=[_M_A, _M_B])
+    targets = await router.route("aeron", _spec())
+
+    assert len(targets) == 1
+    assert targets[0].marketplace == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_dedupes_duplicate_marketplace_keys():
+    llm = _MockLLM([json.dumps({"marketplaces": ["alpha", "alpha", "beta"]})])
+    router = MarketplaceRouter(llm=llm, marketplaces=[_M_A, _M_B])
+    targets = await router.route("aeron", _spec())
+
+    keys = [t.marketplace for t in targets]
+    assert keys == ["alpha", "beta"]
+
+
+@pytest.mark.asyncio
+async def test_llm_failure_falls_back_to_all_curated():
+    router = MarketplaceRouter(llm=_RaisingLLM(), marketplaces=[_M_A, _M_B])
+    targets = await router.route("aeron", _spec())
+
+    assert {t.marketplace for t in targets} == {"alpha", "beta"}
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_falls_back_to_all_curated():
+    router = MarketplaceRouter(
+        llm=_MockLLM(["not json"]), marketplaces=[_M_A, _M_B],
+    )
+    targets = await router.route("aeron", _spec())
+
+    assert {t.marketplace for t in targets} == {"alpha", "beta"}
+
+
+@pytest.mark.asyncio
+async def test_empty_llm_selection_falls_back_to_all_curated():
+    llm = _MockLLM([json.dumps({"marketplaces": []})])
+    router = MarketplaceRouter(llm=llm, marketplaces=[_M_A, _M_B])
+    targets = await router.route("aeron", _spec())
+
+    assert {t.marketplace for t in targets} == {"alpha", "beta"}
+
+
+# ---------------------------------------------------------------------
+# Tests — curated registry sanity
+# ---------------------------------------------------------------------
+
+def test_curated_marketplaces_have_unique_keys():
+    keys = [m.key for m in CURATED_MARKETPLACES]
+    assert len(keys) == len(set(keys)), f"duplicate keys in curated list: {keys}"
+
+
+def test_curated_search_urls_build_without_errors():
+    for m in CURATED_MARKETPLACES:
+        url = m.build_search_url("herman miller aeron")
+        assert url.startswith(("http://", "https://"))
+        assert "herman" in url.lower() or "miller" in url.lower() or "aeron" in url.lower()

@@ -1,32 +1,33 @@
-"""Composition root for the DealHuntOrchestrator.
+"""Composition root for the v14 hunt pipeline.
 
-Two factory functions, one for production (Groq LLama 3.3 70B everywhere,
-Browserbase session) and one for the eval suite (any LLMClient mix +
-LocalPlaywrightSession). Both produce a fully-wired DealHuntOrchestrator
-ready to `await orchestrator.run(spec)`.
+Single entry point — `run_hunt(spec)` — that:
+    1. Builds an LLM client (Groq Llama 3.3 70B).
+    2. Builds an Extractor + ExtractorPool + Explorer.
+    3. Opens a BrowserSession (Browserbase in prod, LocalPlaywright in dev/eval).
+    4. Derives start URLs from the spec.
+    5. Runs one Explorer per (marketplace, start_url).
+    6. Drains the pool and returns aggregated Offers.
 
-This is the single place where worker → llm wiring happens. If we ever
-swap the orchestrator to a fine-tuned 7B, only the production factory needs touching.
+Day 2 scope: sequential per-marketplace exploration. Day 3 adds parallel
+per-query Explorers + a real MarketplaceRouter that replaces the hardcoded
+start-URL derivation.
+
+Backend selection: AGENT_BROWSER_BACKEND=browserbase (default) | local.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Callable
 
-from dealbot.agents.orchestrator import DealHuntOrchestrator, SessionFactory
-from dealbot.agents.tools import DomainRateLimiter, all_tools
-from dealbot.agents.workers import (
-    LeadScorer,
-    OfferExtractor,
-    PageReader,
-    SearchPlanner,
-    Validator,
-)
+from dealbot.agents.explorer import Explorer
+from dealbot.agents.extractor_pool import ExtractorPool
+from dealbot.agents.workers.extractor import Extractor, Offer
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
+from dealbot.schemas import WatchlistContext
 from dealbot.scrapers.browser_session import (
+    BrowserSession,
     BrowserbaseSession,
     LocalPlaywrightSession,
 )
@@ -34,91 +35,84 @@ from dealbot.scrapers.browser_session import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Default Groq models — Llama 3.3 70B everywhere in v1 (cheap on Groq's free
-# tier). Stretch swap point: replace orchestrator_llm + page_reader_llm with
-# a fine-tuned 7B once Phase 4 lands.
-# ---------------------------------------------------------------------------
-
 _GROQ_70B = "llama-3.3-70b-versatile"
-_GROQ_8B = "llama-3.1-8b-instant"
-
-
-def _default_groq(model: str) -> GroqClient:
-    return GroqClient(model=model)
 
 
 # ---------------------------------------------------------------------------
-# Production composition
+# Builders
 # ---------------------------------------------------------------------------
 
-def build_production_orchestrator() -> DealHuntOrchestrator:
-    """Production wiring: Groq Llama 3.3 70B everywhere; Browserbase sessions."""
-    llm_70b = _default_groq(_GROQ_70B)
-    llm_8b = _default_groq(_GROQ_8B)
-
-    return DealHuntOrchestrator(
-        orchestrator_llm=llm_70b,
-        search_planner=SearchPlanner(llm_70b),
-        page_reader=PageReader(llm_70b, tools=all_tools()),
-        lead_scorer=LeadScorer(llm_8b),     # 8B is plenty for 0-1 scoring
-        offer_extractor=OfferExtractor(llm_70b),
-        validator=Validator(llm_70b),
-        session_factory=lambda: BrowserbaseSession(proxies=True),
-        rate_limiter=DomainRateLimiter(),
-    )
+def build_llm_from_env() -> LLMClient:
+    """Return an LLMClient from env config. Groq for now; swap points for
+    OpenAI / Anthropic can be added when needed by role."""
+    return GroqClient(model=_GROQ_70B)
 
 
-# ---------------------------------------------------------------------------
-# Eval composition — model-per-role injection
-# ---------------------------------------------------------------------------
-
-def build_eval_orchestrator(
-    *,
-    orchestrator_llm: LLMClient,
-    search_planner_llm: LLMClient | None = None,
-    page_reader_llm: LLMClient | None = None,
-    lead_scorer_llm: LLMClient | None = None,
-    offer_extractor_llm: LLMClient | None = None,
-    validator_llm: LLMClient | None = None,
-    session_factory: SessionFactory | None = None,
-    rate_limiter: DomainRateLimiter | None = None,
-) -> DealHuntOrchestrator:
-    """Eval-suite wiring: every role can take a distinct LLMClient.
-
-    Unspecified roles fall back to `orchestrator_llm`. Unspecified session
-    factory defaults to LocalPlaywrightSession (no Browserbase credits burned).
-    """
-    return DealHuntOrchestrator(
-        orchestrator_llm=orchestrator_llm,
-        search_planner=SearchPlanner(search_planner_llm or orchestrator_llm),
-        page_reader=PageReader(
-            page_reader_llm or orchestrator_llm,
-            tools=all_tools(),
-        ),
-        lead_scorer=LeadScorer(lead_scorer_llm or orchestrator_llm),
-        offer_extractor=OfferExtractor(offer_extractor_llm or orchestrator_llm),
-        validator=Validator(validator_llm or orchestrator_llm),
-        session_factory=session_factory or (lambda: LocalPlaywrightSession()),
-        rate_limiter=rate_limiter,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Backend-selecting factory — used by the Celery task in Phase 1.6
-# ---------------------------------------------------------------------------
-
-def build_orchestrator_from_env() -> DealHuntOrchestrator:
-    """Reads AGENT_BROWSER_BACKEND from env, picks the right composition.
-
-    Used by the Celery `research_for_agent` task (Phase 1.6) so production
-    swaps to Browserbase automatically without code changes.
-    """
+def build_session_from_env() -> BrowserSession:
+    """Backend selection from AGENT_BROWSER_BACKEND."""
     backend = os.environ.get("AGENT_BROWSER_BACKEND", "browserbase").lower()
     if backend == "local":
-        llm_70b = _default_groq(_GROQ_70B)
-        return build_eval_orchestrator(
-            orchestrator_llm=llm_70b,
-            session_factory=lambda: LocalPlaywrightSession(),
-        )
-    return build_production_orchestrator()
+        return LocalPlaywrightSession()
+    if backend == "browserbase":
+        return BrowserbaseSession(proxies=True)
+    raise ValueError(
+        f"Unknown AGENT_BROWSER_BACKEND: {backend!r}. Expected 'browserbase' or 'local'."
+    )
+
+
+def build_start_urls(spec: WatchlistContext) -> list[tuple[str, str]]:
+    """(marketplace, search_url) tuples for the hunt.
+
+    Day 2: minimal placeholder — Kijiji only, constructed from `product_query`.
+    Day 3 replaces this with the LLM-driven MarketplaceRouter (P2) that picks
+    from a curated list per query.
+    """
+    q_slug = spec.product_query.replace(" ", "-").lower()
+    return [
+        ("kijiji", f"https://www.kijiji.ca/b-buy-sell/{q_slug}/k0c10"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The hunt runner
+# ---------------------------------------------------------------------------
+
+async def run_hunt(spec: WatchlistContext) -> list[Offer]:
+    """Execute the full v14 pipeline for a single watchlist spec.
+
+    Sequential across marketplaces (Day 2). Day 3 wraps this in per-query
+    parallel Explorers via asyncio.gather.
+    """
+    llm = build_llm_from_env()
+    extractor = Extractor(llm)
+    pool = ExtractorPool(extractor, num_workers=3)
+    explorer = Explorer(llm)
+
+    await pool.start()
+
+    async def sink(snap, marketplace):
+        await pool.submit(snap, marketplace, spec)
+
+    async with build_session_from_env() as session:
+        for marketplace, start_url in build_start_urls(spec):
+            try:
+                result = await explorer.explore(
+                    start_url=start_url,
+                    marketplace=marketplace,
+                    spec=spec,
+                    session=session,
+                    sink=sink,
+                )
+                logger.info(
+                    "run_hunt: %s explored: urls=%d turns=%d stop=%s",
+                    marketplace, len(result.urls_visited),
+                    result.turns_used, result.stop_reason,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "run_hunt: explorer for %s failed: %s", marketplace, exc,
+                )
+
+    offers = await pool.drain()
+    logger.info("run_hunt: collected %d offers total", len(offers))
+    return offers

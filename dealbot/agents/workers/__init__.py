@@ -1,28 +1,10 @@
-"""Workers for the DealHuntOrchestrator.
+"""Workers for the v14 hunt pipeline.
 
-The orchestrator dispatches one of these per turn:
-  - SearchPlanner  — single LLM call, seeds the frontier with starting leads
-  - PageReader     — tool-using SUBAGENT, mini ReAct loop with browser tools
-  - LeadScorer     — single LLM call, scores a new lead 0-1
-  - OfferExtractor — single LLM call, structured extraction (Pydantic)
-  - Validator      — single LLM call, final acceptance + replan feedback
-
-Every worker takes `LLMClient` via constructor (DI). This makes the eval suite
-trivial — swap in any LLMClient subclass per role.
+Only Extractor + Offer are current. The v13 workers (PageReader, LeadScorer,
+Validator, OfferExtractor, SearchPlanner) were deleted; MarketplaceRouter
+(replaces SearchPlanner) lands on Day 3.
 """
 
-from dealbot.agents.workers.lead_scorer import LeadScorer
-from dealbot.agents.workers.offer_extractor import OfferExtractor
-from dealbot.agents.workers.page_reader import PageReader, PageReaderResult
-from dealbot.agents.workers.search_planner import SearchPlanner
-from dealbot.agents.workers.validator import ValidationDecision, Validator
+from dealbot.agents.workers.extractor import Extractor, Offer
 
-__all__ = [
-    "LeadScorer",
-    "OfferExtractor",
-    "PageReader",
-    "PageReaderResult",
-    "SearchPlanner",
-    "ValidationDecision",
-    "Validator",
-]
+__all__ = ["Extractor", "Offer"]

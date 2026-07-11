@@ -12,7 +12,8 @@ from sqlalchemy import func, select
 from dealbot.agents.nl_watchlist import NLWatchlistAgent
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Deal, User, Watchlist
+from dealbot.db.models import Deal, Listing, User, Watchlist
+from dealbot.rerank.service import RerankService
 from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
@@ -286,6 +287,154 @@ async def patch_watchlist(
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
         context=json.loads(watchlist.context) if watchlist.context else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# v14 hunt + reranked listings endpoints
+# ---------------------------------------------------------------------------
+
+class HuntTriggerResponse(BaseModel):
+    watchlist_id: int
+    dispatched: bool
+    detail: str
+
+
+class ListingResponse(BaseModel):
+    id: int
+    marketplace: str
+    title: str
+    price: float
+    currency: str
+    url: str                                    # raw (clickable) URL
+    image_url: Optional[str]
+    location: Optional[str]
+    condition: str
+    relevance_score: float
+    first_seen_at: str
+    last_seen_at: str
+
+
+class ListingsResponse(BaseModel):
+    listings: list[ListingResponse]
+    total_candidates: int                       # pre-rerank pool size
+    reranked: bool                              # False if Cohere unavailable
+
+
+@router.post(
+    "/{watchlist_id}/hunt", response_model=HuntTriggerResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_hunt(
+    watchlist_id: int,
+    current_user: User = Depends(get_current_user),
+) -> HuntTriggerResponse:
+    """Fire a fresh v14 hunt for this watchlist. Enqueues a Celery task and
+    returns immediately; poll GET /{id}/listings to see results."""
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.",
+            )
+        if not watchlist.context:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Watchlist has no context; cannot hunt.",
+            )
+
+    try:
+        from dealbot.worker.tasks import research_for_agent
+        research_for_agent.delay(watchlist_id)
+        return HuntTriggerResponse(
+            watchlist_id=watchlist_id, dispatched=True,
+            detail="Hunt dispatched to Celery worker.",
+        )
+    except Exception as exc:
+        # Worker not running (dev). Report but don't 500 — client polls listings.
+        return HuntTriggerResponse(
+            watchlist_id=watchlist_id, dispatched=False,
+            detail=f"Dispatch failed ({type(exc).__name__}); worker offline?",
+        )
+
+
+@router.get("/{watchlist_id}/listings", response_model=ListingsResponse)
+async def list_watchlist_listings(
+    watchlist_id: int,
+    top_n: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+) -> ListingsResponse:
+    """Two-stage retrieval against the v14 listings table.
+
+    1. SQL candidate-gen: recent listings in relevant marketplaces, price ≤
+       max_budget × 1.2 (some slack for the reranker to override).
+    2. Cross-encoder rerank via Cohere against the watchlist's product query.
+
+    Returns top-N with relevance scores. If Cohere is unavailable, returns
+    candidates in insertion order with `reranked=False`.
+    """
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.",
+            )
+        if not watchlist.context:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Watchlist has no context.",
+            )
+        ctx = WatchlistContext.model_validate_json(watchlist.context)
+
+        # Candidate gen: price filter + recency ordering. Cap at top_n × 5
+        # so the reranker has enough to work with without over-fetching.
+        stmt = select(Listing)
+        if ctx.max_budget:
+            stmt = stmt.where(Listing.price <= ctx.max_budget * 1.2)
+        stmt = stmt.order_by(Listing.last_seen_at.desc()).limit(top_n * 5)
+        candidates = list((await session.execute(stmt)).scalars().all())
+
+    if not candidates:
+        return ListingsResponse(listings=[], total_candidates=0, reranked=False)
+
+    # Format each candidate for the rerank prompt.
+    docs = [_format_listing_for_rerank(c) for c in candidates]
+    service = RerankService()
+    try:
+        results = await service.rerank(ctx.product_query, docs, top_n=top_n)
+    finally:
+        await service.aclose()
+
+    reranked = any(r.relevance_score > 0 for r in results)
+    picked = [candidates[r.index] for r in results if r.index < len(candidates)]
+    scores = {r.index: r.relevance_score for r in results}
+
+    return ListingsResponse(
+        listings=[
+            ListingResponse(
+                id=c.id, marketplace=c.marketplace, title=c.title,
+                price=c.price, currency=c.currency, url=c.raw_url,
+                image_url=c.image_url, location=c.location,
+                condition=c.condition,
+                relevance_score=scores.get(candidates.index(c), 0.0),
+                first_seen_at=c.first_seen_at.isoformat(),
+                last_seen_at=c.last_seen_at.isoformat(),
+            )
+            for c in picked
+        ],
+        total_candidates=len(candidates),
+        reranked=reranked,
+    )
+
+
+def _format_listing_for_rerank(listing: Listing) -> str:
+    """One-line summary for the cross-encoder. Includes the fields that a human
+    would use to judge relevance — title, price, marketplace, location, condition."""
+    parts = [listing.title, f"${listing.price:.2f} {listing.currency}", listing.marketplace]
+    if listing.location:
+        parts.append(listing.location)
+    if listing.condition and listing.condition != "unknown":
+        parts.append(f"condition: {listing.condition}")
+    return " | ".join(parts)
 
 
 @router.delete("/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)

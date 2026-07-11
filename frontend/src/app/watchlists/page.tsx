@@ -44,6 +44,27 @@ interface Deal {
   condition: string;
 }
 
+interface Listing {
+  id: number;
+  marketplace: string;
+  title: string;
+  price: number;
+  currency: string;
+  url: string;
+  image_url: string | null;
+  location: string | null;
+  condition: string;
+  relevance_score: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+interface ListingsResponse {
+  listings: Listing[];
+  total_candidates: number;
+  reranked: boolean;
+}
+
 function scoreColor(score: number | null): string {
   if (score == null) return "transparent";
   const s = Math.round((score / 100) * 75);
@@ -58,6 +79,42 @@ function daysUntil(isoString: string): number {
 
 function pct(listed: number, sale: number) {
   return Math.round(((listed - sale) / listed) * 100);
+}
+
+function ListingRow({ listing }: { listing: Listing }) {
+  const scoreBadge = listing.relevance_score > 0
+    ? `${Math.round(listing.relevance_score * 100)}`
+    : null;
+  return (
+    <div className={styles.dealRow}>
+      <div className={styles.dealRowLeft}>
+        {scoreBadge !== null && (
+          <span className={styles.dealDiscount}>{scoreBadge}%</span>
+        )}
+        <div>
+          <p className={styles.dealTitle}>{listing.title}</p>
+          <span className={styles.dealSource}>
+            {listing.marketplace}
+            {listing.location ? ` · ${listing.location}` : ""}
+            {listing.condition && listing.condition !== "unknown" ? ` · ${listing.condition}` : ""}
+          </span>
+        </div>
+      </div>
+      <div className={styles.dealRowRight}>
+        <span className={styles.dealPrice}>
+          ${listing.price.toFixed(2)} {listing.currency}
+        </span>
+        <a
+          href={listing.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.dealBuyBtn}
+        >
+          View →
+        </a>
+      </div>
+    </div>
+  );
 }
 
 function DealRow({ deal }: { deal: Deal }) {
@@ -109,6 +166,12 @@ function WatchlistCard({
   const [ctx, setCtx] = useState<WatchlistContext | null>(watchlist.context);
   const [patching, setPatching] = useState(false);
 
+  // v14 marketplace listings + hunt trigger
+  const [listings, setListings] = useState<Listing[] | null>(null);
+  const [listingsMeta, setListingsMeta] = useState<{ total: number; reranked: boolean } | null>(null);
+  const [loadingListings, setLoadingListings] = useState(false);
+  const [hunting, setHunting] = useState(false);
+
   const days = watchlist.expires_at ? daysUntil(watchlist.expires_at) : null;
 
   async function loadDeals() {
@@ -152,8 +215,56 @@ function WatchlistCard({
     }
   }
 
+  async function loadListings() {
+    setLoadingListings(true);
+    try {
+      const res = await fetch(`/api/watchlists/${watchlist.id}/listings?top_n=20`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data: ListingsResponse = await res.json();
+      setListings(data.listings ?? []);
+      setListingsMeta({
+        total: data.total_candidates ?? 0,
+        reranked: data.reranked ?? false,
+      });
+    } catch {
+      setListings([]);
+      setListingsMeta(null);
+    }
+    setLoadingListings(false);
+  }
+
+  async function triggerHunt() {
+    if (hunting) return;
+    setHunting(true);
+    try {
+      await fetch(`/api/watchlists/${watchlist.id}/hunt`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      // fall through — polling below still runs
+    }
+
+    // Poll listings for up to 4 minutes. Stop early if new listings arrive.
+    const startCount = listings?.length ?? 0;
+    const started = Date.now();
+    const poll = async (): Promise<void> => {
+      if (Date.now() - started > 240_000) return;
+      await loadListings();
+      if ((listings?.length ?? 0) > startCount) return;
+      await new Promise(r => setTimeout(r, 5000));
+      return poll();
+    };
+    await poll();
+    setHunting(false);
+  }
+
   function toggle() {
-    if (!expanded) loadDeals();
+    if (!expanded) {
+      loadDeals();
+      loadListings();
+    }
     setExpanded(v => !v);
   }
 
@@ -180,6 +291,14 @@ function WatchlistCard({
               {days === 0 ? "Expires today" : `${days}d left`}
             </span>
           )}
+          <button
+            className={styles.deleteBtn}
+            onClick={triggerHunt}
+            disabled={hunting}
+            title="Trigger a fresh marketplace hunt"
+          >
+            {hunting ? "Hunting…" : "↻"}
+          </button>
           <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
             {deleting ? "…" : "✕"}
           </button>
@@ -272,6 +391,36 @@ function WatchlistCard({
           {!loadingDeals && deals && deals.length > 0 && (
             <div className={styles.dealsList}>
               {deals.map(d => <DealRow key={d.id} deal={d} />)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {expanded && (
+        <div className={styles.dealsSection}>
+          <p className={styles.dealCount}>
+            Marketplace listings
+            {listingsMeta && (
+              <>
+                {" — "}
+                {listingsMeta.total} candidate{listingsMeta.total !== 1 ? "s" : ""}
+                {listingsMeta.reranked ? " (reranked)" : " (unranked)"}
+              </>
+            )}
+          </p>
+          {(loadingListings || hunting) && (
+            <p className={styles.dealsLoading}>
+              {hunting ? "Agents hunting marketplaces…" : "Loading listings…"}
+            </p>
+          )}
+          {!loadingListings && !hunting && listings !== null && listings.length === 0 && (
+            <div className={styles.dealsEmpty}>
+              <p>No marketplace listings yet. Trigger a hunt with ↻.</p>
+            </div>
+          )}
+          {!loadingListings && listings && listings.length > 0 && (
+            <div className={styles.dealsList}>
+              {listings.map(l => <ListingRow key={l.id} listing={l} />)}
             </div>
           )}
         </div>

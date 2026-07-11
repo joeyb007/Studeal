@@ -11,6 +11,38 @@ class Base(DeclarativeBase):
     pass
 
 
+class Listing(Base):
+    """marketplace listing — extracted by the Explorer/Extractor pipeline,
+    persisted with a per-marketplace canonicalized URL as the dedup key."""
+
+    __tablename__ = "listings"
+    __table_args__ = (
+        UniqueConstraint("canonical_url", name="uq_listings_canonical_url"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    canonical_url: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_url: Mapped[str] = mapped_column(Text, nullable=False)
+    marketplace: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    posted_at_raw: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    condition: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class Deal(Base):
     __tablename__ = "deals"
     __table_args__ = (UniqueConstraint("url", name="uq_deals_url"),)

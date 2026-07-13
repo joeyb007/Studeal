@@ -1,13 +1,18 @@
 """MarketplaceRouter
 
 Given a query + curated marketplace list, an LLM picks the subset of sites
-relevant to this query. Returns each pick with the marketplace's *home URL* —
-the Explorer navigates there and uses the site's own search UI to reach the
-SERP. No per-site URL adapter code.
+relevant to this query. Each site provides a `build_search_url(query) -> str`
+function so the Explorer lands directly on that site's SERP (rather than
+trying to drive JS-hostile home-page search UIs, which is fragile on sites
+like Kijiji).
 
-Curated marketplace registry lives in this module. Adding a new marketplace
-is: append a `MarketplaceConfig` to `CURATED_MARKETPLACES`, no other code
-changes required.
+Per-site URL construction is the only per-site code in the pipeline. All
+navigation from the SERP forward (pagination, category filters) is via role-
+based accessibility selectors — zero per-site CSS. Extraction is entirely
+LLM-driven from AX-tree snapshots, zero per-site DOM code.
+
+Adding a new marketplace: append a `MarketplaceConfig` to
+`CURATED_MARKETPLACES`, no other code changes required.
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import Callable
+from urllib.parse import quote_plus
 
 from pydantic import BaseModel, ValidationError
 
@@ -30,16 +37,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MarketplaceConfig:
-    key: str                    # canonical name
-    display_name: str           # for LLM prompt
-    description: str            # for LLM prompt
-    home_url: str               # Explorer navigates here; searches from the site's UI
+    key: str                                        # canonical name
+    display_name: str                               # for LLM prompt
+    description: str                                # for LLM prompt
+    build_search_url: Callable[[str], str]          # (query) -> SERP URL
 
 
 @dataclass
 class MarketplaceSearchTarget:
-    """(marketplace, entry_url) — Explorer lands at `entry_url`, then uses the
-    marketplace's own search UI (search bar + submit) to reach the SERP.
+    """(marketplace, entry_url) — Explorer lands directly at `entry_url`,
+    which is the marketplace's search results page for the query.
     """
 
     marketplace: str
@@ -62,7 +69,9 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
             "Canadian classifieds; strong for used furniture, appliances, "
             "electronics, tools. Local pickup common. Excludes fashion/apparel."
         ),
-        home_url="https://www.kijiji.ca",
+        build_search_url=lambda q: (
+            f"https://www.kijiji.ca/b-buy-sell/{q.replace(' ', '-').lower()}/k0c10"
+        ),
     ),
     MarketplaceConfig(
         key="fb_marketplace",
@@ -71,7 +80,9 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
             "Local secondhand marketplace; strong for large items (furniture, "
             "vehicles, appliances), casual sales. Requires FB session."
         ),
-        home_url="https://www.facebook.com/marketplace",
+        build_search_url=lambda q: (
+            f"https://www.facebook.com/marketplace/search/?query={quote_plus(q)}"
+        ),
     ),
     MarketplaceConfig(
         key="ebay",
@@ -80,7 +91,9 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
             "Global auction + fixed-price marketplace; strong for electronics, "
             "collectibles, hobbyist gear. Ships internationally."
         ),
-        home_url="https://www.ebay.ca",
+        build_search_url=lambda q: (
+            f"https://www.ebay.ca/sch/i.html?_nkw={quote_plus(q)}"
+        ),
     ),
     MarketplaceConfig(
         key="craigslist",
@@ -89,7 +102,9 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
             "US-focused classifieds; strong for furniture, vehicles, tools, "
             "housing. Local pickup only. Best in major metro areas."
         ),
-        home_url="https://toronto.craigslist.org",
+        build_search_url=lambda q: (
+            f"https://toronto.craigslist.org/search/sss?query={quote_plus(q)}"
+        ),
     ),
 ]
 
@@ -144,7 +159,7 @@ class MarketplaceRouter:
     async def route(
         self, query: str, spec: WatchlistContext,
     ) -> list[MarketplaceSearchTarget]:
-        """Pick marketplaces for the query; return (key, home_url) targets.
+        """Pick marketplaces for the query, build SERP URLs, return targets.
 
         Fallback on LLM failure: use all curated marketplaces (better wide
         coverage than dropping the query silently)."""
@@ -161,7 +176,7 @@ class MarketplaceRouter:
                 "MarketplaceRouter: LLM failed for %r; using all curated: %s",
                 query, exc,
             )
-            return self._all_targets()
+            return self._all_targets(query)
 
         try:
             data = json.loads(response.content)
@@ -171,7 +186,7 @@ class MarketplaceRouter:
                 "MarketplaceRouter: parse failed for %r; using all curated: %s",
                 query, exc,
             )
-            return self._all_targets()
+            return self._all_targets(query)
 
         targets: list[MarketplaceSearchTarget] = []
         seen: set[str] = set()
@@ -185,17 +200,17 @@ class MarketplaceRouter:
             seen.add(key)
             targets.append(MarketplaceSearchTarget(
                 marketplace=config.key,
-                entry_url=config.home_url,
+                entry_url=config.build_search_url(query),
             ))
 
         if not targets:
-            return self._all_targets()
+            return self._all_targets(query)
         return targets
 
-    def _all_targets(self) -> list[MarketplaceSearchTarget]:
+    def _all_targets(self, query: str) -> list[MarketplaceSearchTarget]:
         return [
             MarketplaceSearchTarget(
-                marketplace=m.key, entry_url=m.home_url,
+                marketplace=m.key, entry_url=m.build_search_url(query),
             )
             for m in self.marketplaces
         ]

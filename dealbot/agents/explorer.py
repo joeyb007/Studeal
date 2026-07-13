@@ -343,12 +343,18 @@ async def _try_click(page: Page, role: str, name: str) -> str:
 
 
 async def _try_type(page: Page, role: str, name: str, text: str) -> str:
-    """Fill a textbox by role + accessible name, then press Enter to submit.
+    """Fill a textbox by role + accessible name, then aggressively submit.
+
+    Three fallback layers because marketplace search UIs are inconsistent:
+        1. `locator.press("Enter")` — works on plain HTML forms.
+        2. `form.submit()` via JS — works when Enter is JS-intercepted but
+           the form has a native submit handler.
+        3. Click a nearby "Search"/"Go"/"Find" button — works on fully
+           JS-driven search widgets (Kijiji, some FB flows).
 
     Substring match on `name` (search bars vary in labelling: 'Search',
-    'Search Kijiji', 'Search for products'). Pressing Enter after fill
-    submits the enclosing form — works on all marketplace search bars we
-    care about without needing a separate submit-button click.
+    'Search Kijiji', 'Search for products'). Reports URL delta so the LLM
+    can detect a failed submit and try a different approach.
     """
     if role not in ("textbox", "searchbox"):
         return f"type role={role!r} not supported; use 'textbox' or 'searchbox'."
@@ -357,20 +363,65 @@ async def _try_type(page: Page, role: str, name: str, text: str) -> str:
         locator = page.get_by_role(role, name=pattern)  # type: ignore[arg-type]
         count = await locator.count()
         if count == 0:
-            return (
-                f"No {role} with accessible name matching {name!r} found."
-            )
+            return f"No {role} with accessible name matching {name!r} found."
         first = locator.first
+        url_before = page.url
         await first.click(timeout=3000)
         await first.fill(text, timeout=3000)
+
+        # Layer 1: press Enter
         await first.press("Enter", timeout=3000)
+        if await _wait_for_navigation(page, url_before, timeout_ms=3000):
+            return f"Typed {text!r}; Enter submitted, now at {page.url}"
+
+        # Layer 2: submit the enclosing form via JS
         try:
-            await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+            submitted = await first.evaluate(
+                "el => { const f = el.closest('form'); "
+                "if (f) { f.submit(); return true; } return false; }"
+            )
+            if submitted and await _wait_for_navigation(page, url_before, timeout_ms=3000):
+                return f"Typed {text!r}; form.submit() submitted, now at {page.url}"
         except Exception:
             pass
-        return f"Typed {text!r} into {role} matching {name!r} and pressed Enter."
+
+        # Layer 3: click a nearby search button
+        for btn_name in ("Search", "Go", "Find", "Submit"):
+            try:
+                btn = page.get_by_role(
+                    "button",
+                    name=re.compile(rf"\b{re.escape(btn_name)}\b", re.IGNORECASE),
+                )
+                if await btn.count() == 0:
+                    continue
+                await btn.first.click(timeout=2000)
+                if await _wait_for_navigation(page, url_before, timeout_ms=5000):
+                    return (
+                        f"Typed {text!r}; clicked {btn_name} button, now at {page.url}"
+                    )
+            except Exception:
+                continue
+
+        return (
+            f"Typed {text!r} but URL did not change from {url_before}. "
+            "The site may require a category selection first, or the search "
+            "UI is JS-only. Try navigate to a direct search URL instead."
+        )
     except Exception as exc:
         return f"Type failed: {type(exc).__name__}: {exc}"
+
+
+async def _wait_for_navigation(page: Page, url_before: str, timeout_ms: int) -> bool:
+    """Return True if URL changed from `url_before` within timeout_ms."""
+    try:
+        await page.wait_for_url(lambda u: u != url_before, timeout=timeout_ms)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------

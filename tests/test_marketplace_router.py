@@ -41,11 +41,11 @@ def _spec() -> WatchlistContext:
 # Two mocked marketplaces for controlled tests.
 _M_A = MarketplaceConfig(
     key="alpha", display_name="Alpha", description="fake alpha",
-    home_url="https://alpha.test",
+    build_search_url=lambda q: f"https://alpha.test/search?q={q}",
 )
 _M_B = MarketplaceConfig(
     key="beta", display_name="Beta", description="fake beta",
-    home_url="https://beta.test",
+    build_search_url=lambda q: f"https://beta.test/search?q={q}",
 )
 
 
@@ -61,7 +61,7 @@ async def test_routes_to_llm_picked_subset():
 
     assert len(targets) == 1
     assert targets[0].marketplace == "alpha"
-    assert targets[0].entry_url == "https://alpha.test"
+    assert targets[0].entry_url == "https://alpha.test/search?q=aeron chair"
 
 
 @pytest.mark.asyncio
@@ -120,8 +120,10 @@ def test_curated_marketplaces_have_unique_keys():
     assert len(keys) == len(set(keys)), f"duplicate keys: {keys}"
 
 
-def test_curated_home_urls_are_https():
+def test_curated_search_urls_are_https_and_contain_query():
     for m in CURATED_MARKETPLACES:
-        assert m.home_url.startswith("https://"), (
-            f"{m.key}: home_url must be https:// got {m.home_url!r}"
+        url = m.build_search_url("herman miller aeron")
+        assert url.startswith("https://"), f"{m.key}: search URL must be https:// got {url!r}"
+        assert "herman" in url.lower() or "aeron" in url.lower(), (
+            f"{m.key}: search URL should contain query terms, got {url!r}"
         )

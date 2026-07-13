@@ -25,6 +25,7 @@ from dealbot.agents.query_generator import QueryGenerator
 from dealbot.agents.workers.extractor import Extractor, Offer
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
+from dealbot.llm.openai_client import OpenAIClient
 from dealbot.schemas import WatchlistContext
 from dealbot.scrapers.browser_session import (
     BrowserSession,
@@ -43,6 +44,10 @@ _GROQ_70B = "llama-3.3-70b-versatile"
 # ---------------------------------------------------------------------------
 
 def build_llm_from_env() -> LLMClient:
+    """Prefer OpenAI when OPENAI_API_KEY is set (better paid-tier RPM);
+    fall back to Groq (free tier, tight limits)."""
+    if os.environ.get("OPENAI_API_KEY"):
+        return OpenAIClient(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     return GroqClient(model=_GROQ_70B)
 
 

@@ -167,7 +167,12 @@ class LocalPlaywrightSession(BrowserSession):
     async def __aenter__(self) -> "LocalPlaywrightSession":
         self._pw_context = async_playwright()
         pw = await self._pw_context.__aenter__()
-        self._browser = await pw.chromium.launch(headless=self._headless)
+        # STUDEAL_HEADED=1 overrides constructor default — lets you watch
+        # the browser drive in real time without touching composition.
+        headless = self._headless
+        if os.environ.get("STUDEAL_HEADED") == "1":
+            headless = False
+        self._browser = await pw.chromium.launch(headless=headless)
         ctx_kwargs = {}
         if self._storage_state:
             from pathlib import Path

@@ -54,7 +54,15 @@ def build_llm_from_env() -> LLMClient:
 def build_session_from_env() -> BrowserSession:
     backend = os.environ.get("AGENT_BROWSER_BACKEND", "browserbase").lower()
     if backend == "local":
-        return LocalPlaywrightSession()
+        # FB Marketplace requires an authenticated session. If FB_STATE_PATH
+        # is set and the file exists, load it — otherwise the session runs
+        # without auth and any FB run will hit the login wall.
+        storage_state = os.environ.get("FB_STATE_PATH")
+        if storage_state:
+            from pathlib import Path
+            if not Path(storage_state).exists():
+                storage_state = None
+        return LocalPlaywrightSession(storage_state=storage_state)
     if backend == "browserbase":
         return BrowserbaseSession(proxies=True)
     raise ValueError(

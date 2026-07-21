@@ -364,7 +364,10 @@ class Explorer:
                     continue
                 result_msg, ok = await _do_click(session.page, session, snap, action.id)
                 failed_action_streak = 0 if ok else failed_action_streak + 1
-                pagination_attempts += 1
+                # Only successful clicks count toward the done-coverage gate —
+                # failed clicks never touched the page, so they aren't coverage.
+                if ok:
+                    pagination_attempts += 1
                 messages.append({"role": "user", "content": result_msg})
                 continue
 

@@ -1,7 +1,9 @@
 """Composition root for the v14 hunt pipeline.
 
 Single entry point — `run_hunt(spec)` — that:
-    1. Builds an LLM client (Groq Llama 3.3 70B).
+    1. Builds two LLM clients — nav (AGENT_NAV_MODEL, default gpt-4o) for
+       Explorer/MarketplaceRouter, extract (OPENAI_MODEL, default
+       gpt-4o-mini) for Extractor/QueryGenerator; Groq fallback for both.
     2. Generates N distinct query phrasings via QueryGenerator (P1).
     3. Routes each query to a subset of curated marketplaces via
        MarketplaceRouter (P2).
@@ -43,9 +45,15 @@ _GROQ_70B = "llama-3.3-70b-versatile"
 # Builders
 # ---------------------------------------------------------------------------
 
-def build_llm_from_env() -> LLMClient:
-    """Prefer OpenAI when OPENAI_API_KEY is set (better paid-tier RPM);
-    fall back to Groq (free tier, tight limits)."""
+def build_nav_llm() -> LLMClient:
+    """Navigator model — the capability-critical path. Frontier by default."""
+    if os.environ.get("OPENAI_API_KEY"):
+        return OpenAIClient(model=os.environ.get("AGENT_NAV_MODEL", "gpt-4o"))
+    return GroqClient(model=_GROQ_70B)
+
+
+def build_extract_llm() -> LLMClient:
+    """Extraction model — high-volume, structured output. Cheap by default."""
     if os.environ.get("OPENAI_API_KEY"):
         return OpenAIClient(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     return GroqClient(model=_GROQ_70B)
@@ -133,12 +141,13 @@ async def run_hunt(spec: WatchlistContext) -> list[Offer]:
     Explorer; all feed a shared ExtractorPool. Extraction happens in parallel
     with continued browsing, bounded by pool worker count.
     """
-    llm = build_llm_from_env()
-    extractor = Extractor(llm)
+    nav_llm = build_nav_llm()
+    extract_llm = build_extract_llm()
+    extractor = Extractor(extract_llm)
     pool = ExtractorPool(extractor, num_workers=3)
-    explorer = Explorer(llm)
-    router = MarketplaceRouter(llm)
-    query_gen = QueryGenerator(llm)
+    explorer = Explorer(nav_llm)
+    router = MarketplaceRouter(nav_llm)
+    query_gen = QueryGenerator(extract_llm)
 
     queries = await query_gen.generate(spec)
     logger.info("run_hunt: generated %d queries: %s", len(queries), queries)

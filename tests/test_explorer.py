@@ -221,7 +221,7 @@ async def test_max_turns_or_loop_when_llm_never_done():
             sink=sink,
         )
 
-    assert result.stop_reason in ("max_turns", "loop")
+    assert result.stop_reason in ("max_turns", "stalled")
     assert any(snap.url == "https://mock.local/home" for snap, _ in collected)
 
 
@@ -245,3 +245,51 @@ async def test_invalid_action_json_does_not_crash():
 
     assert result.stop_reason == "done"
     assert len(collected) == 1
+
+
+@pytest.mark.asyncio
+async def test_scroll_with_new_content_does_not_stall():
+    """Infinite-scroll page: scrolling reveals new content -> no stall stop.
+
+    Regression test for the v13 infinite-scroll false-positive: URL never
+    changes, but content does, so the explorer must keep going until the
+    LLM says done."""
+    html = """<html><body>
+      <div style="height:2000px">listing block one</div>
+      <div style="height:2000px">listing block two</div>
+      <div style="height:2000px">listing block three</div>
+      </body></html>"""
+    llm = _MockLLM([
+        {"action": "scroll"},
+        {"action": "scroll"},
+        {"action": "scroll"},
+        {"action": "done", "reason": "no_results after full scroll"},
+    ])
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://example.test/serp", html)
+        sink, seen = await _sink_collector()
+        result = await Explorer(llm).explore(
+            entry_url="https://example.test/serp",
+            marketplace="test", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+    assert result.stop_reason == "done"
+
+
+@pytest.mark.asyncio
+async def test_four_no_effect_actions_stops_stalled():
+    """Actions that change nothing (URL, scroll, content all static)
+    must hard-stop with 'stalled' after STALL_THRESHOLD consecutive."""
+    html = "<html><body><p>static page, nothing to click</p></body></html>"
+    # Clicking a nonexistent id changes nothing, 4x in a row.
+    llm = _MockLLM([{"action": "click", "id": 99999}] * 6)
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://example.test/static", html)
+        sink, seen = await _sink_collector()
+        result = await Explorer(llm).explore(
+            entry_url="https://example.test/static",
+            marketplace="test", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+    assert result.stop_reason == "stalled"
+    assert result.turns_used < Explorer.MAX_TURNS

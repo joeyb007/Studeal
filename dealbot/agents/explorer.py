@@ -21,7 +21,8 @@ Contract:
       previous URL's final snapshot is submitted to the sink. At end of
       loop, the current URL's final snapshot is submitted.
     - Bounded: MAX_TURNS caps the loop.
-    - Loop detection: N consecutive identical snapshots → stop early.
+    - Stall detection: STALL_THRESHOLD consecutive actions with no visible
+      effect (URL, scroll position, and page text all unchanged) → stop early.
     - Zero per-site adapter code. Everything (search bar location,
       pagination controls, etc.) is discovered via accessibility roles.
 
@@ -59,7 +60,7 @@ logger = logging.getLogger(__name__)
 class ExplorerResult:
     urls_visited: list[str] = field(default_factory=list)  # deduped, insertion order
     turns_used: int = 0
-    stop_reason: str = "done"        # "done" | "max_turns" | "loop" | "error"
+    stop_reason: str = "done"        # "done" | "max_turns" | "stalled" | "error"
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,7 @@ Standard flow:
 
 class Explorer:
     MAX_TURNS: int = 20
-    LOOP_DETECT_THRESHOLD: int = 3   # N consecutive identical snapshots → stop
+    STALL_THRESHOLD: int = 4   # N consecutive no-effect actions → stop
 
     def __init__(self, llm: LLMClient) -> None:
         self.llm = llm
@@ -170,7 +171,8 @@ class Explorer:
         seen_url_set: set[str] = set()
         prev_url: str | None = None
         prev_snap: PageSnapshot | None = None
-        recent_keys: list[tuple] = []
+        prev_key: tuple | None = None
+        no_effect_streak: int = 0
 
         for turn in range(self.MAX_TURNS):
             snap = await snapshot_page(session.page)
@@ -185,20 +187,26 @@ class Explorer:
                 seen_url_set.add(snap.url)
                 seen_urls.append(snap.url)
 
-            # Loop detection.
-            key = _snapshot_key(snap)
-            if recent_keys and recent_keys[-1] == key:
-                recent_keys.append(key)
-                if len(recent_keys) >= self.LOOP_DETECT_THRESHOLD:
+            # Stall detection: if URL, scroll position, and recent page text
+            # are all unchanged, increment the no-effect streak.
+            try:
+                scroll_y = int(await session.page.evaluate("() => window.scrollY"))
+            except Exception:
+                scroll_y = 0
+            key = _stall_key(snap, scroll_y)
+            if prev_key is not None and key == prev_key:
+                no_effect_streak += 1
+                if no_effect_streak >= self.STALL_THRESHOLD:
                     if snap.url:
                         await sink(snap, marketplace)
                     return ExplorerResult(
                         urls_visited=seen_urls,
                         turns_used=turn,
-                        stop_reason="loop",
+                        stop_reason="stalled",
                     )
             else:
-                recent_keys = [key]
+                no_effect_streak = 0
+            prev_key = key
 
             prev_url = snap.url
             prev_snap = snap
@@ -207,6 +215,7 @@ class Explorer:
             messages.append({"role": "user", "content": _turn_prompt(
                 snap=snap, turn=turn, max_turns=self.MAX_TURNS,
                 urls_visited=seen_urls, query=query,
+                no_effect_streak=no_effect_streak,
             )})
 
             # LLM emits an action.
@@ -447,6 +456,7 @@ def _turn_prompt(
     max_turns: int,
     urls_visited: list[str],
     query: str,
+    no_effect_streak: int = 0,
 ) -> str:
     text = snap.text if len(snap.text) <= 18000 else snap.text[:18000] + "\n[...truncated]"
     visited_block = (
@@ -457,12 +467,19 @@ def _turn_prompt(
         "\n⚠ CAPTCHA / bot-challenge detected. Call done with reason='captcha'.\n"
         if snap.captcha_detected else ""
     )
+    stall_block = (
+        f"\n⚠ Your last {no_effect_streak} action(s) had no visible effect "
+        f"(page unchanged). {Explorer.STALL_THRESHOLD - no_effect_streak} more "
+        "and the run is stopped. Try a different action.\n"
+        if no_effect_streak > 0 else ""
+    )
     return (
         f"Turn {turn + 1}/{max_turns}.\n"
         f"Query to search for: {query!r}\n"
         f"Current URL: {snap.url}\n"
         f"Recently visited URLs (unique):\n{visited_block}\n"
         f"{captcha_block}"
+        f"{stall_block}"
         f"\nPage snapshot:\n{text}\n\n"
         "Emit the next action as JSON."
     )
@@ -483,9 +500,8 @@ def _parse_action(content: str) -> tuple[_ActionJSON | None, str | None]:
         return None, f"validation: {exc.errors()[:1]}"
 
 
-def _snapshot_key(snap: PageSnapshot) -> tuple:
-    ids = sorted(snap.element_map.keys())[:50]
-    return (snap.url, tuple(ids))
+def _stall_key(snap: PageSnapshot, scroll_y: int) -> tuple:
+    return (snap.url, scroll_y, hash(snap.text[-2000:]))
 
 
 def _trim_ephemeral(

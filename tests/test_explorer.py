@@ -7,10 +7,11 @@ mocked LLM with pre-queued action responses.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
-from dealbot.agents.explorer import Explorer, ExplorerResult
+from dealbot.agents.explorer import Explorer, ExplorerResult, _redact_images
 from dealbot.agents.perception import PageSnapshot
 from dealbot.schemas import WatchlistContext
 from dealbot.scrapers.browser_session import LocalPlaywrightSession
@@ -47,12 +48,40 @@ class _MockLLM:
     def __init__(self, actions: list[dict]) -> None:
         self._responses = [json.dumps(a) for a in actions]
         self.calls = 0
+        self.supports_vision = False
 
     async def complete(self, messages, response_format=None, **kwargs):
         self.calls += 1
         if self._responses:
             return _MockResponse(self._responses.pop(0))
         return _MockResponse(json.dumps({"action": "done", "reason": "test-fallback"}))
+
+
+def _id_for(turn_prompt: str, label: str) -> int:
+    """Extract the [id] of the element whose accessible name is `label`
+    from a snapshot block like: [43]<a href="..." /> "Next"."""
+    m = re.search(rf'\[(\d+)\]<[^>]*>[^"\n]*"{re.escape(label)}"', turn_prompt)
+    assert m, f"no element labeled {label!r} in prompt"
+    return int(m.group(1))
+
+
+class _DynamicLLM:
+    """Like _MockLLM, but entries may be callables(last_user_text) -> dict,
+    so scripted actions can reference element ids discovered at runtime."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = 0
+
+    async def complete(self, messages, response_format=None, **kwargs):
+        entry = self.script[min(self.calls, len(self.script) - 1)]
+        self.calls += 1
+        last_user = next(
+            m["content"] for m in reversed(messages)
+            if m["role"] == "user" and isinstance(m["content"], str)
+        )
+        action = entry(last_user) if callable(entry) else entry
+        return _MockResponse(json.dumps(action))
 
 
 def _spec() -> WatchlistContext:
@@ -143,9 +172,9 @@ async def test_done_immediately_enqueues_entry_snap():
 @pytest.mark.asyncio
 async def test_type_submits_form_and_navigates_to_serp():
     """LLM types 'aeron' into search bar; form submits; URL becomes /search?q=..."""
-    llm = _MockLLM([
-        {"action": "type", "role": "textbox", "name": "Search", "text": "aeron"},
-        {"action": "done", "reason": "search executed"},
+    llm = _DynamicLLM([
+        lambda p: {"action": "type", "id": _id_for(p, "Search"), "text": "aeron"},
+        {"action": "done", "reason": "no_results"},
     ])
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
@@ -178,9 +207,9 @@ async def test_type_submits_form_and_navigates_to_serp():
 @pytest.mark.asyncio
 async def test_click_next_transitions_url_and_enqueues_both():
     """LLM: click Next → done. Sink receives entry snap + destination snap."""
-    llm = _MockLLM([
-        {"action": "click", "role": "link", "name": "Next"},
-        {"action": "done", "reason": "paginated"},
+    llm = _DynamicLLM([
+        lambda p: {"action": "click", "id": _id_for(p, "Next")},
+        {"action": "done", "reason": "no_results"},
     ])
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
@@ -331,3 +360,95 @@ async def test_exempt_done_reason_accepted_immediately():
         )
     assert result.stop_reason == "done"
     assert result.turns_used == 1
+
+
+@pytest.mark.asyncio
+async def test_explorer_writes_trace(tmp_path):
+    from dealbot.agents.tracing import FilesystemTraceWriter
+    html = "<html><body><p>page</p></body></html>"
+    llm = _MockLLM([{"action": "done", "reason": "no_results"}])
+    trace = FilesystemTraceWriter(tmp_path / "run1")
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://example.test/x", html)
+        sink, seen = await _sink_collector()
+        await Explorer(llm, trace=trace).explore(
+            entry_url="https://example.test/x",
+            marketplace="test", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+    trace.finalize()
+    assert (tmp_path / "run1" / "trace.jsonl").exists()
+    assert (tmp_path / "run1" / "trace.jsonl").read_text().strip()
+
+
+@pytest.mark.asyncio
+async def test_vision_fallback_after_two_failed_actions():
+    """Two consecutive failed actions on a vision-capable LLM -> the next
+    turn's user message is multimodal (text + screenshot)."""
+    html = "<html><body><p>page</p></body></html>"
+    llm = _MockLLM([
+        {"action": "click", "id": 99999},   # fails: id not in snapshot
+        {"action": "click", "id": 99998},   # fails again
+        {"action": "done", "reason": "no_results"},
+    ])
+    llm.supports_vision = True
+    captured: list = []
+    original = llm.complete
+
+    async def capturing(messages, **kw):
+        captured.append([dict(m) for m in messages])
+        return await original(messages, **kw)
+    llm.complete = capturing
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://example.test/x", html)
+        sink, seen = await _sink_collector()
+        await Explorer(llm).explore(
+            entry_url="https://example.test/x",
+            marketplace="test", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+    third_turn_msgs = captured[2]
+    last_user = next(m for m in reversed(third_turn_msgs) if m["role"] == "user")
+    assert isinstance(last_user["content"], list)
+    assert any(b.get("type") == "image_url" for b in last_user["content"])
+
+
+def test_trace_prompt_redacts_screenshots():
+    """_redact_images replaces image_url blocks in copies, leaving originals intact."""
+    fake_data_url = "data:image/png;base64," + "A" * 100
+    messages = [
+        {"role": "user", "content": "plain string message"},
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe this"},
+            {"type": "image_url", "image_url": {"url": fake_data_url}},
+        ]},
+    ]
+
+    redacted = _redact_images(messages)
+
+    # (a) returned multimodal content has no image_url type blocks
+    multimodal_out = redacted[1]["content"]
+    assert isinstance(multimodal_out, list)
+    assert not any(b.get("type") == "image_url" for b in multimodal_out), (
+        "image_url block must be replaced in the redacted copy"
+    )
+    replacement = next(b for b in multimodal_out if b.get("type") == "text" and "omitted" in b.get("text", ""))
+    assert str(len(fake_data_url)) in replacement["text"], (
+        "replacement text must include the char count of the original data URL"
+    )
+
+    # (b) original messages list still contains the image_url block untouched
+    orig_content = messages[1]["content"]
+    assert any(b.get("type") == "image_url" for b in orig_content), (
+        "_redact_images must not mutate the original messages"
+    )
+    assert orig_content[1]["image_url"]["url"] == fake_data_url, (
+        "original image_url data must be preserved unchanged"
+    )
+
+    # (c) string-content message passes through identically
+    assert redacted[0] is messages[0] or redacted[0] == messages[0], (
+        "string-content messages should pass through unchanged"
+    )
+    assert redacted[0]["content"] == "plain string message"

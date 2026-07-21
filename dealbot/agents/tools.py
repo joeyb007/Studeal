@@ -217,7 +217,7 @@ def _domain_of(url: str) -> str:
 # Snapshot diff
 # ---------------------------------------------------------------------------
 
-async def _try_cdp_native_click(page: Page, backend_node_id: int) -> bool:
+async def try_cdp_native_click(page: Page, backend_node_id: int) -> bool:
     """Attempt a CDP-native click via DOM.scrollIntoViewIfNeeded + fresh box
     model + Input.dispatchMouseEvent.
 
@@ -385,7 +385,7 @@ class ClickTool(BrowserTool):
         # coordinates + dispatches real mouse events. Falls back to pixel
         # mouse click on the snapshot bbox if CDP isn't available (e.g. in
         # unit-test mocks) or any CDP step fails.
-        clicked = await _try_cdp_native_click(ctx.page, elem.backend_node_id)
+        clicked = await try_cdp_native_click(ctx.page, elem.backend_node_id)
         if not clicked:
             if elem.bbox is None:
                 return ActionResult(success=False, error=ActionError(

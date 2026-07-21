@@ -12,19 +12,20 @@
 
 Contract:
     - Tool set: navigate, click, type, scroll, done.
-        - `type` fills a role-based textbox and presses Enter (submits
-          the surrounding form). Used to drive the marketplace's own
-          search UI from the home page.
-        - `click` uses Playwright's get_by_role(role, name=...) with a
-          case-insensitive word-boundary match on the accessible name.
+        - `click` / `type` act on element ids from the perception
+          snapshot's [id] brackets, resolved via element_map →
+          CDP-native click (bbox fallback). No role/name matching.
+        - `type` clicks the element, types the text, presses Enter.
     - Auto-enqueue: when the URL changes since the previous turn, the
       previous URL's final snapshot is submitted to the sink. At end of
       loop, the current URL's final snapshot is submitted.
     - Bounded: MAX_TURNS caps the loop.
     - Stall detection: STALL_THRESHOLD consecutive actions with no visible
       effect (URL, scroll position, and page text all unchanged) → stop early.
+    - Coverage-enforced done: low-coverage done calls are nudged (max
+      MAX_NUDGES) unless the reason is captcha / auth_wall / no_results.
     - Zero per-site adapter code. Everything (search bar location,
-      pagination controls, etc.) is discovered via accessibility roles.
+      pagination controls, etc.) is discovered via the AX-tree snapshot.
 
 Rationale: solves the v13 context-rot bug by removing extraction from
 the ReAct context. Explorer's context is small (nav decisions only),
@@ -35,9 +36,9 @@ adapter (URL templates).
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -45,6 +46,8 @@ from playwright.async_api import Page
 from pydantic import BaseModel, ValidationError
 
 from dealbot.agents.perception import PageSnapshot, snapshot_page
+from dealbot.agents.tools import try_cdp_native_click
+from dealbot.agents.tracing import NullTraceWriter, TraceWriter
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import WatchlistContext
 from dealbot.scrapers.browser_session import BrowserSession
@@ -78,9 +81,8 @@ Sink = Callable[[PageSnapshot, str], Awaitable[None]]
 class _ActionJSON(BaseModel):
     action: str
     url: str | None = None            # navigate
-    role: str | None = None           # click / type ("link" | "button" | "textbox" | "searchbox")
-    name: str | None = None           # click / type accessible-name
-    text: str | None = None           # type — the text to fill
+    id: int | None = None             # click / type — element id from snapshot
+    text: str | None = None           # type
     reason: str | None = None         # done
 
 
@@ -94,39 +96,37 @@ pages for a user's query, then stop. You do NOT extract listings — a separate
 worker handles that downstream by processing every page snapshot you leave
 behind.
 
-Your goal is COVERAGE: land on as many distinct SERP URLs as possible.
+Your goal is COVERAGE: land on as many distinct search-result URLs as possible.
+
+The page snapshot shows interactive elements in [id] brackets, e.g.:
+  [43]<a href="..." /> "Next"
+  [17]<input type="text" /> "Search Kijiji"
+Act on elements by their id. Ids change every turn — always use ids from the
+CURRENT snapshot.
 
 Tools (emit ONE per turn as JSON):
-  {"action":"type","role":"textbox","name":"Search","text":"<query>"}
-      Fill a search-bar textbox with the query and press Enter. Used at the
-      start of exploration to submit the query via the site's own search UI.
-      The 'name' field is a case-insensitive substring match against the
-      textbox's accessible name — passing "Search" catches "Search Kijiji",
-      "Search for products", etc.
-  {"action":"click","role":"link","name":"Next"}
-      Click a control identified by its accessibility role + accessible name.
-      Common patterns: role="link" name="Next" or "Next Page", role="button"
-      name="Load more" or ">" or "→". Word-boundary case-insensitive match.
+  {"action":"type","id":17,"text":"<query>"}
+      Click element 17, type the text, press Enter. Use on the search box.
+  {"action":"click","id":43}
+      Click element 43. Use for "Next"/">" pagination links, "Load more"
+      buttons, or dismissing cookie/consent banners.
   {"action":"scroll"}
-      Scroll down one viewport. Use to reveal below-fold content on
-      infinite-scroll marketplaces, or to see the pagination controls at
-      the bottom of a SERP.
+      Scroll down one viewport — reveals below-fold results on infinite-scroll
+      sites and pagination controls at the bottom of result pages.
   {"action":"navigate","url":"https://..."}
-      Navigate directly to a URL. Rarely needed since you drive the site's
-      own UI. Reserve for edge cases (following a specific category link).
+      Go directly to a URL. Rare — prefer driving the site's own UI.
   {"action":"done","reason":"..."}
-      Stop exploring. Use when: pagination exhausted, page shows no listings,
-      or you've hit a CAPTCHA / auth wall.
-      Premature done calls are rejected — cover multiple result pages before stopping unless you hit a captcha, auth wall, or no_results.
+      Stop. Premature done calls are rejected — cover multiple result pages
+      before stopping unless you hit a captcha, auth wall, or no_results
+      (say which in your reason).
 
 Standard flow:
   1. You land on the marketplace home page.
-  2. Turn 1: type the query into the search bar (this submits the form and
-     navigates to the SERP).
-  3. Subsequent turns: scroll to reveal pagination controls, click "Next" /
-     ">" style controls to walk through result pages.
-  4. Do NOT click into individual listing cards — those become detail pages,
-     which the extractor doesn't need.
+  2. Turn 1: type the query into the search box (submits and navigates to
+     results). Dismiss any cookie/consent banner first if one is shown.
+  3. Then: scroll to reveal pagination, click next-page controls to walk
+     through result pages.
+  4. Do NOT click into individual listing cards.
   5. Do NOT revisit URLs you've already landed on.
   6. When you've paginated the current query fully, call done."""
 
@@ -146,8 +146,9 @@ class Explorer:
     MIN_PAGINATION_ATTEMPTS: int = 3  # minimum scroll/click actions before done is accepted
     MAX_NUDGES: int = 2        # maximum rejection nudges before accepting done unconditionally
 
-    def __init__(self, llm: LLMClient) -> None:
+    def __init__(self, llm: LLMClient, trace: TraceWriter | None = None) -> None:
         self.llm = llm
+        self.trace = trace or NullTraceWriter()
 
     async def explore(
         self,
@@ -165,6 +166,7 @@ class Explorer:
             )
         except Exception as exc:
             logger.warning("Explorer: initial goto failed for %r: %s", entry_url, exc)
+            self.trace.record_error(orchestrator_turn=0, worker="explorer", error=str(exc)[:300])
             return ExplorerResult(
                 urls_visited=[], turns_used=0, stop_reason="error",
             )
@@ -183,6 +185,7 @@ class Explorer:
         no_effect_streak: int = 0
         pagination_attempts: int = 0   # scroll + click actions dispatched
         nudges_used: int = 0           # coverage-rejection nudges sent to LLM
+        failed_action_streak: int = 0  # consecutive click/type failures
 
         for turn in range(self.MAX_TURNS):
             snap = await snapshot_page(session.page)
@@ -222,11 +225,40 @@ class Explorer:
             prev_snap = snap
 
             # Build per-turn prompt with current snapshot state.
-            messages.append({"role": "user", "content": _turn_prompt(
+            turn_text = _turn_prompt(
                 snap=snap, turn=turn, max_turns=self.MAX_TURNS,
                 urls_visited=seen_urls, query=query,
                 no_effect_streak=no_effect_streak,
-            )})
+            )
+            want_vision = (
+                getattr(self.llm, "supports_vision", False)
+                and (failed_action_streak >= 2 or snap.captcha_detected)
+            )
+            if want_vision:
+                try:
+                    png = await session.page.screenshot()
+                except Exception:
+                    png = None
+                if png:
+                    self.trace.record_screenshot(
+                        orchestrator_turn=0, sub_turn=turn,
+                        label="vision_fallback", png_bytes=png,
+                    )
+                    messages.append({"role": "user", "content": [
+                        {"type": "text", "text": turn_text},
+                        {"type": "image_url", "image_url": {"url":
+                            "data:image/png;base64,"
+                            + base64.b64encode(png).decode()}},
+                    ]})
+                else:
+                    messages.append({"role": "user", "content": turn_text})
+            else:
+                messages.append({"role": "user", "content": turn_text})
+
+            # Capture the conversation sent to the LLM before calling it,
+            # redacting inline base64 images to avoid duplicating PNG data already
+            # saved via record_screenshot.
+            prompt_snapshot = _redact_images(messages)
 
             # LLM emits an action.
             try:
@@ -235,6 +267,7 @@ class Explorer:
                 )
             except Exception as exc:
                 logger.warning("Explorer: LLM call failed on turn %d: %s", turn, exc)
+                self.trace.record_error(orchestrator_turn=0, worker="explorer", error=str(exc)[:300])
                 if prev_snap and prev_snap.url:
                     await sink(prev_snap, marketplace)
                 return ExplorerResult(
@@ -245,6 +278,17 @@ class Explorer:
 
             messages.append({"role": "assistant", "content": response.content})
             messages = _trim_ephemeral(messages)
+            self.trace.record_page_reader_turn(
+                orchestrator_turn=0,
+                sub_turn=turn,
+                url=snap.url,
+                snapshot_text=snap.text,
+                element_map_size=len(snap.element_map),
+                prompt=prompt_snapshot,
+                response_content=response.content,
+                action_summary=response.content[:200] if response.content else "",
+                result_summary="",
+            )
 
             action, err = _parse_action(response.content)
             if err is not None:
@@ -263,6 +307,9 @@ class Explorer:
                     or pagination_attempts >= self.MIN_PAGINATION_ATTEMPTS
                 )
                 if not exempt and not enough and nudges_used < self.MAX_NUDGES:
+                    # Nudge turns dispatch no action, so they count toward the
+                    # stall streak — MAX_NUDGES must stay < STALL_THRESHOLD - 1
+                    # or an all-nudge session would stall-exit before accepting.
                     nudges_used += 1
                     messages.append({"role": "user", "content": (
                         "Coverage is too low to stop: you have visited "
@@ -311,27 +358,25 @@ class Explorer:
                 continue
 
             if action_type == "click":
-                if not action.role or not action.name:
-                    messages.append({"role": "user", "content": (
-                        "click requires 'role' and 'name'. Re-emit."
-                    )})
+                if action.id is None:
+                    messages.append({"role": "user", "content":
+                        "click requires 'id' (an [id] from the snapshot). Re-emit."})
                     continue
-                result_msg = await _try_click(
-                    session.page, action.role, action.name,
-                )
+                result_msg, ok = await _do_click(session.page, session, snap, action.id)
+                failed_action_streak = 0 if ok else failed_action_streak + 1
                 pagination_attempts += 1
                 messages.append({"role": "user", "content": result_msg})
                 continue
 
             if action_type == "type":
-                if not action.role or not action.name or action.text is None:
-                    messages.append({"role": "user", "content": (
-                        "type requires 'role', 'name', and 'text'. Re-emit."
-                    )})
+                if action.id is None or action.text is None:
+                    messages.append({"role": "user", "content":
+                        "type requires 'id' and 'text'. Re-emit."})
                     continue
-                result_msg = await _try_type(
-                    session.page, action.role, action.name, action.text,
+                result_msg, ok = await _do_type(
+                    session.page, session, snap, action.id, action.text,
                 )
+                failed_action_streak = 0 if ok else failed_action_streak + 1
                 messages.append({"role": "user", "content": result_msg})
                 continue
 
@@ -355,111 +400,67 @@ class Explorer:
 # Interaction helpers
 # ---------------------------------------------------------------------------
 
-async def _try_click(page: Page, role: str, name: str) -> str:
-    """Click by role + accessible name. Word-boundary case-insensitive match
-    on `name` — 'Next' matches 'Next Page' but not 'Nexus'."""
-    if role not in ("link", "button"):
-        return f"click role={role!r} not supported; use 'link' or 'button'."
-    try:
-        pattern = re.compile(
-            rf"\b{re.escape(name.strip())}\b", re.IGNORECASE,
-        )
-        locator = page.get_by_role(role, name=pattern)  # type: ignore[arg-type]
-        count = await locator.count()
-        if count == 0:
-            return (
-                f"No {role} with accessible name matching {name!r} found."
-            )
-        await locator.first.click(timeout=5000)
-        try:
-            await page.wait_for_load_state("domcontentloaded", timeout=10_000)
-        except Exception:
-            pass
-        return f"Clicked {role} {name!r}."
-    except Exception as exc:
-        return f"Click failed: {type(exc).__name__}: {exc}"
-
-
-async def _try_type(page: Page, role: str, name: str, text: str) -> str:
-    """Fill a textbox by role + accessible name, then aggressively submit.
-
-    Three fallback layers because marketplace search UIs are inconsistent:
-        1. `locator.press("Enter")` — works on plain HTML forms.
-        2. `form.submit()` via JS — works when Enter is JS-intercepted but
-           the form has a native submit handler.
-        3. Click a nearby "Search"/"Go"/"Find" button — works on fully
-           JS-driven search widgets (Kijiji, some FB flows).
-
-    Substring match on `name` (search bars vary in labelling: 'Search',
-    'Search Kijiji', 'Search for products'). Reports URL delta so the LLM
-    can detect a failed submit and try a different approach.
-    """
-    if role not in ("textbox", "searchbox"):
-        return f"type role={role!r} not supported; use 'textbox' or 'searchbox'."
-    try:
-        pattern = re.compile(re.escape(name.strip()), re.IGNORECASE)
-        locator = page.get_by_role(role, name=pattern)  # type: ignore[arg-type]
-        count = await locator.count()
-        if count == 0:
-            return f"No {role} with accessible name matching {name!r} found."
-        first = locator.first
-        url_before = page.url
-        await first.click(timeout=3000)
-        await first.fill(text, timeout=3000)
-
-        # Layer 1: press Enter
-        await first.press("Enter", timeout=3000)
-        if await _wait_for_navigation(page, url_before, timeout_ms=3000):
-            return f"Typed {text!r}; Enter submitted, now at {page.url}"
-
-        # Layer 2: submit the enclosing form via JS
-        try:
-            submitted = await first.evaluate(
-                "el => { const f = el.closest('form'); "
-                "if (f) { f.submit(); return true; } return false; }"
-            )
-            if submitted and await _wait_for_navigation(page, url_before, timeout_ms=3000):
-                return f"Typed {text!r}; form.submit() submitted, now at {page.url}"
-        except Exception:
-            pass
-
-        # Layer 3: click a nearby search button
-        for btn_name in ("Search", "Go", "Find", "Submit"):
-            try:
-                btn = page.get_by_role(
-                    "button",
-                    name=re.compile(rf"\b{re.escape(btn_name)}\b", re.IGNORECASE),
-                )
-                if await btn.count() == 0:
-                    continue
-                await btn.first.click(timeout=2000)
-                if await _wait_for_navigation(page, url_before, timeout_ms=5000):
-                    return (
-                        f"Typed {text!r}; clicked {btn_name} button, now at {page.url}"
-                    )
-            except Exception:
-                continue
-
+async def _do_click(
+    page: Page, session: BrowserSession, snap: PageSnapshot, element_id: int,
+) -> tuple[str, bool]:
+    elem = snap.element_map.get(element_id)
+    if elem is None:
         return (
-            f"Typed {text!r} but URL did not change from {url_before}. "
-            "The site may require a category selection first, or the search "
-            "UI is JS-only. Try navigate to a direct search URL instead."
+            f"click: id {element_id} is not in the current snapshot. "
+            "Use an [id] shown in this turn's snapshot.", False,
         )
-    except Exception as exc:
-        return f"Type failed: {type(exc).__name__}: {exc}"
-
-
-async def _wait_for_navigation(page: Page, url_before: str, timeout_ms: int) -> bool:
-    """Return True if URL changed from `url_before` within timeout_ms."""
-    try:
-        await page.wait_for_url(lambda u: u != url_before, timeout=timeout_ms)
+    url_before = page.url
+    clicked = await try_cdp_native_click(page, elem.backend_node_id)
+    if not clicked:
+        if elem.bbox is None:
+            return (f"click: element [{element_id}] unreachable (no bbox).", False)
+        x, y, w, h = elem.bbox
         try:
-            await page.wait_for_load_state("domcontentloaded", timeout=5000)
-        except Exception:
-            pass
-        return True
+            await page.mouse.click(x + w / 2, y + h / 2)
+        except Exception as exc:
+            return (f"click failed: {type(exc).__name__}: {exc}", False)
+    try:
+        await session.watchdog.wait_for_settlement(
+            after_action="click", timeout_ms=5000,
+        )
     except Exception:
-        return False
+        pass
+    if page.url != url_before:
+        return (f"Clicked [{element_id}] {elem.name!r}; now at {page.url}", True)
+    return (f"Clicked [{element_id}] {elem.name!r}; URL unchanged.", True)
+
+
+async def _do_type(
+    page: Page, session: BrowserSession, snap: PageSnapshot,
+    element_id: int, text: str,
+) -> tuple[str, bool]:
+    elem = snap.element_map.get(element_id)
+    if elem is None or elem.bbox is None:
+        return (
+            f"type: id {element_id} is not in the current snapshot "
+            "(or has no position). Use an [id] from this turn's snapshot.", False,
+        )
+    x, y, w, h = elem.bbox
+    url_before = page.url
+    try:
+        await page.mouse.click(x + w / 2, y + h / 2)
+        await page.keyboard.type(text)
+        await page.keyboard.press("Enter")
+    except Exception as exc:
+        return (f"type failed: {type(exc).__name__}: {exc}", False)
+    try:
+        await session.watchdog.wait_for_settlement(
+            after_action="type", timeout_ms=5000,
+        )
+    except Exception:
+        pass
+    if page.url != url_before:
+        return (f"Typed {text!r}; submitted, now at {page.url}", True)
+    return (
+        f"Typed {text!r} but the URL did not change. If a search suggestion "
+        "dropdown appeared, click its first result; otherwise click the "
+        "site's search button by [id].", False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -529,8 +530,41 @@ def _parse_action(content: str) -> tuple[_ActionJSON | None, str | None]:
         return None, f"validation: {exc.errors()[:1]}"
 
 
+def _redact_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a copy of messages with base64 image_url blocks replaced by a text placeholder."""
+    result = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content = []
+            for block in content:
+                if block.get("type") == "image_url":
+                    data_url = (block.get("image_url") or {}).get("url", "")
+                    new_content.append({
+                        "type": "text",
+                        "text": f"<screenshot omitted from trace: {len(data_url)} chars base64>",
+                    })
+                else:
+                    new_content.append(block)
+            result.append({**msg, "content": new_content})
+        else:
+            result.append(msg)
+    return result
+
+
 def _stall_key(snap: PageSnapshot, scroll_y: int) -> tuple:
     return (snap.url, scroll_y, hash(snap.text[-2000:]))
+
+
+def _is_turn_message(m: dict[str, Any]) -> bool:
+    if m.get("role") != "user":
+        return False
+    content = m.get("content", "")
+    if isinstance(content, list):
+        content = next(
+            (b.get("text", "") for b in content if b.get("type") == "text"), "",
+        )
+    return str(content).startswith("Turn ")
 
 
 def _trim_ephemeral(
@@ -543,7 +577,7 @@ def _trim_ephemeral(
     tail = messages[2:]
     snapshot_indices = [
         i for i, m in enumerate(tail)
-        if m.get("role") == "user" and str(m.get("content", "")).startswith("Turn ")
+        if _is_turn_message(m)
     ]
     drop = set(snapshot_indices[:-keep_last_n]) if len(snapshot_indices) > keep_last_n else set()
     trimmed_tail = [m for i, m in enumerate(tail) if i not in drop]

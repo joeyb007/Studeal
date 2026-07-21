@@ -19,11 +19,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 
 from dealbot.agents.explorer import Explorer
 from dealbot.agents.extractor_pool import ExtractorPool
 from dealbot.agents.marketplace_router import MarketplaceRouter
 from dealbot.agents.query_generator import QueryGenerator
+from dealbot.agents.tracing import FilesystemTraceWriter, NullTraceWriter, TraceWriter
 from dealbot.agents.workers.extractor import Extractor, Offer
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
@@ -86,13 +88,14 @@ async def _run_one_query(
     query: str,
     spec: WatchlistContext,
     router: MarketplaceRouter,
-    explorer: Explorer,
+    nav_llm: LLMClient,
     pool: ExtractorPool,
 ) -> None:
     """Route the query, open a session, explore each marketplace sequentially.
 
     Sessions are per-query — one browser context per parallel worker. Within
     a session, marketplaces run sequentially (single browser, single tab).
+    Each query gets its own TraceWriter so traces are isolated per worker.
     """
     try:
         targets = await router.route(query, spec)
@@ -100,32 +103,52 @@ async def _run_one_query(
         logger.exception("_run_one_query: router failed for %r", query)
         return
 
+    trace_dir = os.environ.get("AGENT_TRACE_DIR")
+    if trace_dir:
+        from datetime import datetime, timezone
+        from pathlib import Path
+        slug = re.sub(r"[^a-z0-9]+", "-", query.lower())[:40]
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    else:
+        stamp = slug = None  # unused when trace_dir is None
+
     async def sink(snap, marketplace):
         await pool.submit(snap, marketplace, spec)
 
     try:
         async with build_session_from_env() as session:
             for target in targets:
+                if trace_dir:
+                    from pathlib import Path
+                    trace: TraceWriter = FilesystemTraceWriter(
+                        Path(trace_dir) / f"{stamp}_{slug}" / target.marketplace
+                    )
+                else:
+                    trace = NullTraceWriter()
+                explorer = Explorer(nav_llm, trace=trace)
                 try:
-                    result = await explorer.explore(
-                        entry_url=target.entry_url,
-                        marketplace=target.marketplace,
-                        query=query,
-                        spec=spec,
-                        session=session,
-                        sink=sink,
-                    )
-                    logger.info(
-                        "run_hunt[%s]: %s urls=%d turns=%d stop=%s",
-                        query, target.marketplace,
-                        len(result.urls_visited), result.turns_used,
-                        result.stop_reason,
-                    )
-                except Exception:
-                    logger.exception(
-                        "run_hunt[%s]: explorer failed on %s",
-                        query, target.marketplace,
-                    )
+                    try:
+                        result = await explorer.explore(
+                            entry_url=target.entry_url,
+                            marketplace=target.marketplace,
+                            query=query,
+                            spec=spec,
+                            session=session,
+                            sink=sink,
+                        )
+                        logger.info(
+                            "run_hunt[%s]: %s urls=%d turns=%d stop=%s",
+                            query, target.marketplace,
+                            len(result.urls_visited), result.turns_used,
+                            result.stop_reason,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "run_hunt[%s]: explorer failed on %s",
+                            query, target.marketplace,
+                        )
+                finally:
+                    trace.finalize()
     except Exception:
         logger.exception("_run_one_query: session setup failed for %r", query)
 
@@ -145,7 +168,6 @@ async def run_hunt(spec: WatchlistContext) -> list[Offer]:
     extract_llm = build_extract_llm()
     extractor = Extractor(extract_llm)
     pool = ExtractorPool(extractor, num_workers=3)
-    explorer = Explorer(nav_llm)
     router = MarketplaceRouter(nav_llm)
     query_gen = QueryGenerator(extract_llm)
 
@@ -155,9 +177,9 @@ async def run_hunt(spec: WatchlistContext) -> list[Offer]:
     await pool.start()
 
     # Fan out per-query workers. return_exceptions so one query failing doesn't
-    # kill the whole hunt.
+    # kill the whole hunt. Each worker builds its own Explorer + TraceWriter.
     await asyncio.gather(
-        *(_run_one_query(q, spec, router, explorer, pool) for q in queries),
+        *(_run_one_query(q, spec, router, nav_llm, pool) for q in queries),
         return_exceptions=True,
     )
 

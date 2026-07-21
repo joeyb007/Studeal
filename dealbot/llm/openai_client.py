@@ -24,6 +24,8 @@ _HTTP_TIMEOUT_S = 60.0  # bumped from 30s for large prompts
 class OpenAIClient(LLMClient):
     """OpenAI inference backend. Reliable tool calling, low cost."""
 
+    supports_vision = True
+
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         self.model = model or os.environ.get("OPENAI_MODEL", _DEFAULT_MODEL)
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")

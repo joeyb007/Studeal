@@ -20,6 +20,8 @@ class LLMResponse(BaseModel):
 class LLMClient(ABC):
     """Abstract base for all LLM backends."""
 
+    supports_vision: bool = False
+
     @abstractmethod
     async def complete(
         self,

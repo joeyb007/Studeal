@@ -44,14 +44,50 @@ _GROQ_70B = "llama-3.3-70b-versatile"
 
 
 # ---------------------------------------------------------------------------
+# Throttling
+# ---------------------------------------------------------------------------
+
+class ThrottledLLM(LLMClient):
+    """Caps concurrent complete() calls across all users of one client.
+
+    3 parallel navigators on gpt-4o saturate the org TPM cap (446k/450k
+    observed, run 3) — a shared semaphore trades a little parallelism for
+    zero 429 retry-exhaustion deaths.
+    """
+
+    def __init__(self, inner: LLMClient, max_concurrency: int) -> None:
+        self._inner = inner
+        self._sem = asyncio.Semaphore(max_concurrency)
+
+    @property
+    def inner(self) -> LLMClient:
+        """Read-only access to wrapped LLMClient."""
+        return self._inner
+
+    @property
+    def supports_vision(self) -> bool:  # type: ignore[override]
+        return getattr(self._inner, "supports_vision", False)
+
+    async def complete(self, messages, tools=None, response_format=None):
+        async with self._sem:
+            return await self._inner.complete(
+                messages, tools=tools, response_format=response_format,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
 
 def build_nav_llm() -> LLMClient:
-    """Navigator model — the capability-critical path. Frontier by default."""
+    """Navigator model — frontier by default, concurrency-capped."""
+    limit = int(os.environ.get("AGENT_NAV_CONCURRENCY", "2"))
     if os.environ.get("OPENAI_API_KEY"):
-        return OpenAIClient(model=os.environ.get("AGENT_NAV_MODEL", "gpt-4o"))
-    return GroqClient(model=_GROQ_70B)
+        inner: LLMClient = OpenAIClient(
+            model=os.environ.get("AGENT_NAV_MODEL", "gpt-4o"))
+    else:
+        inner = GroqClient(model=_GROQ_70B)
+    return ThrottledLLM(inner, max_concurrency=limit)
 
 
 def build_extract_llm() -> LLMClient:

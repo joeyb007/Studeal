@@ -151,3 +151,32 @@ async def test_fresh_context_across_invocations():
     second_msg_bodies = " ".join(str(m.get("content", "")) for m in llm.calls[1])
     assert "First Run" not in second_msg_bodies
     assert "Second Run" not in first_msg_bodies
+
+
+@pytest.mark.asyncio
+async def test_relative_offer_urls_resolved_against_page():
+    """Relative FB Marketplace URLs are resolved against the snapshot page URL."""
+    fb_snap = _snap(url="https://www.facebook.com/marketplace/toronto/search?query=aeron")
+    llm = _MockLLM([_offers_json([
+        {"title": "Aeron Chair", "price": 400.0, "currency": "CAD",
+         "url": "/marketplace/item/123/?ref=search"},
+    ])])
+    extractor = Extractor(llm=llm)
+    offers = await extractor.extract_from_snapshot(fb_snap, "facebook", _spec())
+
+    assert len(offers) == 1
+    assert offers[0].url == "https://www.facebook.com/marketplace/item/123/?ref=search"
+
+
+@pytest.mark.asyncio
+async def test_absolute_offer_urls_pass_through_unchanged():
+    """Offers with already-absolute URLs are not modified by urljoin."""
+    llm = _MockLLM([_offers_json([
+        {"title": "Aeron Size B", "price": 450.0, "currency": "CAD",
+         "url": "https://kijiji.ca/l/aeron-specific-listing"},
+    ])])
+    extractor = Extractor(llm=llm)
+    offers = await extractor.extract_from_snapshot(_snap(), "kijiji", _spec())
+
+    assert len(offers) == 1
+    assert offers[0].url == "https://kijiji.ca/l/aeron-specific-listing"

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Literal
+from urllib.parse import urljoin
 
 from pydantic import BaseModel, ValidationError
 
@@ -105,7 +106,7 @@ class Extractor:
             logger.warning("extractor: LLM call failed: %s", exc)
             return []
 
-        return _parse_and_filter(response.content, marketplace)
+        return _parse_and_filter(response.content, marketplace, snap.url)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +126,7 @@ def _render_user_prompt(
     )
 
 
-def _parse_and_filter(content: str, marketplace: str) -> list[Offer]:
+def _parse_and_filter(content: str, marketplace: str, page_url: str) -> list[Offer]:
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
@@ -150,6 +151,10 @@ def _parse_and_filter(content: str, marketplace: str) -> list[Offer]:
         if offer.price <= 0:
             continue
         if not offer.url:
+            continue
+        offer.url = urljoin(page_url, offer.url)
+        if not offer.url.startswith(("http://", "https://")):
+            logger.debug("extractor: dropping offer with unusable url %r", offer.url)
             continue
         result.append(offer)
     return result

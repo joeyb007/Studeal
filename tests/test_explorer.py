@@ -116,7 +116,7 @@ _PAGE2_HTML = """
 @pytest.mark.asyncio
 async def test_done_immediately_enqueues_entry_snap():
     """LLM says done on turn 1 → sink called once with the entry URL snap."""
-    llm = _MockLLM([{"action": "done", "reason": "no interest"}])
+    llm = _MockLLM([{"action": "done", "reason": "no_results on this page"}])
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
 
@@ -204,8 +204,8 @@ async def test_click_next_transitions_url_and_enqueues_both():
 
 
 @pytest.mark.asyncio
-async def test_max_turns_or_loop_when_llm_never_done():
-    """LLM only scrolls → loop detection or max_turns stops the run."""
+async def test_max_turns_or_stall_when_llm_never_done():
+    """LLM only scrolls → stall detection or max_turns stops the run."""
     llm = _MockLLM([{"action": "scroll"}] * 40)
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
@@ -293,3 +293,41 @@ async def test_four_no_effect_actions_stops_stalled():
         )
     assert result.stop_reason == "stalled"
     assert result.turns_used < Explorer.MAX_TURNS
+
+
+@pytest.mark.asyncio
+async def test_premature_done_gets_nudged_then_accepted():
+    """A low-coverage done with a non-exempt reason is rejected twice
+    (nudges), then accepted on the third attempt."""
+    html = "<html><body><p>results page</p></body></html>"
+    llm = _MockLLM([
+        {"action": "done", "reason": "looks finished"},
+        {"action": "done", "reason": "really finished"},
+        {"action": "done", "reason": "still finished"},
+    ])
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://example.test/serp", html)
+        sink, seen = await _sink_collector()
+        result = await Explorer(llm).explore(
+            entry_url="https://example.test/serp",
+            marketplace="test", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+    assert result.stop_reason == "done"
+    assert result.turns_used == 3          # 2 nudges consumed + accepted
+
+
+@pytest.mark.asyncio
+async def test_exempt_done_reason_accepted_immediately():
+    html = "<html><body><p>login wall</p></body></html>"
+    llm = _MockLLM([{"action": "done", "reason": "auth_wall on this site"}])
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://example.test/login", html)
+        sink, seen = await _sink_collector()
+        result = await Explorer(llm).explore(
+            entry_url="https://example.test/login",
+            marketplace="test", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+    assert result.stop_reason == "done"
+    assert result.turns_used == 1

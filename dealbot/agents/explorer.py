@@ -117,6 +117,7 @@ Tools (emit ONE per turn as JSON):
   {"action":"done","reason":"..."}
       Stop exploring. Use when: pagination exhausted, page shows no listings,
       or you've hit a CAPTCHA / auth wall.
+      Premature done calls are rejected — cover multiple result pages before stopping unless you hit a captcha, auth wall, or no_results.
 
 Standard flow:
   1. You land on the marketplace home page.
@@ -134,9 +135,16 @@ Standard flow:
 # Explorer
 # ---------------------------------------------------------------------------
 
+# Reasons that allow a `done` call to bypass the coverage check.
+EXEMPT_DONE_REASONS: tuple[str, ...] = ("captcha", "auth_wall", "no_results")
+
+
 class Explorer:
     MAX_TURNS: int = 20
     STALL_THRESHOLD: int = 4   # N consecutive no-effect actions → stop
+    MIN_SERP_URLS: int = 2     # minimum distinct SERP URLs (beyond entry) before done is accepted
+    MIN_PAGINATION_ATTEMPTS: int = 3  # minimum scroll/click actions before done is accepted
+    MAX_NUDGES: int = 2        # maximum rejection nudges before accepting done unconditionally
 
     def __init__(self, llm: LLMClient) -> None:
         self.llm = llm
@@ -173,6 +181,8 @@ class Explorer:
         prev_snap: PageSnapshot | None = None
         prev_key: tuple | None = None
         no_effect_streak: int = 0
+        pagination_attempts: int = 0   # scroll + click actions dispatched
+        nudges_used: int = 0           # coverage-rejection nudges sent to LLM
 
         for turn in range(self.MAX_TURNS):
             snap = await snapshot_page(session.page)
@@ -246,6 +256,23 @@ class Explorer:
             action_type = action.action
 
             if action_type == "done":
+                reason = (action.reason or "").lower()
+                exempt = any(k in reason for k in EXEMPT_DONE_REASONS)
+                enough = (
+                    len(seen_urls) >= self.MIN_SERP_URLS + 1
+                    or pagination_attempts >= self.MIN_PAGINATION_ATTEMPTS
+                )
+                if not exempt and not enough and nudges_used < self.MAX_NUDGES:
+                    nudges_used += 1
+                    messages.append({"role": "user", "content": (
+                        "Coverage is too low to stop: you have visited "
+                        f"{max(len(seen_urls) - 1, 0)} result page(s) and made "
+                        f"{pagination_attempts} pagination attempt(s). Keep going — "
+                        "scroll for more results or click the next-page control. "
+                        "Only stop now for a captcha, auth wall, or a page with "
+                        "no results (say so in your reason)."
+                    )})
+                    continue
                 if prev_snap and prev_snap.url:
                     await sink(prev_snap, marketplace)
                 return ExplorerResult(
@@ -262,6 +289,7 @@ class Explorer:
                     result_msg = "Scrolled one viewport."
                 except Exception as exc:
                     result_msg = f"Scroll failed: {type(exc).__name__}"
+                pagination_attempts += 1
                 messages.append({"role": "user", "content": result_msg})
                 continue
 
@@ -291,6 +319,7 @@ class Explorer:
                 result_msg = await _try_click(
                     session.page, action.role, action.name,
                 )
+                pagination_attempts += 1
                 messages.append({"role": "user", "content": result_msg})
                 continue
 

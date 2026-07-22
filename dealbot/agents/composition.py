@@ -68,6 +68,18 @@ class ThrottledLLM(LLMClient):
     def supports_vision(self) -> bool:  # type: ignore[override]
         return getattr(self._inner, "supports_vision", False)
 
+    @property
+    def total_prompt_tokens(self) -> int:
+        return getattr(self._inner, "total_prompt_tokens", 0)
+
+    @property
+    def total_completion_tokens(self) -> int:
+        return getattr(self._inner, "total_completion_tokens", 0)
+
+    @property
+    def call_count(self) -> int:
+        return getattr(self._inner, "call_count", 0)
+
     async def complete(self, messages, tools=None, response_format=None):
         async with self._sem:
             return await self._inner.complete(

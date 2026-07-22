@@ -29,6 +29,29 @@ class OpenAIClient(LLMClient):
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         self.model = model or os.environ.get("OPENAI_MODEL", _DEFAULT_MODEL)
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.call_count: int = 0
+
+    def _record_usage(self, data: dict) -> None:
+        """Update cumulative token counters from a response payload.
+
+        Silently skips on any missing or malformed usage data — counter
+        updates must never raise.
+        """
+        try:
+            usage = data.get("usage")
+            if not isinstance(usage, dict):
+                return
+            prompt = usage.get("prompt_tokens")
+            completion = usage.get("completion_tokens")
+            if not isinstance(prompt, int) or not isinstance(completion, int):
+                return
+            self.total_prompt_tokens += prompt
+            self.total_completion_tokens += completion
+            self.call_count += 1
+        except Exception:
+            pass
 
     async def complete(
         self,
@@ -76,6 +99,7 @@ class OpenAIClient(LLMClient):
                     logger.error("OpenAIClient: %s — %s", resp.status_code, resp.text)
                 resp.raise_for_status()
                 data = resp.json()
+                self._record_usage(data)
                 break
             except (
                 httpx.ReadTimeout,

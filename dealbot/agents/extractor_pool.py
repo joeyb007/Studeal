@@ -80,6 +80,16 @@ class ExtractorPool:
         self._started = False
         return list(self._results)
 
+    async def drain_attributed(self) -> list[tuple[Offer, str]]:
+        """Like drain(), but returns (offer, marketplace) tuples.
+
+        Offer.marketplace is already stamped by the Extractor (from the task's
+        marketplace field), so attribution is read directly from the offer.
+        drain() is unchanged — this is purely additive.
+        """
+        offers = await self.drain()
+        return [(offer, offer.marketplace) for offer in offers]
+
     async def _worker_loop(self) -> None:
         while True:
             task = await self._queue.get()

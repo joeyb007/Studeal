@@ -11,12 +11,12 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Spike eval artifacts — local dev data, regenerable
-docs/spike-cases/
-docs/spike-snapshots/
-docs/spike-results.md
-docs/spike-traces/
-docs/evals/
+# docs/: ignore all by default (regenerable dumps, plans, superseded history);
+# whitelist only the eval results — the evidence behind the numbers.
+docs/**
+!docs/**/
+!docs/evals/results.md
+!docs/evals/results.jsonl
 
 # Auth state — contains FB session cookies; NEVER commit
 tests/evals/_fb_state.json

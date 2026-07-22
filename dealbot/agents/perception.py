@@ -167,6 +167,37 @@ def _detect_captcha(text: str) -> bool:
     return any(p in haystack for p in _CAPTCHA_PATTERNS)
 
 
+def truncate_snapshot_text(text: str, budget: int = 18000, head: int = 4000) -> str:
+    """Budget-limited view of snapshot text that preserves listing content.
+
+    Head-truncation loses everything below the page chrome on large DOMs
+    (an eBay SERP's AX tree is ~137k chars; the first 18k is pure chrome).
+    Keep the head for page identity, then the contiguous window of the
+    remainder with the highest interactive-link density — listing grids
+    are anchor-dense on every marketplace, so this generalizes without
+    site-specific logic. Contiguity preserves title/price adjacency.
+    """
+    if len(text) <= budget:
+        return text
+    head_part = text[:head]
+    rest = text[head:]
+    window = budget - head - 100
+    if len(rest) <= window:
+        return head_part + rest
+    step = max(window // 4, 1000)
+    best_start, best_count = 0, -1
+    for start in range(0, len(rest) - window + 1, step):
+        count = rest.count("]<a", start, start + window)
+        if count > best_count:
+            best_count, best_start = count, start
+    return (
+        head_part
+        + f"\n[... {best_start} chars of page chrome truncated ...]\n"
+        + rest[best_start:best_start + window]
+        + "\n[...truncated]"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------

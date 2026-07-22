@@ -452,3 +452,55 @@ def test_trace_prompt_redacts_screenshots():
         "string-content messages should pass through unchanged"
     )
     assert redacted[0]["content"] == "plain string message"
+
+
+def test_parse_action_handles_none_and_empty_content():
+    """LLM responses with content=None (seen after SSL-retry recovery) must
+    nudge, not crash. Regression: reliability_run_4 TypeError."""
+    from dealbot.agents.explorer import _parse_action
+
+    for bad in (None, "", "   "):
+        action, err = _parse_action(bad)
+        assert action is None
+        assert err == "empty response"
+
+
+@pytest.mark.asyncio
+async def test_settled_snapshot_waits_for_js_render():
+    """_settled_snapshot retries when the initial snapshot is a tiny JS shell.
+
+    The mock page renders nearly empty at load; a setTimeout fills the body
+    ~600ms later. The LLM immediately says done(no_results). We assert that
+    the snapshot the sink receives contains "Loaded" — proving the retry
+    waited for the JS to fire before the snapshot was accepted.
+    """
+    _JS_RENDER_HTML = """<!doctype html>
+<html><head><title>Lazy</title></head>
+<body>
+<script>
+  setTimeout(function() {
+    document.body.innerHTML = '<h1>Loaded</h1>'
+      + '<a href="#">item</a>'.repeat(50);
+  }, 600);
+</script>
+</body></html>"""
+
+    llm = _MockLLM([{"action": "done", "reason": "no_results"}])
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/lazy", _JS_RENDER_HTML)
+        await Explorer(llm=llm).explore(
+            entry_url="https://mock.local/lazy",
+            marketplace="test",
+            query="aeron",
+            spec=_spec(),
+            session=bs,
+            sink=sink,
+        )
+
+    assert collected, "sink must have received at least one snapshot"
+    texts = [snap.text for snap, _ in collected]
+    assert any("Loaded" in t for t in texts), (
+        "_settled_snapshot must have retried until the JS-rendered content appeared"
+    )

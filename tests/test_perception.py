@@ -16,6 +16,7 @@ import pytest
 from dealbot.agents.perception import (
     PageSnapshot,
     snapshot_page,
+    truncate_snapshot_text,
 )
 
 
@@ -673,3 +674,52 @@ async def test_attributes_filtered_to_whitelist():
     elem = snap.element_map[5]
     assert elem.attributes.get("placeholder") == "hi"
     assert "data-internal" not in elem.attributes
+
+
+# ---------------------------------------------------------------------------
+# truncate_snapshot_text
+# ---------------------------------------------------------------------------
+
+def test_truncate_snapshot_text_under_budget_unchanged():
+    """Text within the budget is returned without modification."""
+    text = "hello world " * 100  # 1200 chars, well under 18000
+    assert truncate_snapshot_text(text) is text or truncate_snapshot_text(text) == text
+
+
+def test_truncate_snapshot_text_preserves_listing_content():
+    """Dense listing section is preferred over link-free chrome.
+
+    Structure:
+      - 30k chars of chrome with zero ]<a occurrences
+      - 16k chars of listing lines (each has ]<a and a $price) — wider than
+        the 13900-char window so the winning window lands fully inside listings
+      - 5k footer with no links and a unique footer marker placed at the very
+        end, well past the listing block
+    Assert: result fits budget, contains listing anchors and prices,
+    and does NOT contain the footer-only marker.
+    """
+    chrome = ("nav-chrome-line-with-no-anchor\n" * 1000)[:30000]
+    listing_line = '[123]<a href="/item/1" /> "Listing N" $99.99\n'
+    listings = (listing_line * 400)[:16000]  # wider than window (13900)
+    footer_marker = "UNIQUE_FOOTER_SENTINEL_XYZ"
+    footer = (f"footer content {footer_marker}\n" * 200)[:5000]
+
+    text = chrome + listings + footer
+    result = truncate_snapshot_text(text)
+
+    assert len(result) <= 18100  # budget + small overhead for ellipsis lines
+    assert result.count("]<a") > 0, "listing anchors must appear in result"
+    assert "$" in result, "price lines must appear in result"
+    assert footer_marker not in result, "footer sentinel must be excluded"
+
+
+def test_truncate_snapshot_text_head_preserved():
+    """The first `head` chars (4000) are always kept for page identity."""
+    head_marker = "HEAD_IDENTITY_MARKER_ABC"
+    head_content = f"{head_marker} " + ("x" * 3990)
+    rest = ("nav-chrome-line\n" * 2000)[:60000]
+    text = head_content + rest
+
+    result = truncate_snapshot_text(text)
+
+    assert head_marker in result, "head marker must survive truncation"

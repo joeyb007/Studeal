@@ -25,7 +25,7 @@ from urllib.parse import urljoin
 
 from pydantic import BaseModel, ValidationError
 
-from dealbot.agents.perception import PageSnapshot
+from dealbot.agents.perception import PageSnapshot, truncate_snapshot_text
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import WatchlistContext
 
@@ -116,7 +116,7 @@ class Extractor:
 def _render_user_prompt(
     snap: PageSnapshot, marketplace: str, spec: WatchlistContext,
 ) -> str:
-    text = snap.text if len(snap.text) <= 18000 else snap.text[:18000] + "\n[...truncated]"
+    text = truncate_snapshot_text(snap.text)
     return (
         f"Marketplace: {marketplace}\n"
         f"URL: {snap.url}\n"

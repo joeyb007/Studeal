@@ -36,6 +36,7 @@ adapter (URL templates).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -45,7 +46,7 @@ from typing import Any, Awaitable, Callable
 from playwright.async_api import Page
 from pydantic import BaseModel, ValidationError
 
-from dealbot.agents.perception import PageSnapshot, snapshot_page
+from dealbot.agents.perception import PageSnapshot, snapshot_page, truncate_snapshot_text
 from dealbot.agents.tools import try_cdp_native_click
 from dealbot.agents.tracing import NullTraceWriter, TraceWriter
 from dealbot.llm.base import LLMClient
@@ -53,6 +54,29 @@ from dealbot.schemas import WatchlistContext
 from dealbot.scrapers.browser_session import BrowserSession
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Settled-snapshot helper
+# ---------------------------------------------------------------------------
+
+_MIN_SETTLED_CHARS = 800
+_MIN_SETTLED_ELEMS = 25
+_SETTLE_RETRIES = 2
+_SETTLE_DELAY_S = 1.5
+
+
+async def _settled_snapshot(page: Page) -> PageSnapshot:
+    """Snapshot, retrying briefly when the page looks like an unrendered
+    JS shell (seen on eBay: 399-char snapshot of a page that renders to
+    137k chars ~1s later). Site-agnostic: emptiness, not domain, triggers it."""
+    snap = await snapshot_page(page)
+    for _ in range(_SETTLE_RETRIES):
+        if len(snap.text) >= _MIN_SETTLED_CHARS or len(snap.element_map) >= _MIN_SETTLED_ELEMS:
+            break
+        await asyncio.sleep(_SETTLE_DELAY_S)
+        snap = await snapshot_page(page)
+    return snap
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +212,7 @@ class Explorer:
         failed_action_streak: int = 0  # consecutive click/type failures
 
         for turn in range(self.MAX_TURNS):
-            snap = await snapshot_page(session.page)
+            snap = await _settled_snapshot(session.page)
 
             # When URL changes since last turn, submit the previous URL's
             # snapshot to the sink (final observed state of that URL).
@@ -491,7 +515,7 @@ def _turn_prompt(
     query: str,
     no_effect_streak: int = 0,
 ) -> str:
-    text = snap.text if len(snap.text) <= 18000 else snap.text[:18000] + "\n[...truncated]"
+    text = truncate_snapshot_text(snap.text)
     visited_block = (
         "\n".join(f"  - {u}" for u in urls_visited[-8:])
         if urls_visited else "  (none yet)"
@@ -518,7 +542,11 @@ def _turn_prompt(
     )
 
 
-def _parse_action(content: str) -> tuple[_ActionJSON | None, str | None]:
+def _parse_action(content: str | None) -> tuple[_ActionJSON | None, str | None]:
+    # content can be None when the LLM returns an empty response (seen after
+    # SSL-retry recovery) — must nudge, not crash the exploration.
+    if not isinstance(content, str) or not content.strip():
+        return None, "empty response"
     try:
         data = json.loads(content)
     except json.JSONDecodeError as exc:

@@ -117,6 +117,9 @@ class Watchlist(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
     intent_embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    hunting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    hunt_frequency_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_hunt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="watchlists")
     hunt_queries: Mapped[list[HuntQuery]] = relationship(
@@ -145,3 +148,79 @@ class HuntQuery(Base):
 
     watchlist: Mapped[Watchlist] = relationship("Watchlist", back_populates="hunt_queries")
     deals: Mapped[list[Deal]] = relationship("Deal", secondary=hunt_query_deals)
+
+
+class Hunt(Base):
+    __tablename__ = "hunts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    watchlist_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    offer_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    persisted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    new_listing_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class HuntListing(Base):
+    __tablename__ = "hunt_listings"
+
+    hunt_id: Mapped[int] = mapped_column(
+        ForeignKey("hunts.id", ondelete="CASCADE"), nullable=False, primary_key=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), nullable=False, primary_key=True
+    )
+    was_new_for_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class ListingAlert(Base):
+    __tablename__ = "listing_alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    watchlist_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), nullable=False
+    )
+    hunt_id: Mapped[int] = mapped_column(
+        ForeignKey("hunts.id", ondelete="CASCADE"), nullable=False
+    )
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channels: Mapped[str] = mapped_column(String(64), nullable=False, default="feed")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )

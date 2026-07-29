@@ -45,7 +45,7 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
     offers = await run_hunt(context)
 
     # 3. Persist offers as Listings (dedup by canonical URL).
-    persisted = await persist_offers(offers)
+    persisted = (await persist_offers(offers)).written
 
     logger.info(
         "research_for_agent: wl=%d offers=%d persisted=%d",

@@ -54,8 +54,8 @@ async def test_persists_new_offers(db_setup):
         _offer("https://www.kijiji.ca/v-office/aeron/1"),
         _offer("https://www.kijiji.ca/v-office/aeron/2"),
     ]
-    written = await persist_offers(offers)
-    assert written == 2
+    result = await persist_offers(offers)
+    assert result.written == 2
 
     factory = db_setup
     async with factory() as session:
@@ -109,4 +109,4 @@ async def test_second_write_updates_price_and_last_seen(db_setup):
 @pytest.mark.asyncio
 async def test_empty_offers_returns_zero(db_setup):
     from dealbot.persistence.listings import persist_offers
-    assert await persist_offers([]) == 0
+    assert (await persist_offers([])).written == 0

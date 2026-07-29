@@ -41,6 +41,7 @@ app = Celery(
     include=[
         "dealbot.worker.tasks",
         "dealbot.worker.digest",
+        "dealbot.worker.scheduler",
         "dealbot.worker.celery_app",
     ],
 )
@@ -52,6 +53,11 @@ app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
+        # Every 5 min — enqueue hunts for watchlists whose cadence has elapsed
+        "schedule-due-hunts": {
+            "task": "dealbot.worker.scheduler.schedule_due_hunts",
+            "schedule": crontab(minute="*/5"),
+        },
         # 08:00 UTC — email digest to pro users with yesterday's matches
         "send-daily-digest": {
             "task": "dealbot.worker.digest.send_daily_digest",

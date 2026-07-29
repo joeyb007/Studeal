@@ -51,6 +51,7 @@ async def rig(monkeypatch):
 
     fake = FakeRedis()
     monkeypatch.setattr(tasks_mod, "_get_publisher", lambda: RedisEventPublisher(client=fake))
+    monkeypatch.setattr(tasks_mod, "_maybe_governor", lambda: None)
 
     async with factory() as s:
         user = User(email="w@t.com", hashed_password="x")

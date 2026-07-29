@@ -20,13 +20,21 @@ import asyncio
 import logging
 import os
 import re
+from dataclasses import dataclass
 
 from dealbot.agents.explorer import Explorer
 from dealbot.agents.extractor_pool import ExtractorPool
 from dealbot.agents.marketplace_router import MarketplaceRouter
 from dealbot.agents.query_generator import QueryGenerator
-from dealbot.agents.tracing import FilesystemTraceWriter, NullTraceWriter, TraceWriter
+from dealbot.agents.tracing import (
+    FilesystemTraceWriter,
+    NullTraceWriter,
+    PublishingTraceWriter,
+    TraceWriter,
+)
 from dealbot.agents.workers.extractor import Extractor, Offer
+from dealbot.events.publisher import RedisEventPublisher
+from dealbot.events.schema import ExtractionSubmitted, QueriesPlanned
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.openai_client import OpenAIClient
@@ -41,6 +49,17 @@ logger = logging.getLogger(__name__)
 
 
 _GROQ_70B = "llama-3.3-70b-versatile"
+
+
+@dataclass
+class HuntEventContext:
+    """Identity + publisher for the live event stream of one hunt.
+    Optional everywhere it appears — omitted means no events (eval harness,
+    manual trigger paths are unchanged)."""
+
+    publisher: RedisEventPublisher
+    hunt_id: int
+    watchlist_id: int
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +157,7 @@ async def _run_one_query(
     router: MarketplaceRouter,
     nav_llm: LLMClient,
     pool: ExtractorPool,
+    events: HuntEventContext | None = None,
 ) -> None:
     """Route the query, open a session, explore each marketplace sequentially.
 
@@ -161,6 +181,11 @@ async def _run_one_query(
         stamp = slug = None  # unused when trace_dir is None
 
     async def sink(snap, marketplace):
+        if events is not None:
+            events.publisher.publish_nowait(ExtractionSubmitted(
+                hunt_id=events.hunt_id, watchlist_id=events.watchlist_id,
+                query=query, marketplace=marketplace,
+            ))
         await pool.submit(snap, marketplace, spec)
 
     try:
@@ -173,6 +198,14 @@ async def _run_one_query(
                     )
                 else:
                     trace = NullTraceWriter()
+                if events is not None:
+                    trace = PublishingTraceWriter(
+                        trace, events.publisher,
+                        hunt_id=events.hunt_id,
+                        watchlist_id=events.watchlist_id,
+                        query=query,
+                        marketplace=target.marketplace,
+                    )
                 explorer = Explorer(nav_llm, trace=trace)
                 try:
                     try:
@@ -205,7 +238,10 @@ async def _run_one_query(
 # The hunt runner
 # ---------------------------------------------------------------------------
 
-async def run_hunt(spec: WatchlistContext) -> list[Offer]:
+async def run_hunt(
+    spec: WatchlistContext,
+    events: HuntEventContext | None = None,
+) -> list[Offer]:
     """Full v14 hunt pipeline.
 
     Parallelism = number of queries. Each query gets its own BrowserSession +
@@ -221,13 +257,18 @@ async def run_hunt(spec: WatchlistContext) -> list[Offer]:
 
     queries = await query_gen.generate(spec)
     logger.info("run_hunt: generated %d queries: %s", len(queries), queries)
+    if events is not None:
+        await events.publisher.publish(QueriesPlanned(
+            hunt_id=events.hunt_id, watchlist_id=events.watchlist_id,
+            queries=queries,
+        ))
 
     await pool.start()
 
     # Fan out per-query workers. return_exceptions so one query failing doesn't
     # kill the whole hunt. Each worker builds its own Explorer + TraceWriter.
     await asyncio.gather(
-        *(_run_one_query(q, spec, router, nav_llm, pool) for q in queries),
+        *(_run_one_query(q, spec, router, nav_llm, pool, events) for q in queries),
         return_exceptions=True,
     )
 

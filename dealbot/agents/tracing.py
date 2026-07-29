@@ -347,3 +347,126 @@ class FilesystemTraceWriter(TraceWriter):
             lines.append("")
 
         (self._root / "report.md").write_text("\n".join(lines))
+
+# ---------------------------------------------------------------------------
+# Publishing wrapper (live event stream)
+# ---------------------------------------------------------------------------
+
+
+class PublishingTraceWriter(TraceWriter):
+    """Wraps another TraceWriter; forwards every call, additionally publishing
+    explorer turn/screenshot/error events to the hunt event stream via
+    `publish_nowait` (fire-and-forget — observability must never break a hunt).
+
+    Screenshots are base64-encoded into a data URL; if the URL exceeds
+    `_MAX_DATA_URL_CHARS` the event is dropped while the inner writer still
+    records the image to disk.
+    """
+
+    _MAX_DATA_URL_CHARS = 200_000
+
+    def __init__(
+        self,
+        inner: TraceWriter,
+        publisher: "RedisEventPublisher",
+        *,
+        hunt_id: int,
+        watchlist_id: int,
+        query: str,
+        marketplace: str,
+    ) -> None:
+        self._inner = inner
+        self._publisher = publisher
+        self._hunt_id = hunt_id
+        self._watchlist_id = watchlist_id
+        self._query = query
+        self._marketplace = marketplace
+
+    def record_orchestrator_turn(
+        self,
+        *,
+        turn: int,
+        prompt: list[dict[str, Any]],
+        response_content: str | None,
+        decision_summary: str,
+        worker_chosen: str,
+        forced: bool = False,
+    ) -> None:
+        self._inner.record_orchestrator_turn(
+            turn=turn, prompt=prompt, response_content=response_content,
+            decision_summary=decision_summary, worker_chosen=worker_chosen,
+            forced=forced,
+        )
+
+    def record_page_reader_turn(
+        self,
+        *,
+        orchestrator_turn: int,
+        sub_turn: int,
+        url: str,
+        snapshot_text: str,
+        element_map_size: int,
+        prompt: list[dict[str, Any]],
+        response_content: str | None,
+        action_summary: str,
+        result_summary: str,
+    ) -> None:
+        self._inner.record_page_reader_turn(
+            orchestrator_turn=orchestrator_turn, sub_turn=sub_turn, url=url,
+            snapshot_text=snapshot_text, element_map_size=element_map_size,
+            prompt=prompt, response_content=response_content,
+            action_summary=action_summary, result_summary=result_summary,
+        )
+        from dealbot.events.schema import ExplorerTurn
+
+        self._publisher.publish_nowait(ExplorerTurn(
+            hunt_id=self._hunt_id, watchlist_id=self._watchlist_id,
+            query=self._query, marketplace=self._marketplace,
+            turn=sub_turn, url=url, action=action_summary,
+            result=result_summary[:200],
+        ))
+
+    def record_screenshot(
+        self,
+        *,
+        orchestrator_turn: int,
+        sub_turn: int | None,
+        label: str,
+        png_bytes: bytes,
+    ) -> None:
+        self._inner.record_screenshot(
+            orchestrator_turn=orchestrator_turn, sub_turn=sub_turn,
+            label=label, png_bytes=png_bytes,
+        )
+        import base64
+
+        data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+        if len(data_url) > self._MAX_DATA_URL_CHARS:
+            return
+        from dealbot.events.schema import ExplorerScreenshot
+
+        self._publisher.publish_nowait(ExplorerScreenshot(
+            hunt_id=self._hunt_id, watchlist_id=self._watchlist_id,
+            query=self._query, marketplace=self._marketplace,
+            turn=orchestrator_turn, image_data_url=data_url,
+        ))
+
+    def record_error(
+        self,
+        *,
+        orchestrator_turn: int,
+        worker: str,
+        error: str,
+    ) -> None:
+        self._inner.record_error(
+            orchestrator_turn=orchestrator_turn, worker=worker, error=error,
+        )
+        from dealbot.events.schema import ExplorerError
+
+        self._publisher.publish_nowait(ExplorerError(
+            hunt_id=self._hunt_id, watchlist_id=self._watchlist_id,
+            query=self._query, marketplace=self._marketplace, error=error,
+        ))
+
+    def finalize(self) -> None:
+        self._inner.finalize()

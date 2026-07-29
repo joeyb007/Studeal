@@ -24,7 +24,7 @@ async def test_digest_skips_free_users():
     with (
         patch("dealbot.worker.digest.get_async_session") as mock_session_ctx,
         patch("dealbot.worker.digest._matched_deals_for_user", new_callable=AsyncMock) as mock_match,
-        patch("dealbot.worker.digest._send_email", new_callable=AsyncMock) as mock_send,
+        patch("dealbot.worker.digest.send_email", new_callable=AsyncMock) as mock_send,
     ):
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)

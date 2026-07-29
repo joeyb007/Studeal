@@ -155,18 +155,14 @@ def _elapsed_s(started_at: datetime) -> float:
 
 
 def _maybe_governor():
-    """FleetGovernor lands in a later task; absent module → no governance."""
-    try:
-        from dealbot.worker.governor import build_governor
-    except ImportError:
-        return None
+    """Seam for tests (patched to None); production always governs."""
+    from dealbot.worker.governor import build_governor
+
     return build_governor()
 
 
 def _maybe_dispatch_alerts(hunt_id: int) -> None:
-    """dispatch_alerts lands in a later task; absent module → no-op."""
-    try:
-        from dealbot.worker.alerts import dispatch_alerts
-    except ImportError:
-        return
+    """Seam for tests; production chains alert dispatch off every fruitful hunt."""
+    from dealbot.worker.alerts import dispatch_alerts
+
     dispatch_alerts.delay(hunt_id)

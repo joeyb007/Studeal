@@ -42,6 +42,7 @@ app = Celery(
         "dealbot.worker.tasks",
         "dealbot.worker.digest",
         "dealbot.worker.scheduler",
+        "dealbot.worker.alerts",
         "dealbot.worker.celery_app",
     ],
 )

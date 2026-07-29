@@ -2,45 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 
-import httpx
 from sqlalchemy import select, text
 
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Deal, User
+from dealbot.notifications.email import send_email
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
-_RESEND_API_URL = "https://api.resend.com/emails"
-_FROM_ADDRESS = os.environ.get("RESEND_FROM", "Studeal <alerts@studeal.site>")
 # pgvector cosine distance threshold — anything <= this is "close enough"
 _SIMILARITY_THRESHOLD = 0.45
 # Cap deals-per-user-per-digest so emails stay skim-able
 _MAX_DEALS_PER_DIGEST = 20
-
-
-async def _send_email(to: str, subject: str, body: str) -> None:
-    api_key = os.environ.get("RESEND_API_KEY", "")
-    if not api_key:
-        logger.warning("RESEND_API_KEY not set — skipping email to %s", to)
-        return
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            resp = await client.post(
-                _RESEND_API_URL,
-                json={"from": _FROM_ADDRESS, "to": [to], "subject": subject, "text": body},
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            logger.info("digest: sent email to %s (id=%s)", to, resp.json().get("id"))
-        except httpx.HTTPStatusError as exc:
-            logger.error("digest: Resend error %d for %s — %s", exc.response.status_code, to, exc.response.text)
-        except Exception:
-            logger.exception("digest: failed to send email to %s", to)
 
 
 def _build_digest(user_email: str, matches: list[tuple[str, Deal]]) -> str:
@@ -114,7 +90,7 @@ async def _send_digests() -> dict:
                 continue
 
             body = _build_digest(user.email, matches)
-            await _send_email(
+            await send_email(
                 to=user.email,
                 subject=f"Your Studeal digest — {len(matches)} deal{'s' if len(matches) != 1 else ''}",
                 body=body,

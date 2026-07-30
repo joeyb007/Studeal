@@ -76,13 +76,18 @@ class FleetGovernor:
         return time.time() - float(value)
 
 
-_governor: FleetGovernor | None = None
+_governor_cache: dict[str, object] = {"loop": None, "governor": None}
 
 
 def build_governor() -> FleetGovernor:
-    """Process-wide singleton over $REDIS_URL."""
-    global _governor
-    if _governor is None:
+    """Per-event-loop governor over $REDIS_URL — Celery's per-task loops make
+    any cached redis client loop-bound. Keyed by loop identity with a held
+    reference (see dealbot.db.database)."""
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    if _governor_cache["loop"] is not loop:
+        _governor_cache["loop"] = loop
         url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-        _governor = FleetGovernor(aioredis.from_url(url))
-    return _governor
+        _governor_cache["governor"] = FleetGovernor(aioredis.from_url(url))
+    return _governor_cache["governor"]  # type: ignore[return-value]

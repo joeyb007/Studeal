@@ -23,15 +23,19 @@ class FleetAtCapacity(Exception):
     re-enqueues itself with a delay instead of consuming failure retries."""
 
 
-_publisher: RedisEventPublisher | None = None
+_publisher_cache: dict[str, object] = {"loop": None, "publisher": None}
 
 
 def _get_publisher() -> RedisEventPublisher:
-    """Process-wide lazy singleton ($REDIS_URL). Patchable in tests."""
-    global _publisher
-    if _publisher is None:
-        _publisher = RedisEventPublisher()
-    return _publisher
+    """Per-event-loop publisher ($REDIS_URL). Celery gives every task a fresh
+    loop; a redis client bound to a finished loop poisons later tasks. Keyed
+    by loop identity with a held reference (see dealbot.db.database).
+    Patchable in tests."""
+    loop = asyncio.get_running_loop()
+    if _publisher_cache["loop"] is not loop:
+        _publisher_cache["loop"] = loop
+        _publisher_cache["publisher"] = RedisEventPublisher()
+    return _publisher_cache["publisher"]  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------

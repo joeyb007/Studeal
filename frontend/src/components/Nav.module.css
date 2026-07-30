@@ -48,11 +48,23 @@
   color: var(--text-primary);
 }
 
-.alertCount {
-  font-weight: 600;
+.alertIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 550;
   color: var(--amber);
-  margin-left: 4px;
+  cursor: default;
   font-variant-numeric: tabular-nums;
+}
+
+.alertIndicator::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
 }
 
 .logoutBtn {

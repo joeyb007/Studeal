@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Nav from "@/components/Nav";
 import AgentBuilder from "@/components/AgentBuilder";
+import AlertFeed from "@/components/AlertFeed";
 import styles from "./page.module.css";
 
 interface WatchlistContext {
@@ -352,10 +353,10 @@ function WatchlistCard({
                   disabled={patching}
                   className={[
                     styles.pill,
-                    (ctx.condition.length === 0 || ctx.condition.includes(c)) ? styles.pillActive : "",
+                    ((ctx.condition?.length ?? 0) === 0 || ctx.condition?.includes(c)) ? styles.pillActive : "",
                   ].join(" ")}
                   onClick={() => {
-                    const current = ctx.condition;
+                    const current = ctx.condition ?? [];
                     const next = current.includes(c)
                       ? current.filter(x => x !== c)
                       : [...current, c];
@@ -640,6 +641,8 @@ function WatchlistsPageInner() {
             formError={formError}
           />
         )}
+
+        <AlertFeed />
 
         {loading ? (
           <div className={styles.empty}>Loading...</div>

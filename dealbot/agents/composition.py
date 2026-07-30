@@ -223,6 +223,38 @@ async def _run_one_query(
                             len(result.urls_visited), result.turns_used,
                             result.stop_reason,
                         )
+                        # No-results broadening: verbose query variants can
+                        # legitimately match nothing on thin marketplaces
+                        # (craigslist AND-matches every term). One retry with
+                        # the spec's core product query, re-routed so the
+                        # entry URL is rebuilt for the simplified query.
+                        if (
+                            result.stop_reason == "done"
+                            and result.done_reason
+                            and "no_results" in result.done_reason.lower()
+                            and query.strip().lower() != spec.product_query.strip().lower()
+                        ):
+                            retry_query = spec.product_query
+                            retry_targets = await router.route(retry_query, spec)
+                            retry_target = next(
+                                (t for t in retry_targets
+                                 if t.marketplace == target.marketplace),
+                                None,
+                            )
+                            if retry_target is not None:
+                                logger.info(
+                                    "run_hunt[%s]: %s no_results — retrying with core query %r",
+                                    query, target.marketplace, retry_query,
+                                )
+                                retry_explorer = Explorer(nav_llm, trace=trace)
+                                await retry_explorer.explore(
+                                    entry_url=retry_target.entry_url,
+                                    marketplace=retry_target.marketplace,
+                                    query=retry_query,
+                                    spec=spec,
+                                    session=session,
+                                    sink=sink,
+                                )
                     except Exception:
                         logger.exception(
                             "run_hunt[%s]: explorer failed on %s",

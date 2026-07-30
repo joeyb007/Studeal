@@ -114,3 +114,109 @@ def test_openai_client_record_usage():
     client._record_usage({"usage": "not-a-dict"})
     client._record_usage({"usage": {"prompt_tokens": "bad", "completion_tokens": None}})
     assert client.call_count == 2
+
+
+# ---------------------------------------------------------------------
+# A3: no-results query broadening in _run_one_query
+# ---------------------------------------------------------------------
+
+import pytest as _pytest
+
+from dealbot.agents.composition import _run_one_query
+from dealbot.agents.explorer import ExplorerResult
+from dealbot.agents.marketplace_router import MarketplaceSearchTarget
+from dealbot.schemas import WatchlistContext
+
+
+class _FakeRouter:
+    """Returns one kijiji target whose entry_url embeds the routed query."""
+
+    def __init__(self):
+        self.routed_queries: list[str] = []
+
+    async def route(self, query, spec):
+        self.routed_queries.append(query)
+        return [MarketplaceSearchTarget(
+            marketplace="kijiji",
+            entry_url=f"https://kijiji.test/search?q={query.replace(' ', '+')}",
+        )]
+
+
+class _FakeSession:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    page = None
+
+
+class _ScriptedExplorer:
+    """Replaces Explorer inside composition; records explore() calls and pops
+    scripted results."""
+
+    calls: list[tuple[str, str]] = []       # (query, entry_url)
+    results: list[ExplorerResult] = []
+
+    def __init__(self, llm, trace=None):
+        pass
+
+    async def explore(self, entry_url, marketplace, query, spec, session, sink):
+        _ScriptedExplorer.calls.append((query, entry_url))
+        return _ScriptedExplorer.results.pop(0)
+
+
+class _NullPool:
+    async def submit(self, snap, marketplace, spec):
+        pass
+
+
+@_pytest.fixture()
+def composition_rig(monkeypatch):
+    import dealbot.agents.composition as comp
+
+    monkeypatch.setattr(comp, "Explorer", _ScriptedExplorer)
+    monkeypatch.setattr(comp, "build_session_from_env", lambda: _FakeSession())
+    _ScriptedExplorer.calls = []
+    _ScriptedExplorer.results = []
+    return comp
+
+
+@_pytest.mark.asyncio
+async def test_no_results_retries_with_core_query(composition_rig):
+    spec = WatchlistContext(product_query="aeron chair")
+    router = _FakeRouter()
+    _ScriptedExplorer.results = [
+        ExplorerResult(stop_reason="done", done_reason="no_results for this query"),
+        ExplorerResult(stop_reason="done", done_reason="done after retry"),
+    ]
+    await _run_one_query("used aeron chair herman miller", spec, router, None, _NullPool())
+
+    assert len(_ScriptedExplorer.calls) == 2
+    assert _ScriptedExplorer.calls[0][0] == "used aeron chair herman miller"
+    assert _ScriptedExplorer.calls[1][0] == "aeron chair"          # core query
+    assert "aeron+chair" in _ScriptedExplorer.calls[1][1]          # re-routed URL
+    assert router.routed_queries == ["used aeron chair herman miller", "aeron chair"]
+
+
+@_pytest.mark.asyncio
+async def test_no_retry_when_query_already_core(composition_rig):
+    spec = WatchlistContext(product_query="aeron chair")
+    router = _FakeRouter()
+    _ScriptedExplorer.results = [
+        ExplorerResult(stop_reason="done", done_reason="no_results"),
+    ]
+    await _run_one_query("aeron chair", spec, router, None, _NullPool())
+    assert len(_ScriptedExplorer.calls) == 1
+
+
+@_pytest.mark.asyncio
+async def test_no_retry_on_normal_done(composition_rig):
+    spec = WatchlistContext(product_query="aeron chair")
+    router = _FakeRouter()
+    _ScriptedExplorer.results = [
+        ExplorerResult(stop_reason="done", done_reason="paginated fully"),
+    ]
+    await _run_one_query("used aeron chair", spec, router, None, _NullPool())
+    assert len(_ScriptedExplorer.calls) == 1

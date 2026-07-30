@@ -88,6 +88,7 @@ class ExplorerResult:
     urls_visited: list[str] = field(default_factory=list)  # deduped, insertion order
     turns_used: int = 0
     stop_reason: str = "done"        # "done" | "max_turns" | "stalled" | "error"
+    done_reason: str | None = None   # the LLM's own reason when stop_reason=="done"
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +468,7 @@ class Explorer:
                     urls_visited=seen_urls,
                     turns_used=turn + 1,
                     stop_reason="done",
+                    done_reason=action.reason,
                 )
 
             if action_type == "scroll":

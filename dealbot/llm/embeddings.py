@@ -15,6 +15,11 @@ class EmbeddingClient(ABC):
     @abstractmethod
     async def embed(self, text: str) -> list[float]: ...
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        """Sequential fallback for backends without a batch endpoint.
+        Returns one vector per input; [] for any that failed."""
+        return [await self.embed(t) for t in texts]
+
 
 class OpenAIEmbeddingClient(EmbeddingClient):
     """OpenAI text-embedding-3-small — 1536 dims, ~$0.02/million tokens."""
@@ -40,6 +45,29 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         except Exception:
             logger.warning("embed_text: OpenAI embedding failed")
             return []
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        """One request for N inputs — the endpoint accepts a list for `input`.
+        A hunt persists ~100 listings at once; sequential calls would be 100
+        round trips."""
+        if not texts:
+            return []
+        if not self._api_key:
+            logger.warning("embed_texts: OPENAI_API_KEY not set")
+            return [[] for _ in texts]
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={"model": self._MODEL, "input": texts},
+                )
+                resp.raise_for_status()
+                rows = sorted(resp.json()["data"], key=lambda r: r["index"])
+                return [r["embedding"] for r in rows]
+        except Exception:
+            logger.warning("embed_texts: OpenAI batch embedding failed")
+            return [[] for _ in texts]
 
 
 class OllamaEmbeddingClient(EmbeddingClient):
@@ -71,3 +99,19 @@ async def embed_text(text: str) -> list[float]:
     if not text.strip():
         return []
     return await _get_client().embed(text)
+
+
+async def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Batch-embed. Blank inputs yield [] without an API call; the returned
+    list always has one entry per input, positionally aligned."""
+    if not texts:
+        return []
+    client = _get_client()
+    idx = [i for i, t in enumerate(texts) if t.strip()]
+    if not idx:
+        return [[] for _ in texts]
+    vectors = await client.embed_many([texts[i] for i in idx])
+    out: list[list[float]] = [[] for _ in texts]
+    for slot, vec in zip(idx, vectors):
+        out[slot] = vec
+    return out

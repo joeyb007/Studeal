@@ -44,3 +44,6 @@
 | holdout_ebay_aeron | Herman Miller Aeron chair Toronto | template | ['ebay'] | 14 | 10 | 1 | 74.1213817500975 | 0 | 0.8081151000000002 | False | 0.71 |
 | holdout_craigslist_aeron | Herman Miller Aeron chair Toronto | template | ['craigslist'] | 0 | 0 | 0 | 8.93083329219371 | 0 | 0.03491470000000001 | False |  |
 | holdout_ebay_headphones | Sony WH-1000XM5 headphones | template | ['ebay'] | 0 | 0 | 0 | 57.27011016593315 | 0 | 0.8825611 | False |  |
+| holdout_ebay_aeron | Herman Miller Aeron chair Toronto | template | ['ebay'] | 105 | 100 | 1 | 92.63438570895232 | 0 | 1.57447185 | False | 0.99 |
+| holdout_craigslist_aeron | Herman Miller Aeron chair Toronto | template | ['craigslist'] | 0 | 0 | 0 | 9.362215416971594 | 0 | 0.05692405000000001 | False |  |
+| holdout_ebay_headphones | Sony WH-1000XM5 headphones | template | ['ebay'] | 161 | 128 | 1 | 105.50234979204834 | 0 | 1.3266514500000004 | False | 0.94 |

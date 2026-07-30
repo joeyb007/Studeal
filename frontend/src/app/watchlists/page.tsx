@@ -181,6 +181,7 @@ function WatchlistCard({
   const [listingsMeta, setListingsMeta] = useState<{ total: number; reranked: boolean } | null>(null);
   const [loadingListings, setLoadingListings] = useState(false);
   const [hunting, setHunting] = useState(false);
+  const [huntNotice, setHuntNotice] = useState<string | null>(null);
 
   const days = watchlist.expires_at ? daysUntil(watchlist.expires_at) : null;
 
@@ -247,11 +248,18 @@ function WatchlistCard({
   async function triggerHunt() {
     if (hunting) return;
     setHunting(true);
+    setHuntNotice(null);
     try {
-      await fetch(`/api/watchlists/${watchlist.id}/hunt`, {
+      const res = await fetch(`/api/watchlists/${watchlist.id}/hunt`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
+      if (res.status === 429) {
+        const data = await res.json().catch(() => null);
+        setHuntNotice(data?.detail ?? "This agent hunted recently — try again later.");
+        setHunting(false);
+        return;
+      }
     } catch {
       // fall through — polling below still runs
     }
@@ -418,6 +426,9 @@ function WatchlistCard({
               </>
             )}
           </p>
+          {huntNotice && (
+            <p className={styles.huntNotice}>{huntNotice}</p>
+          )}
           {(loadingListings || hunting) && (
             <p className={styles.dealsLoading}>
               {hunting ? "Agents hunting marketplaces…" : "Loading listings…"}

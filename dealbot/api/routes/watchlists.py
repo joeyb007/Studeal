@@ -330,7 +330,14 @@ async def trigger_hunt(
     current_user: User = Depends(get_current_user),
 ) -> HuntTriggerResponse:
     """Fire a fresh v14 hunt for this watchlist. Enqueues a Celery task and
-    returns immediately; poll GET /{id}/listings to see results."""
+    returns immediately; poll GET /{id}/listings to see results.
+
+    Metering: manual hunts share the tier cadence budget with scheduled ones
+    (free daily, pro hourly) — each hunt is real browser + LLM spend. Inside
+    the window → 429; a dispatch stamps last_hunt_at so the scheduler can't
+    double-spend the same window."""
+    from dealbot.worker.scheduler import cadence_minutes
+
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
         if watchlist is None or watchlist.user_id != current_user.id:
@@ -342,6 +349,24 @@ async def trigger_hunt(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Watchlist has no context; cannot hunt.",
             )
+
+        if watchlist.last_hunt_at is not None:
+            last = watchlist.last_hunt_at
+            if last.tzinfo is None:  # sqlite returns stored UTC naive
+                last = last.replace(tzinfo=timezone.utc)
+            cadence = timedelta(minutes=cadence_minutes(watchlist, current_user))
+            next_at = last + cadence
+            now = datetime.now(timezone.utc)
+            if now < next_at:
+                wait_min = max(1, int((next_at - now).total_seconds() // 60))
+                tier_hint = "" if current_user.is_pro else " Pro agents hunt hourly."
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"This agent hunted recently — next hunt available in ~{wait_min} min.{tier_hint}",
+                )
+
+        watchlist.last_hunt_at = datetime.now(timezone.utc)
+        await session.commit()
 
     try:
         from dealbot.worker.tasks import research_for_agent

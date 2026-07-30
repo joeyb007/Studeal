@@ -15,6 +15,14 @@ from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
+REQUEUE_DELAY_S = 60
+
+
+class FleetAtCapacity(Exception):
+    """Raised pre-hunt when the fleet is at its concurrency cap; the task
+    re-enqueues itself with a delay instead of consuming failure retries."""
+
+
 _publisher: RedisEventPublisher | None = None
 
 
@@ -37,6 +45,13 @@ def research_for_agent(self, watchlist_id: int) -> dict:
     """Run the v14 hunt pipeline for a single watchlist; persist listings."""
     try:
         return asyncio.run(_run_hunt_and_persist(watchlist_id))
+    except FleetAtCapacity:
+        logger.info(
+            "research_for_agent: fleet at capacity — requeueing wl=%d in %ds",
+            watchlist_id, REQUEUE_DELAY_S,
+        )
+        research_for_agent.apply_async(args=[watchlist_id], countdown=REQUEUE_DELAY_S)
+        return {"watchlist_id": watchlist_id, "requeued": True}
     except Exception as exc:
         logger.exception("research_for_agent failed for wl=%d: %s", watchlist_id, exc)
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
@@ -54,7 +69,19 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
             return {"watchlist_id": watchlist_id, "error": "no_context"}
         context = WatchlistContext.model_validate_json(watchlist.context)
 
-    # 2. Open the hunt: DB row + live event stream identity.
+    # 2. Capacity gate — BEFORE any row exists, so a requeue leaves no orphan.
+    # Governor errors fail open: a Redis blip must not stop the fleet.
+    governor = _maybe_governor()
+    if governor is not None:
+        try:
+            at_capacity = not await governor.has_capacity()
+        except Exception:
+            logger.warning("governor capacity check failed — failing open", exc_info=True)
+            at_capacity = False
+        if at_capacity:
+            raise FleetAtCapacity(f"wl={watchlist_id}")
+
+    # 3. Open the hunt: DB row + live event stream identity.
     publisher = _get_publisher()
     async with get_async_session() as session:
         hunt = Hunt(watchlist_id=watchlist_id)
@@ -65,16 +92,18 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
     events = HuntEventContext(publisher=publisher, hunt_id=hunt_id, watchlist_id=watchlist_id)
     await publisher.publish(HuntStarted(hunt_id=hunt_id, watchlist_id=watchlist_id))
 
-    governor = _maybe_governor()
     if governor is not None:
-        await governor.register(hunt_id)
+        try:
+            await governor.register(hunt_id)
+        except Exception:
+            logger.warning("governor register failed for hunt %d", hunt_id, exc_info=True)
 
     try:
-        # 3. Run the v14 hunt pipeline. AGENT_BROWSER_BACKEND env var picks
+        # 4. Run the v14 hunt pipeline. AGENT_BROWSER_BACKEND env var picks
         # Browserbase (production) or local Playwright (dev/eval).
         offers = await run_hunt(context, events=events)
 
-        # 4. Persist offers with hunt provenance; flag alert candidates.
+        # 5. Persist offers with hunt provenance; flag alert candidates.
         result = await persist_offers(offers, hunt_id=hunt_id)
         new_ids = await mark_new_for_watchlist(hunt_id)
     except Exception as exc:
@@ -85,9 +114,13 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         raise
     finally:
         if governor is not None:
-            await governor.deregister(hunt_id)
+            try:
+                await governor.deregister(hunt_id)
+            except Exception:
+                # Must never mask an in-flight hunt exception.
+                logger.warning("governor deregister failed for hunt %d", hunt_id, exc_info=True)
 
-    # 5. Close the books: hunt row counters + watchlist.last_hunt_at.
+    # 6. Close the books: hunt row counters + watchlist.last_hunt_at.
     async with get_async_session() as session:
         hunt = await session.get(Hunt, hunt_id)
         hunt.status = "succeeded"
@@ -99,7 +132,7 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         watchlist.last_hunt_at = started_at
         await session.commit()
 
-    # 6. Live events + alert chaining.
+    # 7. Live events + alert chaining.
     await publisher.publish(HuntPersisted(
         hunt_id=hunt_id, watchlist_id=watchlist_id,
         offer_count=len(offers), persisted_count=result.written,
@@ -143,7 +176,7 @@ async def _close_hunt(
             await session.commit()
     await publisher.publish(HuntFinished(
         hunt_id=hunt_id, watchlist_id=watchlist_id,
-        status="failed", duration_s=_elapsed_s(started_at), error=error,
+        status=status, duration_s=_elapsed_s(started_at), error=error,
     ))
 
 
@@ -162,7 +195,12 @@ def _maybe_governor():
 
 
 def _maybe_dispatch_alerts(hunt_id: int) -> None:
-    """Seam for tests; production chains alert dispatch off every fruitful hunt."""
+    """Seam for tests; production chains alert dispatch off every fruitful hunt.
+    A broker blip here must not fail the (already successful, already paid-for)
+    hunt — the listings are persisted; alerts surface on the next hunt."""
     from dealbot.worker.alerts import dispatch_alerts
 
-    dispatch_alerts.delay(hunt_id)
+    try:
+        dispatch_alerts.delay(hunt_id)
+    except Exception:
+        logger.warning("alert dispatch enqueue failed for hunt %d", hunt_id, exc_info=True)

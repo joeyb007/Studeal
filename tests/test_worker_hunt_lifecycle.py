@@ -143,6 +143,63 @@ async def test_failed_hunt_marks_row_failed(rig):
 
 
 @pytest.mark.asyncio
+async def test_fleet_at_capacity_raises_before_any_row(rig):
+    factory, fake, wl_id, tasks_mod, monkeypatch = rig
+
+    class FullGovernor:
+        async def has_capacity(self, pending: int = 0) -> bool:
+            return False
+
+    monkeypatch.setattr(tasks_mod, "_maybe_governor", lambda: FullGovernor())
+
+    with pytest.raises(tasks_mod.FleetAtCapacity):
+        await tasks_mod._run_hunt_and_persist(wl_id)
+
+    async with factory() as s:
+        hunts = (await s.execute(select(Hunt))).scalars().all()
+        assert hunts == []          # no orphan row
+    assert fake.published == []     # no events either
+
+
+@pytest.mark.asyncio
+async def test_flaky_governor_fails_open(rig):
+    """Redis blips in the governor must never stop or fail a hunt."""
+    factory, fake, wl_id, tasks_mod, monkeypatch = rig
+
+    class FlakyGovernor:
+        async def has_capacity(self, pending: int = 0) -> bool:
+            raise ConnectionError("redis down")
+
+        async def register(self, hunt_id: int) -> None:
+            raise ConnectionError("redis down")
+
+        async def deregister(self, hunt_id: int) -> None:
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(tasks_mod, "_maybe_governor", lambda: FlakyGovernor())
+
+    async def fake_run_hunt(spec, events=None):
+        return [object()]
+
+    async def fake_persist(offers, hunt_id=None):
+        return PersistResult(written=1, listing_ids=[1], new_global_ids=[1])
+
+    async def fake_mark_new(hunt_id):
+        return []
+
+    monkeypatch.setattr(tasks_mod, "run_hunt", fake_run_hunt)
+    monkeypatch.setattr(tasks_mod, "persist_offers", fake_persist)
+    monkeypatch.setattr(tasks_mod, "mark_new_for_watchlist", fake_mark_new)
+
+    result = await tasks_mod._run_hunt_and_persist(wl_id)
+    assert result["offer_count"] == 1
+
+    async with factory() as s:
+        hunt = await s.get(Hunt, result["hunt_id"])
+        assert hunt.status == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_missing_watchlist_short_circuits(rig):
     factory, fake, _, tasks_mod, _mp = rig
     result = await tasks_mod._run_hunt_and_persist(99999)

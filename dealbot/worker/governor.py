@@ -20,6 +20,7 @@ import redis.asyncio as aioredis
 class FleetGovernor:
     ZSET_KEY = "fleet:active_hunts"
     LAST_START_KEY = "fleet:last_start"
+    TICK_LOCK_KEY = "fleet:tick_lock"
     STALE_S = 900
 
     def __init__(
@@ -58,6 +59,14 @@ class FleetGovernor:
 
     async def deregister(self, hunt_id: int) -> None:
         await self._client.zrem(self.ZSET_KEY, str(hunt_id))
+
+    async def acquire_tick_lock(self, ttl_s: int = 240) -> bool:
+        """SET NX mutex for the scheduler tick — prevents concurrent
+        schedule_due_hunts executions from double-enqueuing the same due set."""
+        return bool(await self._client.set(self.TICK_LOCK_KEY, "1", nx=True, ex=ttl_s))
+
+    async def release_tick_lock(self) -> None:
+        await self._client.delete(self.TICK_LOCK_KEY)
 
     async def seconds_since_last_start(self) -> float:
         raw = await self._client.get(self.LAST_START_KEY)

@@ -27,6 +27,9 @@ class RedisEventPublisher:
         `redis_url` (default: $REDIS_URL)."""
         self._url = redis_url or os.environ.get("REDIS_URL", "redis://localhost:6379/0")
         self._client = client
+        # Strong refs to in-flight publish tasks: the loop keeps only weak
+        # references, and a GC'd pending task is a silently dropped event.
+        self._tasks: set[asyncio.Task] = set()
 
     def _get_client(self) -> "aioredis.Redis":
         if self._client is None:
@@ -50,7 +53,9 @@ class RedisEventPublisher:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self.publish(event))
+        task = loop.create_task(self.publish(event))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def aclose(self) -> None:
         if self._client is not None:

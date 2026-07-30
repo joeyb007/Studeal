@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from dealbot.db.database import get_async_session
-from dealbot.db.models import User, Watchlist
+from dealbot.db.models import Hunt, User, Watchlist
 from dealbot.worker.celery_app import app
 from dealbot.worker.governor import FleetGovernor, build_governor
 
@@ -83,25 +83,60 @@ async def _schedule(
         async def enqueue(wl_id: int, countdown: int) -> None:
             research_for_agent.apply_async(args=[wl_id], countdown=countdown)
 
+    # Tick mutex: a tick delayed behind a long task can otherwise run
+    # concurrently with the next one and double-enqueue the same due set.
+    try:
+        locked = await governor.acquire_tick_lock()
+    except Exception:
+        logger.warning("tick lock unavailable — proceeding unlocked", exc_info=True)
+        locked = True
+    if not locked:
+        logger.info("schedule_due_hunts: another tick holds the lock — skipping")
+        return {"enqueued": 0, "due": 0, "skipped_capacity": 0}
+
     enqueued = 0
     skipped_capacity = 0
-    async with get_async_session() as session:
-        due = await select_due_watchlists(session, now)
-        for watchlist in due:
-            if not await governor.has_capacity(pending=enqueued):
-                skipped_capacity = len(due) - enqueued
-                break
-            await enqueue(watchlist.id, enqueued * governor.min_start_gap_s)
-            watchlist.last_hunt_at = now
-            enqueued += 1
-        await session.commit()
+    try:
+        async with get_async_session() as session:
+            reaped = await _reap_stale_hunts(session, now)
+            due = await select_due_watchlists(session, now)
+            for watchlist in due:
+                if not await governor.has_capacity(pending=enqueued):
+                    skipped_capacity = len(due) - enqueued
+                    break
+                await enqueue(watchlist.id, enqueued * governor.min_start_gap_s)
+                watchlist.last_hunt_at = now
+                enqueued += 1
+            await session.commit()
+    finally:
+        try:
+            await governor.release_tick_lock()
+        except Exception:
+            logger.warning("tick lock release failed (TTL will expire it)", exc_info=True)
 
-    if due:
+    if due or reaped:
         logger.info(
-            "schedule_due_hunts: due=%d enqueued=%d skipped_capacity=%d",
-            len(due), enqueued, skipped_capacity,
+            "schedule_due_hunts: due=%d enqueued=%d skipped_capacity=%d reaped=%d",
+            len(due), enqueued, skipped_capacity, reaped,
         )
     return {"enqueued": enqueued, "due": len(due), "skipped_capacity": skipped_capacity}
+
+
+async def _reap_stale_hunts(session, now: datetime) -> int:
+    """Fail out hunts stuck in `running` past the governor's staleness horizon —
+    a SIGKILLed worker leaves the row behind, and Mission Control renders DB
+    state on load, so stale `running` hunts are user-visible forever otherwise."""
+    horizon = now - timedelta(seconds=FleetGovernor.STALE_S)
+    stale = (
+        await session.execute(
+            select(Hunt).where(Hunt.status == "running", Hunt.started_at < horizon)
+        )
+    ).scalars().all()
+    for hunt in stale:
+        hunt.status = "failed"
+        hunt.finished_at = now
+        hunt.error = "reaped: no completion within staleness horizon (worker lost)"
+    return len(stale)
 
 
 @app.task(name="dealbot.worker.scheduler.schedule_due_hunts")

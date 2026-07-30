@@ -30,10 +30,18 @@ router = APIRouter(prefix="/stream", tags=["stream"])
 _HEARTBEAT_TIMEOUT_S = 15.0
 
 
+_redis: "aioredis.Redis | None" = None
+
+
 def _get_pubsub(watchlist_id: int):
-    """Seam for tests. One pubsub connection per stream."""
-    url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    return aioredis.from_url(url).pubsub()
+    """Seam for tests. Pubsub objects are per-subscriber; the underlying client
+    (and its connection pool) is shared — one client per SSE connection would
+    leak a pool per open Mission Control tab."""
+    global _redis
+    if _redis is None:
+        url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        _redis = aioredis.from_url(url)
+    return _redis.pubsub()
 
 
 @router.get("/watchlists/{watchlist_id}")

@@ -35,12 +35,18 @@ class FakeRedis:
         for member in [m for m, score in zset.items() if lo <= score <= hi]:
             del zset[member]
 
-    async def set(self, name: str, value):
+    async def set(self, name: str, value, nx: bool = False, ex: int | None = None):
+        if nx and name in self.kv:
+            return None
         self.kv[name] = str(value)
+        return True
 
     async def get(self, name: str):
         val = self.kv.get(name)
         return val.encode() if val is not None else None
+
+    async def delete(self, name: str):
+        self.kv.pop(name, None)
 
 
 def _governor(fake: FakeRedis, max_concurrent: int = 2, gap: int = 20) -> FleetGovernor:
@@ -93,6 +99,17 @@ async def test_seconds_since_last_start():
     assert await gov.seconds_since_last_start() == float("inf")
     await gov.register(1)
     assert await gov.seconds_since_last_start() < 5.0
+
+
+@pytest.mark.asyncio
+async def test_tick_lock_mutual_exclusion():
+    fake = FakeRedis()
+    gov_a = _governor(fake)
+    gov_b = _governor(fake)
+    assert await gov_a.acquire_tick_lock() is True
+    assert await gov_b.acquire_tick_lock() is False  # held by A
+    await gov_a.release_tick_lock()
+    assert await gov_b.acquire_tick_lock() is True
 
 
 @pytest.mark.asyncio

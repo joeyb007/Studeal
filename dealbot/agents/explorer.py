@@ -163,6 +163,25 @@ Standard flow:
 EXEMPT_DONE_REASONS: tuple[str, ...] = ("captcha", "auth_wall", "no_results")
 
 
+def _site_root(url: str) -> str:
+    """Scheme + host of a URL — the marketplace's front door."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}/" if parts.netloc else ""
+
+
+def _registrable_domain(url: str) -> str:
+    """Naive eTLD+1 (last two host labels). Good enough for the curated
+    marketplace set (.ca/.com/.org): toronto.craigslist.org → craigslist.org,
+    and ebay.ca ≠ ebay.com — which is exactly the drift we block."""
+    from urllib.parse import urlsplit
+
+    host = urlsplit(url).hostname or ""
+    labels = host.split(".")
+    return ".".join(labels[-2:]) if len(labels) >= 2 else host
+
+
 class Explorer:
     MAX_TURNS: int = 20
     STALL_THRESHOLD: int = 4   # N consecutive no-effect actions → stop
@@ -183,17 +202,60 @@ class Explorer:
         session: BrowserSession,
         sink: Sink,
     ) -> ExplorerResult:
-        # Auto-navigate to the marketplace home page
-        try:
-            await session.page.goto(
-                entry_url, wait_until="domcontentloaded", timeout=20_000,
+        # Session warm-up: marketplaces soft-block cookie-less deep links
+        # (eBay serves an error shell for direct SERP hits). Load the site
+        # root first so the SERP request carries a session, then enter.
+        root = _site_root(entry_url)
+        if root and entry_url.rstrip("/") != root.rstrip("/"):
+            try:
+                await session.page.goto(
+                    root, wait_until="domcontentloaded", timeout=20_000,
+                )
+            except Exception as exc:
+                # Warm-up is best-effort; the entry goto below still decides.
+                # A failed nav can leave Chromium mid-commit on its error page,
+                # which races (and interrupts) the next goto — let it settle.
+                logger.info("Explorer: warm-up goto failed for %r: %s", root, exc)
+                try:
+                    await session.page.wait_for_load_state("load", timeout=3_000)
+                except Exception:
+                    pass
+
+        entry_error: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                await session.page.goto(
+                    entry_url, wait_until="domcontentloaded", timeout=20_000,
+                )
+                entry_error = None
+                break
+            except Exception as exc:
+                entry_error = exc
+                logger.warning(
+                    "Explorer: initial goto failed for %r (attempt %d): %s",
+                    entry_url, attempt, exc,
+                )
+                # A goto that throws "interrupted by another navigation" often
+                # still commits — settle, and if we arrived, call it a success
+                # instead of re-navigating (which would interrupt it again).
+                try:
+                    await session.page.wait_for_load_state(
+                        "domcontentloaded", timeout=5_000,
+                    )
+                except Exception:
+                    pass
+                if session.page.url.rstrip("/") == entry_url.rstrip("/"):
+                    entry_error = None
+                    break
+        if entry_error is not None:
+            self.trace.record_error(
+                orchestrator_turn=0, worker="explorer", error=str(entry_error)[:300],
             )
-        except Exception as exc:
-            logger.warning("Explorer: initial goto failed for %r: %s", entry_url, exc)
-            self.trace.record_error(orchestrator_turn=0, worker="explorer", error=str(exc)[:300])
             return ExplorerResult(
                 urls_visited=[], turns_used=0, stop_reason="error",
             )
+
+        entry_domain = _registrable_domain(entry_url)
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": EXPLORER_SYSTEM},
@@ -369,6 +431,15 @@ class Explorer:
                 if not url:
                     messages.append({"role": "user", "content": (
                         "navigate requires 'url' field. Re-emit."
+                    )})
+                    continue
+                if entry_domain and _registrable_domain(url) != entry_domain:
+                    # Off-domain drift killed real runs (ebay.ca error page →
+                    # ebay.com → captcha). The hunt stays on the entry site.
+                    messages.append({"role": "user", "content": (
+                        f"Blocked: {url} leaves {entry_domain}. Stay on the "
+                        f"{marketplace} site — navigate within {entry_domain}, "
+                        "or call done with a reason."
                     )})
                     continue
                 try:

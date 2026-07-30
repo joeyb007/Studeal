@@ -504,3 +504,98 @@ async def test_settled_snapshot_waits_for_js_render():
     assert any("Loaded" in t for t in texts), (
         "_settled_snapshot must have retried until the JS-rendered content appeared"
     )
+
+
+# ---------------------------------------------------------------------
+# A1: session warm-up entry + domain guardrail
+# ---------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_warmup_visits_root_before_template_entry():
+    """Entry on a deep SERP URL first loads the site root (session warm-up),
+    then the SERP. Guards against soft-blocks on cookie-less deep links."""
+    llm = _MockLLM([{"action": "done", "reason": "no_results on this page"}])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+    visited: list[str] = []
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _HOME_HTML)
+        await _mock_page(bs, "https://mock.local/search?q=aeron", _SERP_HTML)
+        bs.page.on("framenavigated", lambda frame: visited.append(frame.url))
+
+        result = await explorer.explore(
+            entry_url="https://mock.local/search?q=aeron",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+
+    assert result.stop_reason == "done"
+    assert visited[0].rstrip("/") == "https://mock.local"
+    assert any("search?q=aeron" in u for u in visited[1:])
+
+
+@pytest.mark.asyncio
+async def test_entry_on_root_skips_warmup():
+    """Entry that already IS the root does not double-load it."""
+    llm = _MockLLM([{"action": "done", "reason": "no_results"}])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+    visited: list[str] = []
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _HOME_HTML)
+        bs.page.on("framenavigated", lambda frame: visited.append(frame.url))
+        await explorer.explore(
+            entry_url="https://mock.local/",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+
+    assert [u for u in visited if u.rstrip("/") == "https://mock.local"] != []
+    assert len(visited) == 1
+
+
+@pytest.mark.asyncio
+async def test_navigate_off_domain_is_blocked():
+    """The LLM asking to navigate off the entry marketplace's registrable
+    domain is refused with an explanatory message; the page never moves."""
+    llm = _MockLLM([
+        {"action": "navigate", "url": "https://www.evil.example/login"},
+        {"action": "done", "reason": "no_results"},
+    ])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _HOME_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+        assert bs.page.url.startswith("https://mock.local")
+
+    assert result.stop_reason == "done"
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_subdomain_is_allowed():
+    """Subdomain hops within the registrable domain stay legal
+    (toronto.craigslist.org ↔ craigslist.org)."""
+    llm = _MockLLM([
+        {"action": "navigate", "url": "https://sub.mock.local/area"},
+        {"action": "done", "reason": "no_results"},
+    ])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _HOME_HTML)
+        await _mock_page(bs, "https://sub.mock.local/area", _SERP_HTML)
+        await explorer.explore(
+            entry_url="https://mock.local/",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+        assert bs.page.url.startswith("https://sub.mock.local")

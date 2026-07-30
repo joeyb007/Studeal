@@ -163,6 +163,20 @@ Standard flow:
 EXEMPT_DONE_REASONS: tuple[str, ...] = ("captcha", "auth_wall", "no_results")
 
 
+# Degenerate-page floors: a real SERP/home has hundreds of elements; soft-block
+# error shells (eBay: 18 elems / 399 chars) have almost none. Both conditions
+# must hold so sparse-but-real pages (craigslist zero-results: 136 elems) pass.
+DEGENERATE_MAX_ELEMENTS = 40
+DEGENERATE_MAX_TEXT_CHARS = 1000
+
+
+def _is_degenerate(snap: "PageSnapshot") -> bool:
+    return (
+        len(snap.element_map) < DEGENERATE_MAX_ELEMENTS
+        and len(snap.text) < DEGENERATE_MAX_TEXT_CHARS
+    )
+
+
 def _site_root(url: str) -> str:
     """Scheme + host of a URL — the marketplace's front door."""
     from urllib.parse import urlsplit
@@ -257,9 +271,50 @@ class Explorer:
 
         entry_domain = _registrable_domain(entry_url)
 
+        # Degenerate-entry fallback: if the entry page is a dead shell (soft
+        # block / error page), re-enter through the site root and drive the
+        # site's own search UI — the mode that survives session checks. If the
+        # root is dead too, the site is walled: stop before any LLM spend.
+        via_search_ui = False
+        entry_snap = await _settled_snapshot(session.page)
+        if (
+            _is_degenerate(entry_snap)
+            and root
+            and entry_url.rstrip("/") != root.rstrip("/")
+        ):
+            logger.info(
+                "Explorer: degenerate entry page (%d elems, %d chars) on %s — "
+                "falling back to home search UI",
+                len(entry_snap.element_map), len(entry_snap.text), marketplace,
+            )
+            try:
+                await session.page.goto(
+                    root, wait_until="domcontentloaded", timeout=20_000,
+                )
+            except Exception as exc:
+                self.trace.record_error(
+                    orchestrator_turn=0, worker="explorer",
+                    error=f"degenerate entry; root goto failed: {exc}"[:300],
+                )
+                return ExplorerResult(
+                    urls_visited=[], turns_used=0, stop_reason="error",
+                )
+            root_snap = await _settled_snapshot(session.page)
+            if _is_degenerate(root_snap):
+                self.trace.record_error(
+                    orchestrator_turn=0, worker="explorer",
+                    error="degenerate entry AND degenerate root — site walled",
+                )
+                return ExplorerResult(
+                    urls_visited=[], turns_used=0, stop_reason="error",
+                )
+            via_search_ui = True
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": EXPLORER_SYSTEM},
-            {"role": "user", "content": _initial_prompt(marketplace, entry_url, query, spec)},
+            {"role": "user", "content": _initial_prompt(
+                marketplace, entry_url, query, spec, via_search_ui=via_search_ui,
+            )},
         ]
 
         # State carried across turns
@@ -567,14 +622,26 @@ async def _do_type(
 
 def _initial_prompt(
     marketplace: str, entry_url: str, query: str, spec: WatchlistContext,
+    via_search_ui: bool = False,
 ) -> str:
+    if via_search_ui:
+        opener = (
+            "NOTE: the direct search link for this marketplace was blocked or "
+            "returned a dead page, so you are starting on the site's home page "
+            "instead. Find the site's search box, type the query into it, "
+            "submit, then follow the normal result-page procedure."
+        )
+    else:
+        opener = (
+            "You are on the marketplace home page. Your first action is typically "
+            "to type the query into the site's search bar. Emit the first action."
+        )
     return (
         f"Marketplace: {marketplace}\n"
         f"Home URL (already loaded): {entry_url}\n"
         f"Query to search for: {query!r}\n"
         f"Watchlist spec: {spec.model_dump_json(indent=2)}\n\n"
-        "You are on the marketplace home page. Your first action is typically "
-        "to type the query into the site's search bar. Emit the first action."
+        + opener
     )
 
 

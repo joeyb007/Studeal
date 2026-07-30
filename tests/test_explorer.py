@@ -106,6 +106,11 @@ async def _mock_page(bs: LocalPlaywrightSession, url: str, html: str) -> None:
     )
 
 
+
+_FILLER = "".join(
+    f'<a href="#f{i}">Filler item {i} — realistic page weight</a> ' for i in range(60)
+)
+
 # Home page with a labelled search form. Form submits GET to /search which
 # maps to the SERP page below.
 _HOME_HTML = """
@@ -116,8 +121,9 @@ _HOME_HTML = """
     <label for="q">Search</label>
     <input id="q" name="q" type="text" aria-label="Search">
   </form>
+  <div>{FILLER}</div>
 </body></html>
-"""
+""".replace("{FILLER}", _FILLER)
 
 _SERP_HTML = """
 <!doctype html>
@@ -126,16 +132,18 @@ _SERP_HTML = """
   <div>Listing A</div>
   <div>Listing B</div>
   <a href="https://mock.local/page2">Next</a>
+  <div>{FILLER}</div>
 </body></html>
-"""
+""".replace("{FILLER}", _FILLER)
 
 _PAGE2_HTML = """
 <!doctype html>
 <html><head><title>Marketplace P2</title></head><body>
   <h1>Search results — page 2</h1>
   <div>Listing C</div>
+  <div>{FILLER}</div>
 </body></html>
-"""
+""".replace("{FILLER}", _FILLER)
 
 
 # ---------------------------------------------------------------------
@@ -295,10 +303,10 @@ async def test_scroll_with_new_content_does_not_stall():
         {"action": "done", "reason": "no_results after full scroll"},
     ])
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://example.test/serp", html)
+        await _mock_page(bs, "https://example.test/", html)
         sink, seen = await _sink_collector()
         result = await Explorer(llm).explore(
-            entry_url="https://example.test/serp",
+            entry_url="https://example.test/",
             marketplace="test", query="aeron", spec=_spec(),
             session=bs, sink=sink,
         )
@@ -313,10 +321,10 @@ async def test_four_no_effect_actions_stops_stalled():
     # Clicking a nonexistent id changes nothing, 4x in a row.
     llm = _MockLLM([{"action": "click", "id": 99999}] * 6)
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://example.test/static", html)
+        await _mock_page(bs, "https://example.test/", html)
         sink, seen = await _sink_collector()
         result = await Explorer(llm).explore(
-            entry_url="https://example.test/static",
+            entry_url="https://example.test/",
             marketplace="test", query="aeron", spec=_spec(),
             session=bs, sink=sink,
         )
@@ -335,10 +343,10 @@ async def test_premature_done_gets_nudged_then_accepted():
         {"action": "done", "reason": "still finished"},
     ])
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://example.test/serp", html)
+        await _mock_page(bs, "https://example.test/", html)
         sink, seen = await _sink_collector()
         result = await Explorer(llm).explore(
-            entry_url="https://example.test/serp",
+            entry_url="https://example.test/",
             marketplace="test", query="aeron", spec=_spec(),
             session=bs, sink=sink,
         )
@@ -351,10 +359,10 @@ async def test_exempt_done_reason_accepted_immediately():
     html = "<html><body><p>login wall</p></body></html>"
     llm = _MockLLM([{"action": "done", "reason": "auth_wall on this site"}])
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://example.test/login", html)
+        await _mock_page(bs, "https://example.test/", html)
         sink, seen = await _sink_collector()
         result = await Explorer(llm).explore(
-            entry_url="https://example.test/login",
+            entry_url="https://example.test/",
             marketplace="test", query="aeron", spec=_spec(),
             session=bs, sink=sink,
         )
@@ -369,10 +377,10 @@ async def test_explorer_writes_trace(tmp_path):
     llm = _MockLLM([{"action": "done", "reason": "no_results"}])
     trace = FilesystemTraceWriter(tmp_path / "run1")
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://example.test/x", html)
+        await _mock_page(bs, "https://example.test/", html)
         sink, seen = await _sink_collector()
         await Explorer(llm, trace=trace).explore(
-            entry_url="https://example.test/x",
+            entry_url="https://example.test/",
             marketplace="test", query="aeron", spec=_spec(),
             session=bs, sink=sink,
         )
@@ -401,10 +409,10 @@ async def test_vision_fallback_after_two_failed_actions():
     llm.complete = capturing
 
     async with LocalPlaywrightSession() as bs:
-        await _mock_page(bs, "https://example.test/x", html)
+        await _mock_page(bs, "https://example.test/", html)
         sink, seen = await _sink_collector()
         await Explorer(llm).explore(
-            entry_url="https://example.test/x",
+            entry_url="https://example.test/",
             marketplace="test", query="aeron", spec=_spec(),
             session=bs, sink=sink,
         )
@@ -599,3 +607,92 @@ async def test_navigate_to_subdomain_is_allowed():
             session=bs, sink=sink,
         )
         assert bs.page.url.startswith("https://sub.mock.local")
+
+
+# ---------------------------------------------------------------------
+# A2: degenerate-entry fallback
+# ---------------------------------------------------------------------
+
+_DEAD_HTML = """
+<!doctype html>
+<html><head><title>Error Page</title></head><body>
+  <p>SORRY</p><p>Something went wrong on our end</p>
+  <a href="https://mock.local/">Go to homepage</a>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_degenerate_entry_falls_back_to_home_search_ui():
+    """A dead SERP (error shell) triggers re-entry via the site root, with the
+    initial prompt telling the LLM to use the site's own search box."""
+    class _CapturingLLM(_MockLLM):
+        def __init__(self, actions):
+            super().__init__(actions)
+            self.user_messages: list[str] = []
+
+        async def complete(self, messages, response_format=None, **kwargs):
+            self.user_messages = [
+                m["content"] for m in messages
+                if m["role"] == "user" and isinstance(m["content"], str)
+            ]
+            return await super().complete(messages, response_format, **kwargs)
+
+    llm = _CapturingLLM([{"action": "done", "reason": "no_results"}])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _HOME_HTML)
+        await _mock_page(bs, "https://mock.local/search?q=aeron", _DEAD_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/search?q=aeron",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+        assert bs.page.url.rstrip("/") == "https://mock.local"
+
+    assert result.stop_reason == "done"
+    assert llm.calls == 1
+    joined = "\n".join(llm.user_messages)
+    assert "search box" in joined.lower()
+
+
+@pytest.mark.asyncio
+async def test_degenerate_root_errors_without_llm_calls():
+    """If the root is dead too, the site is walled: error out, spend nothing."""
+    llm = _MockLLM([])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _DEAD_HTML)
+        await _mock_page(bs, "https://mock.local/search?q=aeron", _DEAD_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/search?q=aeron",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+
+    assert result.stop_reason == "error"
+    assert llm.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_healthy_entry_skips_fallback():
+    """A healthy SERP entry never triggers the fallback path."""
+    llm = _MockLLM([{"action": "done", "reason": "no_results"}])
+    explorer = Explorer(llm=llm)
+    sink, _ = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _HOME_HTML)
+        await _mock_page(bs, "https://mock.local/search?q=aeron", _SERP_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/search?q=aeron",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=sink,
+        )
+        assert "search?q=aeron" in bs.page.url
+
+    assert result.stop_reason == "done"

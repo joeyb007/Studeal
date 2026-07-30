@@ -9,12 +9,12 @@
 
 .card {
   width: 380px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--bg-card);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(26, 47, 94, 0.1);
+  border: 1px solid rgba(168, 188, 232, 0.1);
   border-radius: 20px;
   padding: 36px 32px;
-  box-shadow: 0 4px 32px rgba(26, 47, 94, 0.08);
+  box-shadow: 0 4px 32px rgba(168, 188, 232, 0.08);
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -69,8 +69,8 @@
 .input {
   width: 100%;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(26, 47, 94, 0.15);
+  background: var(--bg-card);
+  border: 1px solid rgba(168, 188, 232, 0.15);
   border-radius: 10px;
   font-size: 14px;
   color: var(--text-primary);
@@ -84,9 +84,9 @@
 
 .error {
   font-size: 12px;
-  color: #dc2626;
+  color: var(--danger);
   padding: 8px 10px;
-  background: rgba(220, 38, 38, 0.06);
+  background: rgba(222, 123, 98, 0.06);
   border-radius: 8px;
 }
 
@@ -94,7 +94,7 @@
   width: 100%;
   padding: 11px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-radius: 10px;
   font-size: 14px;
   font-weight: 700;

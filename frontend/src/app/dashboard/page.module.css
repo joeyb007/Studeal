@@ -7,11 +7,11 @@
   max-width: 600px;
   margin: 16px auto 0;
   padding: 12px 16px;
-  background: rgba(22, 163, 74, 0.08);
-  border: 1px solid rgba(22, 163, 74, 0.25);
+  background: rgba(111, 191, 143, 0.08);
+  border: 1px solid rgba(111, 191, 143, 0.25);
   border-radius: 12px;
   font-size: 13px;
-  color: #15803d;
+  color: var(--success);
   animation: searchFadeIn 0.4s ease both;
 }
 
@@ -19,7 +19,7 @@
   background: none;
   border: none;
   font-size: 12px;
-  color: #15803d;
+  color: var(--success);
   opacity: 0.6;
   cursor: pointer;
   flex-shrink: 0;
@@ -120,7 +120,7 @@
   width: 32px;
   height: 18px;
   border-radius: 9px;
-  background: rgba(26, 47, 94, 0.15);
+  background: rgba(168, 188, 232, 0.15);
   position: relative;
   transition: background 0.2s;
   cursor: pointer;
@@ -136,7 +136,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--bg-card);
   transition: transform 0.2s;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
@@ -148,7 +148,7 @@
   margin-top: 14px;
   padding: 6px;
   border-radius: 7px;
-  border: 1px solid rgba(26, 47, 94, 0.15);
+  border: 1px solid rgba(168, 188, 232, 0.15);
   background: transparent;
   font-size: 11px;
   font-weight: 600;
@@ -190,11 +190,9 @@
 }
 
 .heading {
-  font-family: var(--font-serif);
-  font-style: italic;
   font-size: 40px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text-primary);
   letter-spacing: -0.6px;
   margin-bottom: 10px;
 }
@@ -215,7 +213,7 @@
 
 .searchWrap:focus-within {
   transform: translateY(-3px);
-  filter: drop-shadow(0 8px 24px rgba(26, 47, 94, 0.12));
+  filter: drop-shadow(0 8px 24px rgba(168, 188, 232, 0.12));
 }
 
 .searchIcon {
@@ -231,12 +229,12 @@
   width: 100%;
   padding: 16px 44px 16px 46px;
   border-radius: 16px;
-  border: 1.5px solid rgba(26, 47, 94, 0.15);
-  background: rgba(255, 255, 255, 0.8);
+  border: 1.5px solid rgba(168, 188, 232, 0.15);
+  background: var(--bg-card);
   backdrop-filter: blur(12px);
   font-size: 15px;
   color: var(--text-primary);
-  box-shadow: 0 4px 24px rgba(26, 47, 94, 0.08);
+  box-shadow: 0 4px 24px rgba(168, 188, 232, 0.08);
   transition: border-color 0.2s, box-shadow 0.2s;
   box-sizing: border-box;
 }
@@ -244,7 +242,7 @@
 .searchInput:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 8px 40px rgba(26, 47, 94, 0.16);
+  box-shadow: 0 8px 40px rgba(168, 188, 232, 0.16);
 }
 
 .searchInput::placeholder {
@@ -278,8 +276,8 @@
 .suggestionPill {
   padding: 6px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(26, 47, 94, 0.12);
-  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(168, 188, 232, 0.12);
+  background: var(--bg-card);
   backdrop-filter: blur(8px);
   font-size: 12px;
   font-weight: 500;
@@ -291,7 +289,7 @@
 .suggestionPill:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--bg-card);
 }
 
 .searching {
@@ -363,7 +361,7 @@
 
 .resultsScroll::-webkit-scrollbar { width: 4px; }
 .resultsScroll::-webkit-scrollbar-track { background: transparent; }
-.resultsScroll::-webkit-scrollbar-thumb { background: rgba(26, 47, 94, 0.15); border-radius: 2px; }
+.resultsScroll::-webkit-scrollbar-thumb { background: rgba(168, 188, 232, 0.15); border-radius: 2px; }
 
 .grid {
   display: grid;
@@ -396,12 +394,12 @@
   max-width: 600px;
   margin-top: 20px;
   border-radius: 16px;
-  border: 1px solid rgba(26, 47, 94, 0.1);
-  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(168, 188, 232, 0.1);
+  background: var(--bg-card);
   backdrop-filter: blur(12px);
   overflow: hidden;
   padding: 14px 0 16px;
-  box-shadow: 0 2px 16px rgba(26, 47, 94, 0.05);
+  box-shadow: 0 2px 16px rgba(168, 188, 232, 0.05);
 }
 
 .carouselLabel {
@@ -443,8 +441,8 @@
   gap: 8px;
   padding: 7px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(26, 47, 94, 0.1);
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(168, 188, 232, 0.1);
+  background: var(--bg-card);
   text-decoration: none;
   white-space: nowrap;
   transition: border-color 0.15s, transform 0.15s;
@@ -459,8 +457,8 @@
 .miniDiscount {
   font-size: 10px;
   font-weight: 800;
-  color: #fff;
-  background: #dc2626;
+  color: var(--on-accent);
+  background: var(--danger);
   padding: 1px 5px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -510,17 +508,17 @@
   animation: cardEnter 0.35s ease both;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.65);
+  background: var(--bg-card);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(26, 47, 94, 0.08);
+  border: 1px solid rgba(168, 188, 232, 0.08);
   border-radius: 14px;
-  box-shadow: 0 1px 8px rgba(26, 47, 94, 0.05);
+  box-shadow: 0 1px 8px rgba(168, 188, 232, 0.05);
   transition: box-shadow 0.2s, transform 0.15s;
   overflow: hidden;
 }
 
 .card:hover {
-  box-shadow: 0 4px 20px rgba(26, 47, 94, 0.1);
+  box-shadow: 0 4px 20px rgba(168, 188, 232, 0.1);
   transform: translateY(-2px);
 }
 
@@ -548,8 +546,8 @@
 .studentBadge {
   font-size: 10px;
   font-weight: 600;
-  color: #16a34a;
-  background: rgba(22, 163, 74, 0.08);
+  color: var(--success);
+  background: rgba(111, 191, 143, 0.08);
   padding: 2px 7px;
   border-radius: 20px;
 }
@@ -588,7 +586,7 @@
 .discountInline {
   font-size: 12px;
   font-weight: 600;
-  color: #16a34a;
+  color: var(--success);
 }
 
 .cardFooter {
@@ -596,7 +594,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 18px;
-  border-top: 1px solid rgba(26, 47, 94, 0.06);
+  border-top: 1px solid rgba(168, 188, 232, 0.06);
 }
 
 .badges { display: flex; gap: 5px; align-items: center; }
@@ -608,8 +606,8 @@
   border-radius: 20px;
 }
 
-.condUsed { background: rgba(234, 179, 8, 0.1); color: #a16207; }
-.condRefurb { background: rgba(139, 92, 246, 0.1); color: #7c3aed; }
+.condUsed { background: rgba(234, 179, 8, 0.1); color: var(--amber); }
+.condRefurb { background: rgba(139, 92, 246, 0.1); color: #a78bfa; }
 
 .buyBtn {
   font-size: 12px;

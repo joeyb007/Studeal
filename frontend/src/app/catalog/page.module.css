@@ -10,9 +10,9 @@
 .sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--bg-card);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(26, 47, 94, 0.1);
+  border: 1px solid rgba(168, 188, 232, 0.1);
   border-radius: 16px;
   padding: 20px;
   position: sticky;
@@ -61,7 +61,7 @@
   width: 36px;
   height: 20px;
   border-radius: 10px;
-  background: rgba(26, 47, 94, 0.15);
+  background: rgba(168, 188, 232, 0.15);
   position: relative;
   transition: background 0.2s;
   cursor: pointer;
@@ -77,7 +77,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--bg-card);
   transition: transform 0.2s;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
@@ -89,7 +89,7 @@
   margin-top: 16px;
   padding: 7px;
   border-radius: 8px;
-  border: 1px solid rgba(26, 47, 94, 0.15);
+  border: 1px solid rgba(168, 188, 232, 0.15);
   background: transparent;
   font-size: 12px;
   font-weight: 600;
@@ -125,11 +125,9 @@
 .breadcrumb a:hover { opacity: 1; color: var(--accent); }
 
 .heading {
-  font-family: var(--font-serif);
-  font-style: italic;
   font-size: 28px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text-primary);
   letter-spacing: -0.4px;
   line-height: 1;
 }
@@ -144,8 +142,8 @@
 .sortSelect {
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(26, 47, 94, 0.12);
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(168, 188, 232, 0.12);
+  background: var(--bg-card);
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
@@ -206,17 +204,17 @@
 .card {
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.65);
+  background: var(--bg-card);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(26, 47, 94, 0.08);
+  border: 1px solid rgba(168, 188, 232, 0.08);
   border-radius: 14px;
-  box-shadow: 0 1px 8px rgba(26, 47, 94, 0.05);
+  box-shadow: 0 1px 8px rgba(168, 188, 232, 0.05);
   transition: box-shadow 0.2s, transform 0.15s;
   overflow: hidden;
 }
 
 .card:hover {
-  box-shadow: 0 4px 20px rgba(26, 47, 94, 0.1);
+  box-shadow: 0 4px 20px rgba(168, 188, 232, 0.1);
   transform: translateY(-2px);
 }
 
@@ -244,8 +242,8 @@
 .studentBadge {
   font-size: 10px;
   font-weight: 600;
-  color: #16a34a;
-  background: rgba(22, 163, 74, 0.08);
+  color: var(--success);
+  background: rgba(111, 191, 143, 0.08);
   padding: 2px 7px;
   border-radius: 20px;
 }
@@ -284,7 +282,7 @@
 .discountInline {
   font-size: 12px;
   font-weight: 600;
-  color: #16a34a;
+  color: var(--success);
 }
 
 .cardFooter {
@@ -292,7 +290,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 18px;
-  border-top: 1px solid rgba(26, 47, 94, 0.06);
+  border-top: 1px solid rgba(168, 188, 232, 0.06);
 }
 
 .badges { display: flex; gap: 5px; align-items: center; }
@@ -304,8 +302,8 @@
   border-radius: 20px;
 }
 
-.condUsed { background: rgba(234, 179, 8, 0.1); color: #a16207; }
-.condRefurb { background: rgba(139, 92, 246, 0.1); color: #7c3aed; }
+.condUsed { background: rgba(234, 179, 8, 0.1); color: var(--amber); }
+.condRefurb { background: rgba(139, 92, 246, 0.1); color: #a78bfa; }
 
 .buyBtn {
   font-size: 12px;

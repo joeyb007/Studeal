@@ -41,6 +41,8 @@
 .logoIcon {
   height: 28px;
   width: auto;
+  /* mark is drawn in dark navy; render white on the dim ground */
+  filter: brightness(0) invert(1);
 }
 
 .navLinks {
@@ -72,7 +74,7 @@
 
 .navSignup:hover {
   background: var(--accent);
-  color: #f5f0e8;
+  color: var(--bg);
 }
 
 /* Hero — two column */
@@ -120,10 +122,9 @@
 }
 
 .headlineItalic {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-weight: 400;
-  letter-spacing: -2px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -3px;
   color: var(--accent);
 }
 
@@ -150,7 +151,7 @@
   padding: 0 24px;
   border-radius: 14px;
   border: 1.5px solid var(--border);
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--bg-card);
   backdrop-filter: blur(8px);
   color: var(--text-primary);
   font-size: 17px;
@@ -165,7 +166,7 @@
 .searchInput:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 4px var(--accent-glow);
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--bg-card);
 }
 
 .searchInput:disabled {
@@ -177,7 +178,7 @@
   padding: 0 24px;
   border-radius: 12px;
   background: var(--accent);
-  color: #f5f0e8;
+  color: var(--bg);
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -229,16 +230,16 @@
   padding: 24px;
   border-radius: 16px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--bg-card);
   backdrop-filter: blur(8px);
-  box-shadow: 0 2px 12px rgba(26, 47, 94, 0.06);
+  box-shadow: 0 2px 12px rgba(168, 188, 232, 0.06);
   transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 
 .dealCard:hover {
   transform: translateY(-3px);
-  box-shadow: 0 12px 40px rgba(26, 47, 94, 0.12);
-  border-color: rgba(26, 47, 94, 0.2);
+  box-shadow: 0 12px 40px rgba(168, 188, 232, 0.12);
+  border-color: rgba(168, 188, 232, 0.2);
 }
 
 .dealHeader {
@@ -280,16 +281,16 @@
   padding: 3px 8px;
   border-radius: 4px;
   background: rgba(234, 179, 8, 0.1);
-  color: #92400e;
+  color: var(--amber);
 }
 
 .tierPush {
-  background: rgba(26, 47, 94, 0.1);
+  background: rgba(168, 188, 232, 0.1);
   color: var(--accent);
 }
 
 .tierDigest {
-  background: rgba(22, 163, 74, 0.08);
+  background: rgba(111, 191, 143, 0.08);
   color: var(--success);
 }
 
@@ -367,7 +368,7 @@
   padding: 48px;
   border-radius: 20px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--bg-card);
   backdrop-filter: blur(8px);
 }
 
@@ -385,7 +386,7 @@
   padding: 13px 28px;
   border-radius: 10px;
   background: var(--accent);
-  color: #f5f0e8;
+  color: var(--bg);
   font-size: 15px;
   font-weight: 700;
   transition: opacity 0.2s, transform 0.1s;
@@ -444,7 +445,7 @@
   padding: 6px 14px;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;

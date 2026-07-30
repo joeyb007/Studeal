@@ -14,7 +14,7 @@
   height: 55vw;
   max-width: 700px;
   max-height: 700px;
-  background: radial-gradient(ellipse at 40% 40%, #2a4080 0%, #1a2f5e 50%, #0f1e3d 100%);
+  background: radial-gradient(ellipse at 40% 40%, #3a4c82 0%, #31437a 50%, #232c48 100%);
   border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
   animation: morph 12s ease-in-out infinite;
   opacity: 0.18;
@@ -35,7 +35,7 @@
   height: 35vw;
   max-width: 420px;
   max-height: 420px;
-  background: radial-gradient(ellipse at 60% 60%, #3d5a9e 0%, #1a2f5e 70%);
+  background: radial-gradient(ellipse at 60% 60%, #4a5e94 0%, #31437a 70%);
   border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
   animation: morph 9s ease-in-out infinite reverse;
   opacity: 0.1;

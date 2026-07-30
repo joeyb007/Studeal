@@ -1,15 +1,31 @@
+/* Studeal design tokens — "dim": Notion-charcoal surfaces, hairline
+   borders, warm off-white text, brand navy lifted for dark ground.
+   (The retired warm-paper palette lives in git history if ever needed.) */
+
 :root {
-  --bg: #f5f0e8;
-  --bg-card: #ede8de;
-  --border: rgba(0, 0, 0, 0.08);
-  --text-primary: #1a1a1a;
-  --text-secondary: #6b6560;
-  --accent: #1a2f5e;
-  --accent-glow: rgba(26, 47, 94, 0.15);
-  --success: #16a34a;
+  /* dim (app default) */
+  --bg: #191918;
+  --bg-card: #202020;
+  --border: #2f2e2b;
+  --text-primary: #ececea;
+  --text-secondary: #9b9a97;
+  --text-faint: #6f6e6a;
+  --accent: #a8bce8;            /* brand navy, lifted for dark ground */
+  --accent-soft: rgba(168, 188, 232, 0.09);
+  --accent-glow: rgba(168, 188, 232, 0.15);
+  --on-accent: #191918;
+  --link: #7d9bec;
+  --amber: #d9a344;
+  --amber-soft: rgba(217, 163, 68, 0.10);
+  --success: #6fbf8f;
+  --success-soft: rgba(111, 191, 143, 0.10);
+  --danger: #de7b62;
+  --danger-soft: rgba(222, 123, 98, 0.08);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.4);
+
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-serif: var(--font-fraunces), Georgia, serif;
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", monospace;
 }
 
 * {
@@ -27,16 +43,6 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
-}
-
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background-image: radial-gradient(circle, rgba(26, 47, 94, 0.13) 1px, transparent 1px);
-  background-size: 28px 28px;
-  z-index: 0;
-  pointer-events: none;
 }
 
 a {
@@ -62,4 +68,15 @@ button {
 
 input {
   font-family: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pageEnter { animation: none; }
 }

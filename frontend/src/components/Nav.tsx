@@ -25,11 +25,14 @@ export default function Nav() {
         studeal
       </Link>
       <div className={styles.links}>
-        <Link href="/dashboard" className={[styles.link, pathname === "/dashboard" ? styles.active : ""].join(" ")}>
-          Daily Drops
-        </Link>
         <Link href="/watchlists" className={[styles.link, pathname === "/watchlists" ? styles.active : ""].join(" ")}>
           My Agents
+        </Link>
+        <Link href="/mission-control" className={[styles.link, pathname === "/mission-control" ? styles.active : ""].join(" ")}>
+          Mission Control
+        </Link>
+        <Link href="/dashboard" className={[styles.link, pathname === "/dashboard" ? styles.active : ""].join(" ")}>
+          Daily Drops
         </Link>
         {isPro && (
           <button className={styles.link} onClick={handleManageBilling}>Manage plan</button>

@@ -12,7 +12,8 @@ from sqlalchemy import func, select
 from dealbot.agents.nl_watchlist import NLWatchlistAgent
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Deal, Listing, User, Watchlist
+from dealbot.api.routes.hunts import HuntListResponse, to_summary
+from dealbot.db.models import Deal, Hunt, Listing, User, Watchlist
 from dealbot.rerank.service import RerankService
 from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
@@ -478,3 +479,27 @@ async def list_watchlists(
         await session.commit()
 
     return responses
+
+
+@router.get("/{watchlist_id}/hunts", response_model=HuntListResponse)
+async def list_watchlist_hunts(
+    watchlist_id: int,
+    limit: int = Query(10, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+) -> HuntListResponse:
+    """This agent's hunt history, newest first."""
+    async with get_async_session() as session:
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.",
+            )
+        rows = (
+            await session.execute(
+                select(Hunt)
+                .where(Hunt.watchlist_id == watchlist_id)
+                .order_by(Hunt.started_at.desc())
+                .limit(limit)
+            )
+        ).scalars().all()
+    return HuntListResponse(hunts=[to_summary(h, watchlist.name) for h in rows])

@@ -41,3 +41,6 @@
 | entry_kijiji_home | Herman Miller Aeron chair Toronto | home | ['kijiji'] | 2 | 2 | 1 | 18.990449582925066 | 0 | 0.1487263 | False | 0.50 |
 | entry_ebay_template | Herman Miller Aeron chair Toronto | template | ['ebay'] | 0 | 0 | 0 | 15.286295416997746 | 0 | 0.0484402 | False |  |
 | entry_ebay_home | Herman Miller Aeron chair Toronto | home | ['ebay'] | 4 | 4 | 1 | 49.97078504203819 | 0 | 0.42430475000000006 | False | 0.75 |
+| holdout_ebay_aeron | Herman Miller Aeron chair Toronto | template | ['ebay'] | 14 | 10 | 1 | 74.1213817500975 | 0 | 0.8081151000000002 | False | 0.71 |
+| holdout_craigslist_aeron | Herman Miller Aeron chair Toronto | template | ['craigslist'] | 0 | 0 | 0 | 8.93083329219371 | 0 | 0.03491470000000001 | False |  |
+| holdout_ebay_headphones | Sony WH-1000XM5 headphones | template | ['ebay'] | 0 | 0 | 0 | 57.27011016593315 | 0 | 0.8825611 | False |  |

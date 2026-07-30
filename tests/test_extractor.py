@@ -180,3 +180,52 @@ async def test_absolute_offer_urls_pass_through_unchanged():
 
     assert len(offers) == 1
     assert offers[0].url == "https://kijiji.ca/l/aeron-specific-listing"
+
+
+# ---------------------------------------------------------------------
+# A4 hardening: tolerant row normalization + href clipping
+# ---------------------------------------------------------------------
+
+from dealbot.agents.workers.extractor import _clip_hrefs, _parse_and_filter as _paf
+
+
+def _row_json(**over):
+    import json as _json
+    row = {"title": "Sony WH-1000XM5", "price": 153.99, "currency": "CAD",
+           "url": "https://www.ebay.ca/itm/1"}
+    row.update(over)
+    return _json.dumps({"offers": [row]})
+
+
+def test_price_string_with_currency_prefix_is_coerced():
+    offers = _paf(_row_json(price="C $153.99", currency="CAD"), "ebay", "https://www.ebay.ca/s")
+    assert len(offers) == 1
+    assert offers[0].price == 153.99
+    assert offers[0].currency == "CAD"
+
+
+def test_price_string_infers_currency_when_missing():
+    offers = _paf(_row_json(price="C $1,234.50", currency="USD"), "ebay", "https://www.ebay.ca/s")
+    assert len(offers) == 1
+    assert offers[0].price == 1234.50
+
+
+def test_condition_synonyms_normalize():
+    for raw, want in [("Pre-Owned", "used"), ("open box", "used"),
+                      ("Certified Refurbished", "refurbished"), ("Brand New", "new"),
+                      ("parts only", "unknown")]:
+        offers = _paf(_row_json(condition=raw), "ebay", "https://www.ebay.ca/s")
+        assert len(offers) == 1, raw
+        assert offers[0].condition == want, raw
+
+
+def test_unparseable_price_still_dropped():
+    assert _paf(_row_json(price="contact seller"), "ebay", "https://x.ca") == []
+
+
+def test_clip_hrefs_shortens_only_long_urls():
+    text = '[1]<a href="https://e.ca/itm/1?' + "x" * 500 + '" /> "A" [2]<a href="https://e.ca/b" /> "B"'
+    out = _clip_hrefs(text)
+    assert len(out) < len(text)
+    assert 'href="https://e.ca/b"' in out
+    assert "…" in out

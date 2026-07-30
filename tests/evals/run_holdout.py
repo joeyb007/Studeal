@@ -107,11 +107,16 @@ def dry_run() -> int:
     return 0
 
 
-async def real_run() -> int:
-    """Run all 5 cases sequentially, print per-case metrics and headline."""
+async def real_run(only_cases: list[str] | None = None) -> int:
+    """Run cases sequentially, print per-case metrics and headline."""
     from tests.evals.harness import append_result, run_case
 
     cases = _define_cases()
+    if only_cases:
+        cases = [c for c in cases if c[0] in only_cases]
+        if not cases:
+            print(f"No matching cases for {only_cases}")
+            return 1
 
     print("Generalization Holdout Eval — Real Run")
     print("=" * 60)
@@ -195,13 +200,19 @@ def main() -> int:
         action="store_true",
         help="Print plan and exit without network I/O",
     )
+    parser.add_argument(
+        "--cases",
+        nargs="+",
+        default=None,
+        help="Run only these case ids (default: all)",
+    )
     args = parser.parse_args()
 
     if args.dry_run:
         return dry_run()
     else:
         _load_env()
-        return asyncio.run(real_run())
+        return asyncio.run(real_run(only_cases=args.cases))
 
 
 if __name__ == "__main__":

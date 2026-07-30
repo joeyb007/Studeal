@@ -185,11 +185,18 @@ def truncate_snapshot_text(text: str, budget: int = 18000, head: int = 4000) -> 
     if len(rest) <= window:
         return head_part + rest
     step = max(window // 4, 1000)
-    best_start, best_count = 0, -1
+    # Window choice: listing grids are the only region that pairs anchors
+    # WITH price tokens. Raw anchor density alone mis-picks filter sidebars
+    # and related-search clouds (observed on eBay SERPs: a window full of
+    # "$20.00 to $105.00" facet links and zero actual listings). Score by
+    # price density first; anchors break ties.
+    price_re = re.compile(r"[$€£]\s?\d|\d+\.\d{2}\b|\bC \$")
+    best_start, best_score = 0, (-1, -1)
     for start in range(0, len(rest) - window + 1, step):
-        count = rest.count("]<a", start, start + window)
-        if count > best_count:
-            best_count, best_start = count, start
+        chunk = rest[start:start + window]
+        score = (len(price_re.findall(chunk)), chunk.count("]<a"))
+        if score > best_score:
+            best_score, best_start = score, start
     return (
         head_part
         + f"\n[... {best_start} chars of page chrome truncated ...]\n"

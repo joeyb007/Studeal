@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Literal
 from urllib.parse import urljoin
 
@@ -113,10 +114,64 @@ class Extractor:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_HREF_CLIP_RE = re.compile(r'href="([^"]{120})[^"]*"')
+
+
+def _clip_hrefs(text: str) -> str:
+    """Marketplace tracking URLs run to ~800 chars of base64 noise each; at
+    SERP density they swamp the extraction prompt (observed: gpt-4o-mini
+    returning zero offers on a page it enumerates fine once clipped)."""
+    return _HREF_CLIP_RE.sub(lambda m: f'href="{m.group(1)}…"', text)
+
+
+_PRICE_NUM_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)")
+_CURRENCY_HINTS: tuple[tuple[str, str], ...] = (
+    ("c $", "CAD"), ("ca$", "CAD"), ("cad", "CAD"),
+    ("us $", "USD"), ("£", "GBP"), ("€", "EUR"),
+)
+# Ordered: first substring match wins ("like new" must beat "new").
+_CONDITION_SYNONYMS: tuple[tuple[str, str], ...] = (
+    ("refurb", "refurbished"), ("renewed", "refurbished"),
+    ("like new", "used"), ("pre-owned", "used"), ("preowned", "used"),
+    ("open box", "used"), ("open-box", "used"), ("used", "used"),
+    ("new", "new"),
+)
+_VALID_CONDITIONS = {"new", "refurbished", "used", "unknown"}
+
+
+def _normalize_row(row: dict) -> dict:
+    """Tolerate the ways real pages phrase things — models echo the page.
+    'C $153.99' prices and 'Pre-Owned' conditions killed whole SERPs via
+    silent ValidationError drops before this."""
+    price = row.get("price")
+    if isinstance(price, str):
+        lowered = price.lower()
+        for hint, code in _CURRENCY_HINTS:
+            if hint in lowered:
+                row["currency"] = code
+                break
+        match = _PRICE_NUM_RE.search(price)
+        if match:
+            row["price"] = float(match.group(1).replace(",", ""))
+    condition = row.get("condition")
+    if isinstance(condition, str):
+        c = condition.strip().lower()
+        if c not in _VALID_CONDITIONS:
+            for needle, mapped in _CONDITION_SYNONYMS:
+                if needle in c:
+                    row["condition"] = mapped
+                    break
+            else:
+                row["condition"] = "unknown"
+        else:
+            row["condition"] = c
+    return row
+
+
 def _render_user_prompt(
     snap: PageSnapshot, marketplace: str, spec: WatchlistContext,
 ) -> str:
-    text = truncate_snapshot_text(snap.text)
+    text = truncate_snapshot_text(_clip_hrefs(snap.text))
     return (
         f"Marketplace: {marketplace}\n"
         f"URL: {snap.url}\n"
@@ -143,7 +198,7 @@ def _parse_and_filter(content: str, marketplace: str, page_url: str) -> list[Off
             continue
         # Stamp marketplace from caller's context; ignore any value the LLM
         # might have hallucinated in the row itself.
-        row = {**row, "marketplace": marketplace}
+        row = _normalize_row({**row, "marketplace": marketplace})
         try:
             offer = Offer.model_validate(row)
         except ValidationError:

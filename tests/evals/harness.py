@@ -361,6 +361,32 @@ async def run_case(
                             len(result.urls_visited), result.turns_used,
                             result.stop_reason,
                         )
+                        # Mirror production (_run_one_query): one retry with
+                        # the spec's core query when a marketplace reports
+                        # no_results on a verbose variant.
+                        if (
+                            result.stop_reason == "done"
+                            and result.done_reason
+                            and "no_results" in result.done_reason.lower()
+                            and query.strip().lower() != spec.product_query.strip().lower()
+                        ):
+                            retry_q = spec.product_query
+                            retry_targets = _resolve_targets(
+                                [target.marketplace], retry_q, entry_mode,
+                            )
+                            if retry_targets:
+                                logger.info(
+                                    "run_case[%s]: %s no_results — retry with %r",
+                                    case_id, target.marketplace, retry_q,
+                                )
+                                await Explorer(nav_llm, trace=trace).explore(
+                                    entry_url=retry_targets[0].entry_url,
+                                    marketplace=target.marketplace,
+                                    query=retry_q,
+                                    spec=spec,
+                                    session=session,
+                                    sink=sink,
+                                )
                     except Exception:
                         logger.exception(
                             "run_case[%s]: explorer failed on %s/%s",

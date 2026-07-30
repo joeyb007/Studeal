@@ -1,0 +1,168 @@
+.wrap {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 26px 40px 60px;
+}
+
+.pagehead {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+
+.pagehead h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.liveCount {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liveDot { animation: none; }
+}
+
+.props {
+  display: flex;
+  gap: 18px;
+  margin: 10px 0 26px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.props b {
+  color: var(--text-primary);
+  font-weight: 550;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  gap: 18px;
+}
+
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 42px 24px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.rail {
+  margin-top: 30px;
+}
+
+.rail h2 {
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+
+.railRows {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.railRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-card);
+  padding: 10px 16px;
+  font-size: 13px;
+}
+
+.railName {
+  font-weight: 550;
+}
+
+.railStatus {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.railStatusFailed {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.railMeta {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 60;
+  max-width: 330px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-pop);
+  padding: 12px 15px;
+  transform: translateY(150%);
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+
+.toastShow {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: none; }
+}
+
+.toastTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.toastTitle::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  margin-right: 8px;
+  vertical-align: 1px;
+}
+
+.toastMeta {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  padding-left: 15px;
+}

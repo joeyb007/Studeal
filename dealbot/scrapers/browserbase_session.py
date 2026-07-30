@@ -39,13 +39,61 @@ def get_session_sem() -> asyncio.Semaphore:
     return _session_sem
 
 
+def _session_payload(project_id: str, proxies: bool) -> dict:
+    """Session config, tuned to the strongest options our plan allows.
+
+    Empirically probed 2026-07-30 against the live API:
+      - browserSettings.verified / advancedStealth → 403 (Enterprise-only)
+      - browserSettings.os="mac"                   → 400 (verified users only)
+      - browserSettings.fingerprint (locales/devices/os/screen) → accepted
+      - proxies[].geolocation with city            → accepted
+
+    Geography is load-bearing beyond stealth: Canadian marketplaces serve
+    different (or no) inventory to US exit IPs, so proxies pin to CA/Toronto
+    and the fingerprint locale matches (en-CA), keeping IP and browser story
+    consistent — mismatches are themselves a bot signal.
+    """
+    country = os.environ.get("BROWSERBASE_PROXY_COUNTRY", "CA")
+    city = os.environ.get("BROWSERBASE_PROXY_CITY", "TORONTO")
+    width = int(os.environ.get("BROWSERBASE_VIEWPORT_W", "1920"))
+    height = int(os.environ.get("BROWSERBASE_VIEWPORT_H", "1080"))
+
+    payload: dict = {
+        "projectId": project_id,
+        "keepAlive": True,
+        "timeout": 3600,
+        "region": os.environ.get("BROWSERBASE_REGION", "us-east-1"),
+        "browserSettings": {
+            "viewport": {"width": width, "height": height},
+            "blockAds": True,
+            "solveCaptchas": True,
+            "fingerprint": {
+                "devices": ["desktop"],
+                "locales": [os.environ.get("BROWSERBASE_LOCALE", "en-CA")],
+                "operatingSystems": [os.environ.get("BROWSERBASE_FP_OS", "windows")],
+                "screen": {
+                    "minWidth": width, "maxWidth": width,
+                    "minHeight": height, "maxHeight": height,
+                },
+            },
+        },
+    }
+    # Enterprise-only; opt-in so the API never 403s the whole session for us.
+    if os.environ.get("BROWSERBASE_VERIFIED", "").lower() in ("1", "true", "yes"):
+        payload["browserSettings"]["verified"] = True
+    if proxies:
+        geo: dict = {"country": country}
+        if city:
+            geo["city"] = city
+        payload["proxies"] = [{"type": "browserbase", "geolocation": geo}]
+    return payload
+
+
 async def create_session(
     api_key: str, project_id: str, proxies: bool = False,
 ) -> tuple[str, str]:
     """Returns (session_id, connect_url). Retries on 429 with exponential backoff."""
-    payload: dict = {"projectId": project_id, "keepAlive": True, "timeout": 3600}
-    if proxies:
-        payload["proxies"] = True
+    payload = _session_payload(project_id, proxies)
     for attempt in range(_MAX_SESSION_RETRIES):
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(

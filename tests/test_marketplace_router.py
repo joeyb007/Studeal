@@ -124,6 +124,29 @@ def test_curated_search_urls_are_https_and_contain_query():
     for m in CURATED_MARKETPLACES:
         url = m.build_search_url("herman miller aeron")
         assert url.startswith("https://"), f"{m.key}: search URL must be https:// got {url!r}"
-        assert "herman" in url.lower() or "aeron" in url.lower(), (
-            f"{m.key}: search URL should contain query terms, got {url!r}"
-        )
+        # Browse-only stores (e.g. Apple Refurbished) have no search URL —
+        # detectable as query-insensitive templates; the agent browses from
+        # the entry page instead.
+        browse_only = url == m.build_search_url("different query")
+        if not browse_only:
+            assert "herman" in url.lower() or "aeron" in url.lower(), (
+                f"{m.key}: search URL should contain query terms, got {url!r}"
+            )
+
+
+def test_fb_target_carries_google_referer():
+    """FB serves its public page to search referrals; targets must carry it."""
+    from dealbot.agents.marketplace_router import CURATED_MARKETPLACES
+    fb = next(m for m in CURATED_MARKETPLACES if m.key == "fb_marketplace")
+    assert fb.entry_referer == "https://www.google.com/"
+
+
+def test_targets_propagate_entry_referer():
+    from dealbot.agents.marketplace_router import (
+        CURATED_MARKETPLACES, MarketplaceRouter,
+    )
+    router = MarketplaceRouter(llm=None)
+    targets = router._all_targets("aeron chair")
+    by_key = {t.marketplace: t for t in targets}
+    assert by_key["fb_marketplace"].entry_referer == "https://www.google.com/"
+    assert by_key["kijiji"].entry_referer is None

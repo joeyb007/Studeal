@@ -47,3 +47,11 @@
 | holdout_ebay_aeron | Herman Miller Aeron chair Toronto | template | ['ebay'] | 105 | 100 | 1 | 92.63438570895232 | 0 | 1.57447185 | False | 0.99 |
 | holdout_craigslist_aeron | Herman Miller Aeron chair Toronto | template | ['craigslist'] | 0 | 0 | 0 | 9.362215416971594 | 0 | 0.05692405000000001 | False |  |
 | holdout_ebay_headphones | Sony WH-1000XM5 headphones | template | ['ebay'] | 161 | 128 | 1 | 105.50234979204834 | 0 | 1.3266514500000004 | False | 0.94 |
+| expand_bestbuy_outlet | MacBook Air M2 | template | ['bestbuy_outlet'] | 0 | 0 | 0 | 12.565745458006859 | 1 | 0.0 | False |  |
+| expand_apple_refurbished | MacBook Air M2 | template | ['apple_refurbished'] | 0 | 0 | 0 | 13.46642216714099 | 0 | 0.13678215000000002 | False |  |
+| expand_canada_computers | ThinkPad X1 Carbon | template | ['canada_computers'] | 9 | 9 | 1 | 45.422019249992445 | 0 | 0.30429845 | False | 0.78 |
+| expand_visions_openbox | Sony WH-1000XM5 headphones | template | ['visions_openbox'] | 4 | 4 | 1 | 46.95094533311203 | 0 | 0.34565120000000005 | False | 0.25 |
+| expand_newegg_ca | ThinkPad X1 Carbon | template | ['newegg_ca'] | 11 | 11 | 1 | 33.19241016707383 | 0 | 0.1147046 | False | 0.91 |
+| expand_openbox_ca | MacBook Air M2 | template | ['openbox_ca'] | 33 | 25 | 1 | 83.64431175007485 | 0 | 0.46617765 | False | 0.97 |
+| expand_dell_refurbished | Dell XPS 13 | template | ['dell_refurbished'] | 0 | 0 | 0 | 7.78573187510483 | 0 | 0.024334 | False |  |
+| expand_refurbio | ThinkPad X1 Carbon | template | ['refurbio'] | 4 | 4 | 1 | 20.377292457967997 | 0 | 0.19607025 | False | 1.00 |

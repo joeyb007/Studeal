@@ -162,7 +162,7 @@ class _ScriptedExplorer:
     def __init__(self, llm, trace=None):
         pass
 
-    async def explore(self, entry_url, marketplace, query, spec, session, sink):
+    async def explore(self, entry_url, marketplace, query, spec, session, sink, entry_referer=None):
         _ScriptedExplorer.calls.append((query, entry_url))
         return _ScriptedExplorer.results.pop(0)
 

@@ -348,6 +348,7 @@ async def run_case(
                     try:
                         result = await explorer.explore(
                             entry_url=target.entry_url,
+                            entry_referer=target.entry_referer,
                             marketplace=target.marketplace,
                             query=query,
                             spec=spec,
@@ -381,6 +382,7 @@ async def run_case(
                                 )
                                 await Explorer(nav_llm, trace=trace).explore(
                                     entry_url=retry_targets[0].entry_url,
+                                    entry_referer=retry_targets[0].entry_referer,
                                     marketplace=target.marketplace,
                                     query=retry_q,
                                     spec=spec,

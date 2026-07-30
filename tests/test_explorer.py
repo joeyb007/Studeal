@@ -696,3 +696,131 @@ async def test_healthy_entry_skips_fallback():
         assert "search?q=aeron" in bs.page.url
 
     assert result.stop_reason == "done"
+
+
+# ---------------------------------------------------------------------
+# entry_referer: search-referral gating (FB serves public page to Google
+# referrals, auth wall to cold direct hits — measured 2026-07-30)
+# ---------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_entry_referer_sent_on_entry_and_warmup():
+    llm = _MockLLM([{"action": "done", "reason": "no_results"}])
+    seen: list[str | None] = []
+
+    async with LocalPlaywrightSession() as bs:
+        async def capture(route):
+            seen.append(route.request.headers.get("referer"))
+            await route.fulfill(status=200, body=_SERP_HTML, content_type="text/html")
+
+        await bs.page.context.route("https://mock.local/**", capture)
+        await Explorer(llm=llm).explore(
+            entry_url="https://mock.local/search?q=aeron",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=(await _sink_collector())[0],
+            entry_referer="https://www.google.com/",
+        )
+
+    assert seen, "no requests captured"
+    assert all(r == "https://www.google.com/" for r in seen), seen
+
+
+@pytest.mark.asyncio
+async def test_no_referer_header_when_unset():
+    llm = _MockLLM([{"action": "done", "reason": "no_results"}])
+    seen: list[str | None] = []
+
+    async with LocalPlaywrightSession() as bs:
+        async def capture(route):
+            seen.append(route.request.headers.get("referer"))
+            await route.fulfill(status=200, body=_SERP_HTML, content_type="text/html")
+
+        await bs.page.context.route("https://mock.local/**", capture)
+        await Explorer(llm=llm).explore(
+            entry_url="https://mock.local/search?q=aeron",
+            marketplace="mock", query="aeron", spec=_spec(),
+            session=bs, sink=(await _sink_collector())[0],
+        )
+
+    assert seen and all(r is None for r in seen), seen
+
+
+# ---------------------------------------------------------------------
+# A5: infinite-scroll coverage — the sink previously only fired on URL
+# change, so scroll-only sites (FB Marketplace, modern SERPs) delivered a
+# single viewport of listings no matter how far the agent scrolled.
+# ---------------------------------------------------------------------
+
+_INFINITE_SCROLL_HTML = """
+<!doctype html>
+<html><head><title>Infinite SERP</title></head><body>
+  <h1>Search results</h1>
+  <div id="feed"></div>
+  <script>
+    let batch = 0;
+    function addBatch() {
+      batch += 1;
+      if (batch > 3) return;               // 3 batches then exhausted
+      const feed = document.getElementById('feed');
+      for (let i = 0; i < 30; i++) {
+        const a = document.createElement('a');
+        a.href = '/item/' + batch + '-' + i + '?ref=feed&tracking=' + 'x'.repeat(60);
+        a.textContent = 'Herman Miller Aeron Size B batch ' + batch + ' item ' + i
+          + ' — fully loaded, posturefit, $' + (400 + i) + '.00 CAD — Toronto, ON';
+        feed.appendChild(a);
+        feed.appendChild(document.createElement('br'));
+      }
+      document.body.style.height = (2000 * batch) + 'px';
+    }
+    addBatch();
+    window.addEventListener('scroll', () => { addBatch(); });
+  </script>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_scroll_growth_emits_additional_snapshots():
+    """Scrolling that reveals new content must reach the sink, even though
+    the URL never changes."""
+    llm = _MockLLM([
+        {"action": "scroll"},
+        {"action": "scroll"},
+        {"action": "scroll"},
+        {"action": "done", "reason": "exhausted"},
+    ])
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _INFINITE_SCROLL_HTML)
+        await Explorer(llm=llm).explore(
+            entry_url="https://mock.local/", marketplace="mock",
+            query="listing", spec=_spec(), session=bs, sink=sink,
+        )
+
+    assert len(collected) >= 2, (
+        f"expected multiple snapshots from scroll growth, got {len(collected)}"
+    )
+    sizes = [len(snap.text) for snap, _ in collected]
+    assert max(sizes) > min(sizes), f"snapshots never grew: {sizes}"
+
+
+@pytest.mark.asyncio
+async def test_scroll_without_growth_does_not_spam_sink():
+    """A static page scrolled repeatedly should still emit only its final
+    snapshot — no duplicate extraction work."""
+    llm = _MockLLM([
+        {"action": "scroll"},
+        {"action": "scroll"},
+        {"action": "done", "reason": "exhausted"},
+    ])
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/", _SERP_HTML)
+        await Explorer(llm=llm).explore(
+            entry_url="https://mock.local/", marketplace="mock",
+            query="listing", spec=_spec(), session=bs, sink=sink,
+        )
+
+    assert len(collected) == 1, f"static page emitted {len(collected)} snapshots"

@@ -153,7 +153,14 @@ Standard flow:
      through result pages.
   4. Do NOT click into individual listing cards.
   5. Do NOT revisit URLs you've already landed on.
-  6. When you've paginated the current query fully, call done."""
+  6. When you've paginated the current query fully, call done.
+
+Infinite-scroll pages (no pagination controls anywhere):
+  Many marketplaces load more results as you scroll instead of paginating.
+  If you have scrolled and see NO pagination control, keep scrolling — each
+  scroll that reveals new listings is captured for extraction. Only stop
+  when either a pagination control appears (then use it), or the tool result
+  reports that scrolling produced no new content."""
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +176,12 @@ EXEMPT_DONE_REASONS: tuple[str, ...] = ("captcha", "auth_wall", "no_results")
 # must hold so sparse-but-real pages (craigslist zero-results: 136 elems) pass.
 DEGENERATE_MAX_ELEMENTS = 40
 DEGENERATE_MAX_TEXT_CHARS = 1000
+
+# Infinite-scroll sites (FB Marketplace, modern SERPs) never change URL, so
+# URL-change is not enough to trigger extraction — a hunt would deliver one
+# viewport of listings regardless of scroll depth. Emit an extra snapshot
+# whenever a scroll grows the page materially.
+SCROLL_GROWTH_MIN_CHARS = 2000
 
 
 def _is_degenerate(snap: "PageSnapshot") -> bool:
@@ -216,15 +229,21 @@ class Explorer:
         spec: WatchlistContext,
         session: BrowserSession,
         sink: Sink,
+        entry_referer: str | None = None,
     ) -> ExplorerResult:
         # Session warm-up: marketplaces soft-block cookie-less deep links
         # (eBay serves an error shell for direct SERP hits). Load the site
         # root first so the SERP request carries a session, then enter.
+        goto_kwargs: dict[str, Any] = {}
+        if entry_referer:
+            goto_kwargs["referer"] = entry_referer
+
         root = _site_root(entry_url)
         if root and entry_url.rstrip("/") != root.rstrip("/"):
             try:
                 await session.page.goto(
                     root, wait_until="domcontentloaded", timeout=20_000,
+                    **goto_kwargs,
                 )
             except Exception as exc:
                 # Warm-up is best-effort; the entry goto below still decides.
@@ -241,6 +260,7 @@ class Explorer:
             try:
                 await session.page.goto(
                     entry_url, wait_until="domcontentloaded", timeout=20_000,
+                    **goto_kwargs,
                 )
                 entry_error = None
                 break
@@ -325,6 +345,8 @@ class Explorer:
         prev_snap: PageSnapshot | None = None
         prev_key: tuple | None = None
         no_effect_streak: int = 0
+        growth_baseline_chars: int = 0  # page size the scroll-growth check measures from
+        sunk_chars: int = -1            # size of the last snapshot actually sent to sink
         pagination_attempts: int = 0   # scroll + click actions dispatched
         nudges_used: int = 0           # coverage-rejection nudges sent to LLM
         failed_action_streak: int = 0  # consecutive click/type failures
@@ -336,6 +358,17 @@ class Explorer:
             # snapshot to the sink (final observed state of that URL).
             if prev_url is not None and snap.url != prev_url and prev_snap is not None:
                 await sink(prev_snap, marketplace)
+                sunk_chars = len(prev_snap.text)
+                growth_baseline_chars = len(snap.text)
+            elif (
+                prev_url is not None
+                and snap.url == prev_url
+                and len(snap.text) - growth_baseline_chars >= SCROLL_GROWTH_MIN_CHARS
+            ):
+                # Same URL, materially more content: infinite scroll revealed
+                # listings the sink would otherwise never see.
+                await sink(snap, marketplace)
+                sunk_chars = growth_baseline_chars = len(snap.text)
 
             # Track unique URLs.
             if snap.url and snap.url not in seen_url_set:
@@ -362,6 +395,11 @@ class Explorer:
             else:
                 no_effect_streak = 0
             prev_key = key
+
+            if prev_url is None:
+                # Baseline: growth is measured against what we landed on, or
+                # every first snapshot would look like a huge scroll gain.
+                growth_baseline_chars = len(snap.text)
 
             prev_url = snap.url
             prev_snap = snap
@@ -462,7 +500,7 @@ class Explorer:
                         "no results (say so in your reason)."
                     )})
                     continue
-                if prev_snap and prev_snap.url:
+                if prev_snap and prev_snap.url and len(prev_snap.text) != sunk_chars:
                     await sink(prev_snap, marketplace)
                 return ExplorerResult(
                     urls_visited=seen_urls,

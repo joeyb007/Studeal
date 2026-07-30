@@ -211,6 +211,7 @@ async def _run_one_query(
                     try:
                         result = await explorer.explore(
                             entry_url=target.entry_url,
+                            entry_referer=target.entry_referer,
                             marketplace=target.marketplace,
                             query=query,
                             spec=spec,
@@ -249,6 +250,7 @@ async def _run_one_query(
                                 retry_explorer = Explorer(nav_llm, trace=trace)
                                 await retry_explorer.explore(
                                     entry_url=retry_target.entry_url,
+                                    entry_referer=retry_target.entry_referer,
                                     marketplace=retry_target.marketplace,
                                     query=retry_query,
                                     spec=spec,

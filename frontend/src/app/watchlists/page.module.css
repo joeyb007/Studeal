@@ -668,3 +668,21 @@
   opacity: 0.7;
   margin: 0;
 }
+
+/* D7: alert-derived badges on results */
+.newTag {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border));
+  border-radius: 4px;
+  padding: 1px 5px;
+  vertical-align: 1px;
+}
+
+.reasonInline {
+  color: var(--text-faint);
+}

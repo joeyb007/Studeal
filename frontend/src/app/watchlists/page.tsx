@@ -66,6 +66,9 @@ interface ListingsResponse {
   reranked: boolean;
 }
 
+/** listing_id → alert facts, for score/reason badges on results */
+export type AlertIndex = Record<number, { reason: string | null; score: number; created_at: string }>;
+
 function scoreColor(score: number | null): string {
   if (score == null) return "transparent";
   const s = Math.round((score / 100) * 75);
@@ -82,22 +85,26 @@ function pct(listed: number, sale: number) {
   return Math.round(((listed - sale) / listed) * 100);
 }
 
-function ListingRow({ listing }: { listing: Listing }) {
-  const scoreBadge = listing.relevance_score > 0
-    ? `${Math.round(listing.relevance_score * 100)}`
-    : null;
+function ListingRow({ listing, alert }: { listing: Listing; alert?: AlertIndex[number] }) {
+  const score = alert?.score ?? (listing.relevance_score > 0 ? listing.relevance_score : null);
+  const isNew = alert !== undefined &&
+    Date.now() - new Date(alert.created_at).getTime() < 48 * 3600 * 1000;
   return (
     <div className={styles.dealRow}>
       <div className={styles.dealRowLeft}>
-        {scoreBadge !== null && (
-          <span className={styles.dealDiscount}>{scoreBadge}%</span>
+        {score !== null && (
+          <span className={styles.dealDiscount}>{Math.round(score * 100)}%</span>
         )}
         <div>
-          <p className={styles.dealTitle}>{listing.title}</p>
+          <p className={styles.dealTitle}>
+            {listing.title}
+            {isNew && <span className={styles.newTag}>NEW</span>}
+          </p>
           <span className={styles.dealSource}>
             {listing.marketplace}
             {listing.location ? ` · ${listing.location}` : ""}
             {listing.condition && listing.condition !== "unknown" ? ` · ${listing.condition}` : ""}
+            {alert?.reason ? <span className={styles.reasonInline}> — {alert.reason}</span> : null}
           </span>
         </div>
       </div>
@@ -152,11 +159,13 @@ function WatchlistCard({
   onDelete,
   token,
   onNewWatchlist,
+  alertIndex,
 }: {
   watchlist: Watchlist;
   onDelete: (id: number) => void;
   token: string | undefined;
   onNewWatchlist: () => void;
+  alertIndex: AlertIndex;
 }) {
   const [deals, setDeals] = useState<Deal[] | null>(null);
   const [dealCount, setDealCount] = useState<number | null>(null);
@@ -421,7 +430,7 @@ function WatchlistCard({
           )}
           {!loadingListings && listings && listings.length > 0 && (
             <div className={styles.dealsList}>
-              {listings.map(l => <ListingRow key={l.id} listing={l} />)}
+              {listings.map(l => <ListingRow key={l.id} listing={l} alert={alertIndex[l.id]} />)}
             </div>
           )}
         </div>
@@ -437,6 +446,24 @@ function WatchlistsPageInner() {
   const searchParams = useSearchParams();
 
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
+  const [alertIndex, setAlertIndex] = useState<AlertIndex>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/alerts?limit=100");
+        if (!res.ok) return;
+        const data = await res.json();
+        const index: AlertIndex = {};
+        for (const a of data.alerts ?? []) {
+          index[a.listing_id] = { reason: a.reason, score: a.score, created_at: a.created_at };
+        }
+        setAlertIndex(index);
+      } catch {
+        /* badges are enhancement only */
+      }
+    })();
+  }, []);
   const [loading, setLoading] = useState(true);
 
   // Chat state
@@ -657,6 +684,7 @@ function WatchlistsPageInner() {
                 token={token}
                 onDelete={id => setWatchlists(prev => prev.filter(w => w.id !== id))}
                 onNewWatchlist={openChat}
+                alertIndex={alertIndex}
               />
             ))}
           </div>

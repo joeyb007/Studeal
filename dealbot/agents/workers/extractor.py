@@ -18,6 +18,7 @@ context per invocation, trivial to test.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -26,7 +27,7 @@ from urllib.parse import urljoin
 
 from pydantic import BaseModel, ValidationError
 
-from dealbot.agents.perception import PageSnapshot, truncate_snapshot_text
+from dealbot.agents.perception import PageSnapshot, chunk_snapshot_text
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import WatchlistContext
 
@@ -90,15 +91,53 @@ class Extractor:
     ) -> list[Offer]:
         """Emit every listing card the LLM identifies in the snapshot.
 
-        - Fresh message list per call (no accumulation across invocations).
+        Large pages are split into overlapping, recall-sized chunks and
+        extracted CONCURRENTLY — a single window showed the model ~18k of a
+        page that can run to 137k, so most listings were never seen. Overlap
+        duplicates are collapsed here on canonical-ish url so callers get
+        clean output.
+
+        - Fresh message list per chunk (no accumulation across invocations).
         - marketplace is stamped onto every returned Offer (caller's context).
-        - Malformed LLM output → returns [] (no partial data, no crashes).
+        - Malformed LLM output → that chunk yields nothing; others still land.
         """
+        chunks = chunk_snapshot_text(_clip_hrefs(snap.text))
+        results = await asyncio.gather(
+            *(self._extract_chunk(chunk, snap, marketplace, spec) for chunk in chunks),
+            return_exceptions=True,
+        )
+
+        offers: list[Offer] = []
+        seen: set[str] = set()
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.warning("extractor: chunk failed: %s", result)
+                continue
+            for offer in result:
+                if offer.url in seen:
+                    continue
+                seen.add(offer.url)
+                offers.append(offer)
+        if len(chunks) > 1:
+            logger.info(
+                "extractor: %d chunks over %d chars → %d unique offers",
+                len(chunks), len(snap.text), len(offers),
+            )
+        return offers
+
+    async def _extract_chunk(
+        self,
+        chunk_text: str,
+        snap: PageSnapshot,
+        marketplace: str,
+        spec: WatchlistContext,
+    ) -> list[Offer]:
         messages = [
             {"role": "system", "content": EXTRACTOR_SYSTEM},
-            {"role": "user", "content": _render_user_prompt(snap, marketplace, spec)},
+            {"role": "user", "content": _render_user_prompt(
+                chunk_text, snap.url, marketplace, spec,
+            )},
         ]
-
         try:
             response = await self.llm.complete(
                 messages, response_format={"type": "json_object"},
@@ -106,7 +145,6 @@ class Extractor:
         except Exception as exc:
             logger.warning("extractor: LLM call failed: %s", exc)
             return []
-
         return _parse_and_filter(response.content, marketplace, snap.url)
 
 
@@ -169,12 +207,11 @@ def _normalize_row(row: dict) -> dict:
 
 
 def _render_user_prompt(
-    snap: PageSnapshot, marketplace: str, spec: WatchlistContext,
+    text: str, url: str, marketplace: str, spec: WatchlistContext,
 ) -> str:
-    text = truncate_snapshot_text(_clip_hrefs(snap.text))
     return (
         f"Marketplace: {marketplace}\n"
-        f"URL: {snap.url}\n"
+        f"URL: {url}\n"
         f"Watchlist spec: {spec.model_dump_json(indent=2)}\n\n"
         f"Page snapshot:\n{text}\n\n"
         "Emit the JSON object."

@@ -11,6 +11,7 @@ Contract exercised:
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -229,3 +230,88 @@ def test_clip_hrefs_shortens_only_long_urls():
     assert len(out) < len(text)
     assert 'href="https://e.ca/b"' in out
     assert "…" in out
+
+
+# ---------------------------------------------------------------------
+# A6: chunked extraction — the extractor must cover the WHOLE snapshot,
+# not one window of it. Overlap duplicates are collapsed here so the pool
+# and persistence see clean output.
+# ---------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_large_snapshot_fans_out_over_chunks():
+    """A page far past one chunk budget triggers multiple LLM calls, and
+    offers from every chunk survive."""
+    calls: list[str] = []
+
+    class _ChunkAwareLLM:
+        supports_vision = False
+
+        async def complete(self, messages, response_format=None, **kw):
+            user = messages[-1]["content"]
+            calls.append(user)
+            # Distinct offer per chunk: use the HIGHEST card id this chunk
+            # saw, so chunks covering different page regions differ. (Every
+            # chunk carries the page head by design, so low ids are shared.)
+            ids = [int(m) for m in re.findall(r"item/(\d+)", user)]
+            marker = max(ids) if ids else -1
+            return _MockResponse(json.dumps({"offers": [{
+                "title": f"Aeron {marker}", "price": 400.0, "currency": "CAD",
+                "url": f"https://m.test/item/{marker}",
+            }]}))
+
+    big = "<#document /> \"SERP\"\n" + "".join(
+        f'[{i}]<a href="https://m.test/item/{i}" /> "Aeron #{i}"\n\t<#text /> "C ${400+i}.00"\n'
+        for i in range(900)
+    )
+    snap = PageSnapshot(url="https://m.test/s", title="SERP", text=big,
+                        char_count=len(big), element_map={})
+
+    offers = await Extractor(_ChunkAwareLLM()).extract_from_snapshot(
+        snap, "mock", WatchlistContext(product_query="aeron"),
+    )
+
+    assert len(calls) > 1, "large page did not fan out into chunks"
+    assert len(offers) >= 2, f"offers from later chunks lost: {offers}"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_offers_across_chunks_collapse():
+    """Overlap means the same card can appear twice — dedupe on url."""
+    class _DupLLM:
+        supports_vision = False
+
+        async def complete(self, messages, response_format=None, **kw):
+            return _MockResponse(json.dumps({"offers": [{
+                "title": "Aeron", "price": 400.0, "currency": "CAD",
+                "url": "https://m.test/item/same",
+            }]}))
+
+    big = "<#document /> \"SERP\"\n" + ("[1]<a href=\"https://m.test/x\" /> \"card\"\n" * 3000)
+    snap = PageSnapshot(url="https://m.test/s", title="SERP", text=big,
+                        char_count=len(big), element_map={})
+
+    offers = await Extractor(_DupLLM()).extract_from_snapshot(
+        snap, "mock", WatchlistContext(product_query="aeron"),
+    )
+    assert len(offers) == 1, f"duplicates not collapsed: {len(offers)}"
+
+
+@pytest.mark.asyncio
+async def test_small_snapshot_still_single_call():
+    """No fan-out tax on ordinary pages."""
+    calls = []
+
+    class _CountingLLM:
+        supports_vision = False
+
+        async def complete(self, messages, response_format=None, **kw):
+            calls.append(1)
+            return _MockResponse(json.dumps({"offers": []}))
+
+    snap = PageSnapshot(url="https://m.test/s", title="SERP", text="small page",
+                        char_count=10, element_map={})
+    await Extractor(_CountingLLM()).extract_from_snapshot(
+        snap, "mock", WatchlistContext(product_query="aeron"),
+    )
+    assert len(calls) == 1

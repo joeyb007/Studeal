@@ -723,3 +723,62 @@ def test_truncate_snapshot_text_head_preserved():
     result = truncate_snapshot_text(text)
 
     assert head_marker in result, "head marker must survive truncation"
+
+
+# ---------------------------------------------------------------------
+# A6: chunked snapshot views — replaces single-window truncation so the
+# extractor sees the WHOLE page (in recall-sized pieces) instead of ~18k
+# of it. Industry-standard pattern (cf. Crawl4AI apply_chunking/overlap_rate).
+# ---------------------------------------------------------------------
+
+from dealbot.agents.perception import chunk_snapshot_text
+
+
+def _fake_page(n_cards: int) -> str:
+    head = "<#document /> \"Marketplace SERP\"\n" + ("<nav>chrome</nav>\n" * 50)
+    cards = "".join(
+        f'[{i}]<a href="https://m.test/item/{i}" /> "Aeron Size B #{i}"\n'
+        f'\t<#text /> "C ${400 + i}.00"\n\t<#text /> "Toronto, ON"\n'
+        for i in range(n_cards)
+    )
+    return head + cards
+
+
+def test_small_page_is_single_chunk():
+    text = _fake_page(5)
+    chunks = chunk_snapshot_text(text, budget=18_000)
+    assert len(chunks) == 1
+    assert chunks[0] == text
+
+
+def test_large_page_splits_into_multiple_chunks():
+    text = _fake_page(600)          # well past one budget
+    chunks = chunk_snapshot_text(text, budget=8_000, overlap=800)
+    assert len(chunks) > 3
+    assert all(len(c) <= 8_000 + 200 for c in chunks), [len(c) for c in chunks]
+
+
+def test_every_listing_appears_in_some_chunk():
+    """The whole point: no card may be dropped by chunking."""
+    text = _fake_page(400)
+    chunks = chunk_snapshot_text(text, budget=8_000, overlap=800)
+    joined = "\n".join(chunks)
+    for i in range(400):
+        assert f"item/{i}\"" in joined, f"card {i} missing from all chunks"
+
+
+def test_chunks_overlap_to_survive_boundary_splits():
+    text = _fake_page(400)
+    chunks = chunk_snapshot_text(text, budget=8_000, overlap=800)
+    for a, b in zip(chunks, chunks[1:]):
+        tail = a[-400:]
+        assert tail in b or any(line and line in b for line in tail.split("\n")[1:]), (
+            "adjacent chunks share no content — boundary cards can be lost"
+        )
+
+
+def test_chunk_count_is_bounded():
+    """A pathological page must not fan out into hundreds of LLM calls."""
+    text = _fake_page(20_000)
+    chunks = chunk_snapshot_text(text, budget=8_000, overlap=800, max_chunks=12)
+    assert len(chunks) == 12

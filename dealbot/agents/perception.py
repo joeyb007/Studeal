@@ -167,6 +167,46 @@ def _detect_captcha(text: str) -> bool:
     return any(p in haystack for p in _CAPTCHA_PATTERNS)
 
 
+def chunk_snapshot_text(
+    text: str,
+    budget: int = 9_000,
+    overlap: int = 900,
+    head: int = 1_200,
+    max_chunks: int = 12,
+) -> list[str]:
+    """Split a snapshot into overlapping, recall-sized views of the WHOLE page.
+
+    Single-window truncation (see `truncate_snapshot_text`) showed the
+    extractor ~18k of a page that can run to 137k, so most listings were
+    never seen — on a scroll-grown FB page two consecutive snapshots picked
+    overlapping windows and 19 raw offers deduped to 13.
+
+    Chunking is the standard answer (cf. Crawl4AI's apply_chunking /
+    overlap_rate): `budget` is sized for reliable ENUMERATION by a small
+    model, not for its context limit, and `overlap` keeps a listing card
+    whole when it straddles a boundary. Duplicates across chunks are free —
+    persistence dedupes on canonical URL.
+
+    Every chunk carries the page `head` (title/nav) so each extraction call
+    knows what page it is looking at. `max_chunks` caps LLM fan-out on
+    pathological pages.
+    """
+    if len(text) <= budget:
+        return [text]
+
+    head_part = text[:head]
+    body = text[head:]
+    stride = max(budget - head - overlap, 1_000)
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(body) and len(chunks) < max_chunks:
+        window = body[start:start + (budget - head)]
+        chunks.append(head_part + window)
+        start += stride
+    return chunks
+
+
 def truncate_snapshot_text(text: str, budget: int = 18000, head: int = 4000) -> str:
     """Budget-limited view of snapshot text that preserves listing content.
 

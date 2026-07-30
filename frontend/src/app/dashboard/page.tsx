@@ -7,116 +7,126 @@ import Link from "next/link";
 import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
-interface Deal {
+interface PoolListing {
   id: number;
   title: string;
-  source: string;
-  url: string | null;
-  affiliate_url: string | null;
-  listed_price: number;
-  sale_price: number;
-  deal_score: number | null;
-  category: string;
+  price: number;
+  currency: string;
+  marketplace: string;
+  url: string;
+  image_url: string | null;
+  location: string | null;
   condition: string;
-  real_discount_pct: number | null;
-  student_eligible: boolean;
-  scraped_at: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  relevance: number | null;
 }
 
-const CATEGORIES = ["Electronics", "Laptops", "Tablets", "Phones", "Audio", "Gaming", "Accessories", "Software", "Books", "Clothing", "Food & Drink", "Travel", "Home", "Other"];
-const CONDITIONS = ["new", "used", "refurb"];
+const MARKETPLACES = [
+  "kijiji", "fb_marketplace", "ebay", "craigslist", "bestbuy_outlet",
+  "canada_computers", "visions_openbox", "newegg_ca", "openbox_ca", "refurbio",
+];
+const MARKETPLACE_LABELS: Record<string, string> = {
+  kijiji: "Kijiji",
+  fb_marketplace: "Facebook",
+  ebay: "eBay",
+  craigslist: "Craigslist",
+  bestbuy_outlet: "Best Buy",
+  canada_computers: "Canada Computers",
+  visions_openbox: "Visions",
+  newegg_ca: "Newegg",
+  openbox_ca: "OpenBox.ca",
+  refurbio: "REFURB.io",
+};
+const CONDITIONS = ["new", "used", "refurbished"];
 
-const CONDITION_LABELS: Record<string, string> = { new: "New", used: "Used", refurb: "Refurb" };
+function timeAgo(iso: string): string {
+  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+const CONDITION_LABELS: Record<string, string> = { new: "New", used: "Used", refurbished: "Refurb" };
 const CONDITION_CLASS: Record<string, string> = {
   new: styles.condNew,
   used: styles.condUsed,
-  refurb: styles.condRefurb,
+  refurbished: styles.condRefurb,
 };
 
-function scoreColor(score: number | null): string {
-  if (score == null) return "transparent";
-  const s = Math.round((score / 100) * 75);
-  const l = Math.round(32 + (score / 100) * 16);
-  return `hsl(142, ${s}%, ${l}%)`;
-}
-
+// Full sentences, not keywords — the bar takes natural language and embeds it.
 const PLACEHOLDERS = [
-  "noise cancelling headphones under $100",
-  "affordable laptop for college",
-  "gaming gear on sale",
-  "iPad deal for students",
-  "mechanical keyboard cheap",
+  "a beginner-friendly road bike, nothing over $400",
+  "quiet mechanical keyboard for late-night work",
+  "lightly used monitor for a dorm desk",
+  "noise cancelling headphones that aren't beat up",
+  "a cheap laptop that can handle coursework",
 ];
 
+// Chips are full requests, not keywords — clicking one demonstrates that the
+// bar understands intent rather than matching words.
 const SUGGESTIONS = [
-  "Laptops under $500",
-  "AirPods deals",
-  "Student textbooks",
-  "Gaming headsets",
-  "Monitors on sale",
-  "Mechanical keyboards",
-  "iPad + tablet",
-  "Refurbished MacBooks",
+  "a laptop that can handle coursework, under $600",
+  "comfortable desk chair for long study sessions",
+  "cheap second monitor for a dorm desk",
+  "headphones for a noisy library",
+  "a used bike for campus commuting",
+  "mechanical keyboard that isn't loud",
 ];
 
-function CarouselStrip({ feed }: { feed: Deal[] }) {
+function CarouselStrip({ feed }: { feed: PoolListing[] }) {
   if (feed.length === 0) return null;
   const doubled = [...feed, ...feed];
   return (
     <div className={styles.carousel}>
-      <div className={styles.carouselLabel}>Live deals</div>
+      <div className={styles.carouselLabel}>Fresh finds</div>
       <div className={styles.carouselViewport}>
         <div className={styles.carouselTrack}>
-          {doubled.filter(deal => deal.url).map((deal, i) => {
-            const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
-            return (
-              <a key={`${deal.id}-${i}`} href={deal.url!} target="_blank" rel="noopener noreferrer" className={styles.miniCard}>
-                <span className={styles.miniDiscount}>−{discount}%</span>
-                <span className={styles.miniTitle}>{deal.title}</span>
-                <span className={styles.miniPrice}>${deal.sale_price.toFixed(2)}</span>
-              </a>
-            );
-          })}
+          {doubled.map((listing, i) => (
+            <a key={`${listing.id}-${i}`} href={listing.url} target="_blank" rel="noopener noreferrer" className={styles.miniCard}>
+              <span className={styles.miniSource}>
+                {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace}
+              </span>
+              <span className={styles.miniTitle}>{listing.title}</span>
+              <span className={styles.miniPrice}>${listing.price.toFixed(2)}</span>
+            </a>
+          ))}
         </div>
       </div>
     </div>
   );
 }
 
-function pct(listed: number, sale: number) {
-  return Math.round(((listed - sale) / listed) * 100);
-}
-
-function DealCard({ deal, index }: { deal: Deal; index: number }) {
-  const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
-  const buyUrl = deal.affiliate_url ?? deal.url;
+function ListingCard({ listing, index }: { listing: PoolListing; index: number }) {
   return (
-    <div className={styles.card} style={{ animationDelay: `${index * 60}ms`, borderLeft: `3px solid ${scoreColor(deal.deal_score)}` }}>
+    <div className={styles.card} style={{ animationDelay: `${index * 60}ms` }}>
       <div className={styles.cardBody}>
         <div className={styles.cardTop}>
-          <span className={styles.source}>{deal.source}</span>
-          {deal.student_eligible && <span className={styles.studentBadge}>Student</span>}
+          <span className={styles.source}>
+            {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace}
+          </span>
+          <span className={styles.seenAt}>{timeAgo(listing.last_seen_at)}</span>
         </div>
-        <p className={styles.title}>{deal.title}</p>
+        <p className={styles.title}>{listing.title}</p>
         <div className={styles.prices}>
-          <span className={styles.salePrice}>${deal.sale_price.toFixed(2)}</span>
-          <span className={styles.listedPrice}>${deal.listed_price.toFixed(2)}</span>
-          <span className={styles.discountInline}>−{discount}%</span>
+          <span className={styles.salePrice}>
+            ${listing.price.toFixed(2)}
+          </span>
+          <span className={styles.currency}>{listing.currency}</span>
+          {listing.location && <span className={styles.location}>{listing.location}</span>}
         </div>
       </div>
       <div className={styles.cardFooter}>
         <div className={styles.badges}>
-          {deal.condition && deal.condition !== "unknown" && deal.condition !== "new" && (
-            <span className={[styles.condBadge, CONDITION_CLASS[deal.condition] ?? ""].join(" ")}>
-              {CONDITION_LABELS[deal.condition] ?? deal.condition}
+          {listing.condition && listing.condition !== "unknown" && (
+            <span className={[styles.condBadge, CONDITION_CLASS[listing.condition] ?? ""].join(" ")}>
+              {CONDITION_LABELS[listing.condition] ?? listing.condition}
             </span>
           )}
         </div>
-        {buyUrl && (
-          <a href={buyUrl} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
-            Buy →
-          </a>
-        )}
+        <a href={listing.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+          View →
+        </a>
       </div>
     </div>
   );
@@ -141,16 +151,16 @@ function DashboardPageInner() {
     }
   }, []);
   const [query, setQuery] = useState("");
-  const [deals, setDeals] = useState<Deal[]>([]);
+  const [listings, setListings] = useState<PoolListing[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [typedPlaceholder, setTypedPlaceholder] = useState("");
-  const [feed, setFeed] = useState<Deal[]>([]);
+  const [feed, setFeed] = useState<PoolListing[]>([]);
+  const [semantic, setSemantic] = useState(true);
   // phase: 'idle' | 'fading' | 'shifted'
   const [phase, setPhase] = useState<"idle" | "fading" | "shifted">("idle");
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedMarketplaces, setSelectedMarketplaces] = useState<string[]>([]);
   const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const [studentOnly, setStudentOnly] = useState(false);
   const phaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -160,9 +170,9 @@ function DashboardPageInner() {
   }
 
   useEffect(() => {
-    fetch("/api/deals")
+    fetch("/api/listings/feed?limit=40")
       .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setFeed(data.slice(0, 20)); })
+      .then(data => { if (Array.isArray(data?.listings)) setFeed(data.listings); })
       .catch(() => {});
   }, []);
 
@@ -218,20 +228,21 @@ function DashboardPageInner() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       if (!query.trim()) {
-        setDeals([]);
+        setListings([]);
         setHasSearched(false);
         return;
       }
       const searchStart = Date.now();
       setSearching(true);
-      fetch(`/api/deals/search?q=${encodeURIComponent(query.trim())}`)
+      fetch(`/api/listings/search?q=${encodeURIComponent(query.trim())}&limit=40`)
         .then(r => r.json())
         .then(data => {
           const elapsed = Date.now() - searchStart;
           const minVisible = 1400;
           const delay = Math.max(0, minVisible - elapsed);
           setTimeout(() => {
-            setDeals(Array.isArray(data) ? data : []);
+            setListings(Array.isArray(data?.listings) ? data.listings : []);
+            setSemantic(data?.semantic !== false);
             setHasSearched(true);
             setSearching(false);
           }, delay);
@@ -244,14 +255,13 @@ function DashboardPageInner() {
   const isFading = phase === "fading";
   const isShifted = phase === "shifted";
 
-  const filtered = deals
-    .filter(d => selectedCategories.length === 0 || selectedCategories.includes(d.category))
-    .filter(d => selectedConditions.length === 0 || selectedConditions.includes(d.condition))
-    .filter(d => !studentOnly || d.student_eligible);
+  const filtered = listings
+    .filter(l => selectedMarketplaces.length === 0 || selectedMarketplaces.includes(l.marketplace))
+    .filter(l => selectedConditions.length === 0 || selectedConditions.includes(l.condition));
 
-  const hasResults = hasSearched && deals.length > 0;
-  const isEmpty = hasSearched && deals.length === 0 && !searching;
-  const hasFilters = selectedCategories.length > 0 || selectedConditions.length > 0 || studentOnly;
+  const hasResults = hasSearched && listings.length > 0;
+  const isEmpty = hasSearched && listings.length === 0 && !searching;
+  const hasFilters = selectedMarketplaces.length > 0 || selectedConditions.length > 0;
 
   return (
     <>
@@ -271,11 +281,11 @@ function DashboardPageInner() {
           {/* Sidebar — slides in from left when shifted */}
           <aside className={[styles.sidebar, isShifted ? styles.sidebarOpen : ""].join(" ")}>
             <div className={styles.sidebarSection}>
-              <h3 className={styles.sidebarTitle}>Category</h3>
-              {CATEGORIES.map(cat => (
-                <label key={cat} className={styles.checkLabel}>
-                  <input type="checkbox" className={styles.checkbox} checked={selectedCategories.includes(cat)} onChange={() => setSelectedCategories(prev => toggleSet(prev, cat))} />
-                  {cat}
+              <h3 className={styles.sidebarTitle}>Marketplace</h3>
+              {MARKETPLACES.map(m => (
+                <label key={m} className={styles.checkLabel}>
+                  <input type="checkbox" className={styles.checkbox} checked={selectedMarketplaces.includes(m)} onChange={() => setSelectedMarketplaces(prev => toggleSet(prev, m))} />
+                  {MARKETPLACE_LABELS[m] ?? m}
                 </label>
               ))}
             </div>
@@ -288,16 +298,8 @@ function DashboardPageInner() {
                 </label>
               ))}
             </div>
-            <div className={styles.sidebarSection}>
-              <label className={styles.toggleLabel}>
-                <span>Student only</span>
-                <div className={[styles.toggle, studentOnly ? styles.toggleOn : ""].join(" ")} onClick={() => setStudentOnly(v => !v)}>
-                  <div className={styles.toggleThumb} />
-                </div>
-              </label>
-            </div>
             {hasFilters && (
-              <button className={styles.clearBtn} onClick={() => { setSelectedCategories([]); setSelectedConditions([]); setStudentOnly(false); }}>
+              <button className={styles.clearBtn} onClick={() => { setSelectedMarketplaces([]); setSelectedConditions([]); }}>
                 Clear filters
               </button>
             )}
@@ -324,6 +326,9 @@ function DashboardPageInner() {
               )}
             </div>
             <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
+              <p className={styles.searchHint}>
+                Describe what you&apos;re after — plain English works better than keywords.
+              </p>
               <div className={styles.suggestions}>
                 {SUGGESTIONS.map(s => (
                   <button key={s} className={styles.suggestionPill} onClick={() => setQuery(s)}>
@@ -332,11 +337,8 @@ function DashboardPageInner() {
                 ))}
               </div>
               <CarouselStrip feed={feed} />
-              <div className={styles.catalogLink}>
-                <Link href="/catalog">Browse all deals →</Link>
-              </div>
             </div>
-            {searching && <p className={styles.searching}>Finding deals…</p>}
+            {searching && <p className={styles.searching}>Searching the pool…</p>}
 
             {/* Fixed results panel */}
             <div className={[styles.resultsPanel, isShifted ? styles.resultsPanelOpen : ""].join(" ")}>
@@ -351,12 +353,15 @@ function DashboardPageInner() {
               {hasResults && (
                 <>
                   <div className={styles.resultsHeader}>
-                    <span className={styles.resultsCount}>{filtered.length} of {deals.length} deals</span>
+                    <span className={styles.resultsCount}>
+                      {filtered.length} of {listings.length} listings
+                      {!semantic && " · keyword match"}
+                    </span>
                     <Link href="/catalog" className={styles.catalogInline}>Browse all →</Link>
                   </div>
                   <div className={styles.resultsScroll}>
                     <div className={styles.grid}>
-                      {filtered.map((deal, i) => <DealCard key={deal.id} deal={deal} index={i} />)}
+                      {filtered.map((listing, i) => <ListingCard key={listing.id} listing={listing} index={i} />)}
                     </div>
                   </div>
                 </>

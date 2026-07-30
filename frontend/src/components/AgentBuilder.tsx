@@ -173,7 +173,8 @@ export default function AgentBuilder({
       <div className={styles.panelArea}>
         {stages.slice(0, 4).map(stage => {
           const isList = "values" in stage;
-          const hasValues = isList && (stage.values?.length ?? 0) > 0;
+          const values = (isList ? stage.values : undefined) ?? [];
+          const hasValues = values.length > 0;
           return (
             <div key={stage.label} className={styles.panelRow}>
               <div className={styles.panelRowMain}>
@@ -192,21 +193,21 @@ export default function AgentBuilder({
                 {isList && !hasValues && <span className={styles.panelValue}>—</span>}
                 {isList && hasValues && stage.label === "Keywords" && (
                   <span className={[styles.panelValue, styles.panelValueDone].join(" ")}>
-                    {stage.values.length} variants
+                    {values.length} variants
                   </span>
                 )}
                 <span className={styles.panelCheck}>{stage.done ? "✓" : ""}</span>
               </div>
               {isList && hasValues && stage.label !== "Keywords" && (
                 <div className={styles.chipList}>
-                  {stage.values.map(v => (
+                  {values.map(v => (
                     <span key={v} className={styles.valueChip}>{v}</span>
                   ))}
                 </div>
               )}
               {isList && hasValues && stage.label === "Keywords" && (
                 <div className={styles.chipList}>
-                  {stage.values.slice(0, 5).map(v => (
+                  {values.slice(0, 5).map(v => (
                     <span key={v} className={styles.valueChip}>{v}</span>
                   ))}
                 </div>

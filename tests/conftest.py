@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import os
+
+# Must precede any dealbot.api import: the limiter binds its storage backend at
+# import time, and the test suite has no Redis.
+os.environ.setdefault("RATELIMIT_STORAGE_URI", "memory://")
+
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { disablePush, enablePush, getPushState, PushState } from "@/lib/push";
 import styles from "./AlertFeed.module.css";
 
 export interface Alert {
@@ -31,6 +32,21 @@ function timeAgo(iso: string): string {
 export default function AlertFeed() {
   const [alerts, setAlerts] = useState<Alert[] | null>(null);
   const [unread, setUnread] = useState(0);
+  const [push, setPush] = useState<PushState>("unsupported");
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    getPushState().then(setPush);
+  }, []);
+
+  async function togglePush() {
+    setPushBusy(true);
+    try {
+      setPush(push === "on" ? await disablePush() : await enablePush());
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     const res = await fetch("/api/alerts?limit=20");
@@ -70,11 +86,23 @@ export default function AlertFeed() {
           Alerts
           {unread > 0 && <span className={styles.unread}>{unread} new</span>}
         </h2>
-        {unread > 0 && (
-          <button className={styles.readAll} onClick={readAll}>
-            Mark all read
-          </button>
-        )}
+        <span className={styles.headActions}>
+          {push !== "unsupported" && (
+            <button
+              className={styles.pushToggle}
+              onClick={togglePush}
+              disabled={pushBusy || push === "denied"}
+              title={push === "denied" ? "Notifications are blocked in your browser settings" : undefined}
+            >
+              {push === "on" ? "Push alerts on" : push === "denied" ? "Push blocked" : "Enable push alerts"}
+            </button>
+          )}
+          {unread > 0 && (
+            <button className={styles.readAll} onClick={readAll}>
+              Mark all read
+            </button>
+          )}
+        </span>
       </div>
 
       {alerts.length === 0 ? (

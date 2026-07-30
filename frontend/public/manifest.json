@@ -1,0 +1,17 @@
+{
+  "name": "Studeal",
+  "short_name": "Studeal",
+  "description": "AI agents that hunt marketplace deals for you and alert you the moment something matches.",
+  "start_url": "/watchlists",
+  "display": "standalone",
+  "background_color": "#191918",
+  "theme_color": "#191918",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

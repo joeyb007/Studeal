@@ -5,7 +5,7 @@ import Providers from "./providers";
 export const metadata: Metadata = {
   manifest: "/manifest.json",
   title: "Studeal — Never overpay again",
-  description: "AI-powered deal hunting for students. Deploy an agent, get alerted the moment prices drop.",
+  description: "Autonomous agents that hunt marketplace deals for you — Kijiji, eBay, Craigslist — and alert you the moment something matches.",
 };
 
 export default function RootLayout({

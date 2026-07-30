@@ -7,74 +7,74 @@ import styles from "./AgentWorkflow.module.css";
 const STAGE_DURATION = 6000;
 
 const STAGES = [
-  { icon: "⌕", label: "Search" },
-  { icon: "↓", label: "Fetch" },
+  { icon: "⌕", label: "Plan" },
+  { icon: "↓", label: "Browse" },
   { icon: "◈", label: "Extract" },
-  { icon: "◎", label: "Score" },
-  { icon: "✦", label: "Verify" },
+  { icon: "◎", label: "Rank" },
+  { icon: "✦", label: "Alert" },
 ];
 
 const TOOL_CALLS: string[][] = [
-  ["brave_search(query)", "aggregate_sources()"],
-  ["fetch_page(url)", "extract_links(html)"],
-  ["verify_discount(price)", "parse_deal(html)"],
-  ["fetch_price_history()", "check_deal_threshold()"],
-  ["brave_search(student_query)", "tag_student_eligible()"],
+  ["plan_queries(spec)", "route_marketplaces()"],
+  ["goto(kijiji.ca)", "click('Next page')"],
+  ["extract_offers(page)", "canonicalize_urls()"],
+  ["rerank(spec, listings)", "apply_budget_filter()"],
+  ["create_alert(listing)", "send_push()"],
 ];
 
 const THOUGHTS = [
-  "querying brave · aggregating 6 sources across retailers...",
-  "parsing HTML · extracting product metadata from 5 domains...",
-  "discount 24% · verifying against 90-day price floor $201...",
-  "score = 0.4×discount + 0.3×history + 0.3×recency → 84",
-  "re-querying brave with student_query · tagging eligible deals...",
+  "3 query phrasings planned · routing kijiji, ebay, craigslist...",
+  "browsing kijiji results · pagination 2 of 3 · 24 cards visible...",
+  "extracting titles, prices, locations from the live page...",
+  "ranking 47 offers against your spec · budget ≤ $500...",
+  "2 new finds above 85% match · pinging you now",
 ];
 
 const SEARCH_URLS = [
-  "amazon.com/dp/B0BDHWDR12",
-  "bestbuy.com/site/airpods-pro-2nd...",
-  "slickdeals.net/deals/apple-airpods...",
-  "reddit.com/r/deals/airpods_deal",
-  "walmart.com/ip/Apple-AirPods-Pro",
-  "target.com/p/apple-airpods-pro",
+  "kijiji.ca/b-toronto/aeron-chair",
+  "ebay.ca/sch/herman-miller-aeron",
+  "toronto.craigslist.org/search/fua",
+  "kijiji.ca/b-gta/herman-miller",
+  "ebay.ca/sch/aeron?_pgn=2",
+  "kijiji.ca/b-toronto/aeron/page-3",
 ];
 
 const FETCH_PAGES = [
-  { domain: "amazon.com", found: "1 product", done: true },
-  { domain: "bestbuy.com", found: "1 product", done: true },
-  { domain: "slickdeals.net", found: "3 deals", done: true },
-  { domain: "reddit.com", found: "", done: false },
-  { domain: "walmart.com", found: "1 product", done: true },
+  { domain: "kijiji.ca", found: "24 listings", done: true },
+  { domain: "ebay.ca", found: "48 listings", done: true },
+  { domain: "craigslist.org", found: "31 postings", done: true },
+  { domain: "kijiji.ca · p2", found: "", done: false },
+  { domain: "ebay.ca · p2", found: "37 listings", done: true },
 ];
 
 const EXTRACT_ITEMS = [
-  { title: "AirPods Pro 2nd Gen", price: "$189", good: true, confidence: 94 },
-  { title: "AirPods 3rd Gen", price: "$129", good: true, confidence: 87 },
-  { title: "AirPods Max (USB-C)", price: "$449", good: false, confidence: 12 },
-  { title: "Sony WH-1000XM5", price: "$278", good: true, confidence: 71 },
-  { title: "AirPods Pro 1st Gen", price: "$199", good: false, confidence: 23 },
+  { title: "Aeron Size B — fully loaded", price: "$420", good: true, confidence: 94 },
+  { title: "Aeron, posturefit, mint", price: "$495", good: true, confidence: 88 },
+  { title: "Office chair (unbranded)", price: "$85", good: false, confidence: 12 },
+  { title: "Aeron, needs casters", price: "$340", good: true, confidence: 71 },
+  { title: "Aeron-style replica", price: "$150", good: false, confidence: 23 },
 ];
 
 const SCORE_STEPS = [
-  "Verifying discount depth...",
-  "Checking price history...",
-  "Comparing similar deals...",
-  "Computing final score...",
+  "Applying your budget filter...",
+  "Scoring against your spec...",
+  "Deduplicating across marketplaces...",
+  "Picking the standouts...",
 ];
 
 const VERIFY_ITEMS = [
-  { label: "UNiDAYS eligible", found: true },
-  { label: ".edu pricing available", found: true },
-  { label: "Student Beans verified", found: false },
-  { label: "Apple Education Store", found: true },
+  { label: "Push notification sent", found: true },
+  { label: "Email alert delivered", found: true },
+  { label: "Added to your feed", found: true },
+  { label: "Under your $500 budget", found: true },
 ];
 
 const STAGE_STATS = [
-  { label: "sources found", getValue: (tick: number) => `${Math.min(tick, SEARCH_URLS.length)} / ${SEARCH_URLS.length}` },
-  { label: "pages fetched", getValue: (tick: number) => `${Math.min(tick, FETCH_PAGES.filter(p => p.done).length)} / ${FETCH_PAGES.length}` },
-  { label: "candidates", getValue: (tick: number) => `${Math.min(tick, EXTRACT_ITEMS.filter(i => i.good).length)} strong matches` },
-  { label: "deal score", getValue: (tick: number) => `${Math.round(Math.min((tick / SCORE_STEPS.length) * 84, 84))} / 100` },
-  { label: "student discounts", getValue: (tick: number) => `${Math.min(tick, VERIFY_ITEMS.filter(v => v.found).length)} verified` },
+  { label: "queries planned", getValue: (tick: number) => `${Math.min(tick, SEARCH_URLS.length)} / ${SEARCH_URLS.length}` },
+  { label: "pages browsed", getValue: (tick: number) => `${Math.min(tick, FETCH_PAGES.filter(p => p.done).length)} / ${FETCH_PAGES.length}` },
+  { label: "candidates", getValue: (tick: number) => `${Math.min(tick, EXTRACT_ITEMS.filter(i => i.good).length)} real listings` },
+  { label: "top match", getValue: (tick: number) => `${Math.round(Math.min((tick / SCORE_STEPS.length) * 84, 84))} / 100` },
+  { label: "alerts sent", getValue: (tick: number) => `${Math.min(tick, VERIFY_ITEMS.filter(v => v.found).length)} delivered` },
 ];
 
 function faviconUrl(domain: string) {

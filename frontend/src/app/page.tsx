@@ -115,7 +115,7 @@ export default function Home() {
           <div className={styles.heroLeft}>
           <p className={[styles.eyebrow, styles.enterDone].join(" ")}
             style={{ animationDelay: "80ms" }}>
-            AI deal hunting for students
+            Autonomous deal-hunting agents
           </p>
           <h1 className={[styles.headline, styles.enterDone].join(" ")}
             style={{ animationDelay: "160ms" }}>
@@ -124,7 +124,7 @@ export default function Home() {
           </h1>
           <p className={[styles.subline, styles.enterDone].join(" ")}
             style={{ animationDelay: "240ms" }}>
-            Tell us what you want. We watch the internet and alert you when the price is right.
+            Describe what you want. Your agents hunt Kijiji, eBay and Craigslist around the clock — and ping you the moment a great one appears.
           </p>
 
           <form onSubmit={handleSearch}

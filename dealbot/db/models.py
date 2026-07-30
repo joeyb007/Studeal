@@ -31,6 +31,9 @@ class Listing(Base):
     location: Mapped[str | None] = mapped_column(String(256), nullable=True)
     posted_at_raw: Mapped[str | None] = mapped_column(String(64), nullable=True)
     condition: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    # Semantic search over the pool (Daily Drops). Nullable: embedding is an
+    # enhancement, never a precondition for persisting a listing.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

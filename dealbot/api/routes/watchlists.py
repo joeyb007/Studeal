@@ -15,7 +15,7 @@ from dealbot.db.database import get_async_session
 from dealbot.api.routes.hunts import HuntListResponse, to_summary
 from dealbot.db.models import Deal, Hunt, Listing, User, Watchlist
 from dealbot.recsys.intent import compose_intent_document
-from dealbot.rerank.service import RerankService
+from dealbot.recsys.ranker import rank
 from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
@@ -28,6 +28,10 @@ router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 WATCHLIST_TTL_DAYS = 60
 FREE_WATCHLIST_CAP = 1
 PRO_WATCHLIST_CAP = 5
+
+# Shortlist handed to the listwise ranker. Large enough that dense retrieval
+# has room to be wrong, small enough to rank in a handful of windowed calls.
+CANDIDATE_POOL_SIZE = 150
 
 
 def _get_llm() -> LLMClient:
@@ -322,14 +326,15 @@ class ListingResponse(BaseModel):
     location: Optional[str]
     condition: str
     relevance_score: float
+    reason: Optional[str] = None                # one-line "why this listing"
     first_seen_at: str
     last_seen_at: str
 
 
 class ListingsResponse(BaseModel):
     listings: list[ListingResponse]
-    total_candidates: int                       # pre-rerank pool size
-    reranked: bool                              # False if Cohere unavailable
+    total_candidates: int                       # pre-rank shortlist size
+    reranked: bool                              # False if ranking degraded
 
 
 @router.post(
@@ -400,14 +405,17 @@ async def list_watchlist_listings(
     top_n: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
 ) -> ListingsResponse:
-    """Two-stage retrieval against the v14 listings table.
+    """Two-stage recommendation against the shared listings pool.
 
-    1. SQL candidate-gen: recent listings in relevant marketplaces, price ≤
-       max_budget × 1.2 (some slack for the reranker to override).
-    2. Cross-encoder rerank via Cohere against the watchlist's product query.
+    1. Dense retrieval: cosine-match the watchlist's intent embedding — which
+       encodes the whole elicited context, not just the query — against the
+       pool. This is what surfaces listings OTHER users' agents found.
+       Hard constraints (budget, condition) are SQL filters applied first, so
+       no ranker verdict can surface a listing that violates them.
+    2. Listwise LLM rank over that shortlist, emitting a reason per listing.
 
-    Returns top-N with relevance scores. If Cohere is unavailable, returns
-    candidates in insertion order with `reranked=False`.
+    Degrades rather than fails: no intent embedding falls back to recency
+    candidates, and a ranking outage returns them in retrieval order.
     """
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)
@@ -422,56 +430,48 @@ async def list_watchlist_listings(
             )
         ctx = WatchlistContext.model_validate_json(watchlist.context)
 
-        # Candidate gen: price filter + recency ordering. Cap at top_n × 5
-        # so the reranker has enough to work with without over-fetching.
+        # Hard constraints first. The ranker must be structurally unable to
+        # relax them, so they never reach it as instructions.
         stmt = select(Listing)
         if ctx.max_budget:
             stmt = stmt.where(Listing.price <= ctx.max_budget * 1.2)
-        stmt = stmt.order_by(Listing.last_seen_at.desc()).limit(top_n * 5)
-        candidates = list((await session.execute(stmt)).scalars().all())
+        if ctx.condition:
+            stmt = stmt.where(Listing.condition.in_(ctx.condition))
+
+        if watchlist.intent_embedding is not None:
+            stmt = stmt.where(Listing.embedding.isnot(None)).order_by(
+                Listing.embedding.cosine_distance(watchlist.intent_embedding)
+            )
+        else:
+            # No intent vector (embedding backend was down at create time).
+            # Recency is a weak but non-empty candidate source.
+            stmt = stmt.order_by(Listing.last_seen_at.desc())
+        candidates = list(
+            (await session.execute(stmt.limit(CANDIDATE_POOL_SIZE))).scalars().all()
+        )
 
     if not candidates:
         return ListingsResponse(listings=[], total_candidates=0, reranked=False)
 
-    # Format each candidate for the rerank prompt.
-    docs = [_format_listing_for_rerank(c) for c in candidates]
-    service = RerankService()
-    try:
-        results = await service.rerank(ctx.product_query, docs, top_n=top_n)
-    finally:
-        await service.aclose()
-
-    reranked = any(r.relevance_score > 0 for r in results)
-    picked = [candidates[r.index] for r in results if r.index < len(candidates)]
-    scores = {r.index: r.relevance_score for r in results}
+    ranked = await rank(ctx, candidates, top_n=top_n)
 
     return ListingsResponse(
         listings=[
             ListingResponse(
-                id=c.id, marketplace=c.marketplace, title=c.title,
-                price=c.price, currency=c.currency, url=c.raw_url,
-                image_url=c.image_url, location=c.location,
-                condition=c.condition,
-                relevance_score=scores.get(candidates.index(c), 0.0),
-                first_seen_at=c.first_seen_at.isoformat(),
-                last_seen_at=c.last_seen_at.isoformat(),
+                id=r.listing.id, marketplace=r.listing.marketplace,
+                title=r.listing.title, price=r.listing.price,
+                currency=r.listing.currency, url=r.listing.raw_url,
+                image_url=r.listing.image_url, location=r.listing.location,
+                condition=r.listing.condition,
+                relevance_score=r.score, reason=r.reason or None,
+                first_seen_at=r.listing.first_seen_at.isoformat(),
+                last_seen_at=r.listing.last_seen_at.isoformat(),
             )
-            for c in picked
+            for r in ranked
         ],
         total_candidates=len(candidates),
-        reranked=reranked,
+        reranked=any(r.score > 0 for r in ranked),
     )
-
-
-def _format_listing_for_rerank(listing: Listing) -> str:
-    """One-line summary for the cross-encoder. Includes the fields that a human
-    would use to judge relevance — title, price, marketplace, location, condition."""
-    parts = [listing.title, f"${listing.price:.2f} {listing.currency}", listing.marketplace]
-    if listing.location:
-        parts.append(listing.location)
-    if listing.condition and listing.condition != "unknown":
-        parts.append(f"condition: {listing.condition}")
-    return " | ".join(parts)
 
 
 @router.delete("/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)

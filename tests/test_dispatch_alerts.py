@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from dealbot.db.models import Base, Hunt, HuntListing, Listing, ListingAlert, User, Watchlist
 from dealbot.events.publisher import RedisEventPublisher
-from dealbot.rerank.service import RerankResult
 
 
 class FakeRedis:
@@ -31,21 +30,6 @@ class FakeRedis:
 
     async def aclose(self):
         pass
-
-
-class FakeRerank:
-    """Returns preset scores positionally; records the documents it saw."""
-
-    def __init__(self, scores: list[float]):
-        self.scores = scores
-        self.seen_documents: list[str] | None = None
-
-    async def rerank(self, query, documents, top_n=20):
-        self.seen_documents = list(documents)
-        return [
-            RerankResult(index=i, relevance_score=s)
-            for i, s in enumerate(self.scores[: len(documents)])
-        ]
 
 
 @pytest.fixture()
@@ -111,11 +95,11 @@ async def test_alert_rows_created_above_threshold(rig):
     factory, alerts_mod, fake_redis, publisher, _ = rig
     hunt_id = await _seed(factory, prices=[100, 110, 120, 130],
                           new_flags=[True, True, True, False])
-    rerank = FakeRerank([0.9, 0.4, 0.1])  # only the 3 new candidates are scored
-    result = await alerts_mod._dispatch(hunt_id, rerank=rerank, publisher=publisher)
+    ranker = FakeRanker([0.9, 0.4, 0.1])  # only the 3 new candidates are scored
+    result = await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
 
     assert result["alerts"] == 2  # 0.9 and 0.4 clear the 0.30 threshold
-    assert len(rerank.seen_documents) == 3  # was_new=False listing never scored
+    assert len(ranker.seen_titles) == 3  # was_new=False listing never scored
     async with factory() as s:
         rows = (await s.execute(select(ListingAlert))).scalars().all()
         assert sorted(r.score for r in rows) == [0.4, 0.9]
@@ -129,17 +113,17 @@ async def test_budget_hard_filter(rig):
         factory, prices=[250, 400],
         context='{"product_query": "aeron", "max_budget": 300}',
     )
-    rerank = FakeRerank([0.9, 0.9])
-    await alerts_mod._dispatch(hunt_id, rerank=rerank, publisher=publisher)
-    assert len(rerank.seen_documents) == 1  # 400 excluded before rerank
+    ranker = FakeRanker([0.9, 0.9])
+    await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
+    assert len(ranker.seen_titles) == 1  # 400 excluded before rerank
 
 
 @pytest.mark.asyncio
 async def test_identity_fallback_keeps_candidates(rig):
     factory, alerts_mod, _, publisher, _ = rig
     hunt_id = await _seed(factory, prices=[100, 110])
-    rerank = FakeRerank([0.0, 0.0])  # Cohere down → identity fallback scores
-    result = await alerts_mod._dispatch(hunt_id, rerank=rerank, publisher=publisher)
+    ranker = FakeRanker([0.0, 0.0])  # Cohere down → identity fallback scores
+    result = await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
     assert result["alerts"] == 2
 
 
@@ -147,8 +131,8 @@ async def test_identity_fallback_keeps_candidates(rig):
 async def test_cap_per_hunt(rig):
     factory, alerts_mod, _, publisher, _ = rig
     hunt_id = await _seed(factory, prices=[100 + i for i in range(7)])
-    rerank = FakeRerank([0.9] * 7)
-    result = await alerts_mod._dispatch(hunt_id, rerank=rerank, publisher=publisher)
+    ranker = FakeRanker([0.9] * 7)
+    result = await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
     assert result["alerts"] == 5  # ALERT_MAX_PER_HUNT default
 
 
@@ -157,7 +141,7 @@ async def test_email_sent_once_and_channels_updated(rig):
     factory, alerts_mod, _, publisher, sent_emails = rig
     hunt_id = await _seed(factory, prices=[100, 110])
     result = await alerts_mod._dispatch(
-        hunt_id, rerank=FakeRerank([0.9, 0.8]), publisher=publisher,
+        hunt_id, ranker=FakeRanker([0.9, 0.8]), publisher=publisher,
     )
     assert result["emailed"] is True
     assert len(sent_emails) == 1
@@ -173,7 +157,7 @@ async def test_email_sent_once_and_channels_updated(rig):
 async def test_alert_created_events_published(rig):
     factory, alerts_mod, fake_redis, publisher, _ = rig
     hunt_id = await _seed(factory, prices=[100, 110])
-    await alerts_mod._dispatch(hunt_id, rerank=FakeRerank([0.9, 0.8]), publisher=publisher)
+    await alerts_mod._dispatch(hunt_id, ranker=FakeRanker([0.9, 0.8]), publisher=publisher)
     events = [json.loads(m) for _, m in fake_redis.published]
     created = [e for e in events if e["type"] == "alert.created"]
     assert len(created) == 2
@@ -186,7 +170,75 @@ async def test_no_candidates_is_noop(rig):
     factory, alerts_mod, fake_redis, publisher, sent_emails = rig
     hunt_id = await _seed(factory, prices=[100], new_flags=[False])
     result = await alerts_mod._dispatch(
-        hunt_id, rerank=FakeRerank([0.9]), publisher=publisher,
+        hunt_id, ranker=FakeRanker([0.9]), publisher=publisher,
     )
     assert result == {"alerts": 0, "emailed": False, "pushed": 0}
     assert sent_emails == [] and fake_redis.published == []
+
+
+# ---------------------------------------------------------------------------
+# Listwise ranking with reasons (Workstream C)
+# ---------------------------------------------------------------------------
+
+class FakeRanker:
+    """Positional scores + a reason each. Records what it was asked to rank."""
+
+    def __init__(self, scores: list[float], reason: str = "Fits your setup."):
+        self.scores = scores
+        self.reason = reason
+        self.seen_titles: list[str] | None = None
+        self.seen_spec = None
+
+    async def __call__(self, spec, candidates, *, llm=None, top_n=20):
+        from dealbot.recsys.ranker import RankedListing
+
+        self.seen_spec = spec
+        self.seen_titles = [c.title for c in candidates]
+        ranked = [
+            RankedListing(listing=c, score=s, reason=self.reason)
+            for c, s in zip(candidates, self.scores)
+        ]
+        ranked.sort(key=lambda r: r.score, reverse=True)
+        return ranked[:top_n]
+
+
+@pytest.mark.asyncio
+async def test_alerts_persist_a_reason(rig):
+    """The reason is the product: an alert that says why beats one that ranks."""
+    factory, alerts_mod, _, publisher, _ = rig
+    hunt_id = await _seed(factory, prices=[100, 110])
+    ranker = FakeRanker([0.9, 0.8], reason="Over-ear ANC, well under budget.")
+
+    result = await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
+
+    assert result["alerts"] == 2
+    async with factory() as s:
+        rows = (await s.execute(select(ListingAlert))).scalars().all()
+    assert all(r.reason == "Over-ear ANC, well under budget." for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_candidates_stay_provenance_scoped(rig):
+    """Alerts rank this hunt's new listings — not the whole pool. Dense
+    retrieval belongs on the read path, not here."""
+    factory, alerts_mod, _, publisher, _ = rig
+    hunt_id = await _seed(factory, prices=[100, 110, 120],
+                          new_flags=[True, True, False])
+    ranker = FakeRanker([0.9, 0.8])
+    await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
+    assert ranker.seen_titles == ["Aeron 0", "Aeron 1"]
+
+
+@pytest.mark.asyncio
+async def test_ranker_receives_the_full_context_including_profile(rig):
+    factory, alerts_mod, _, publisher, _ = rig
+    hunt_id = await _seed(
+        factory, prices=[100],
+        context=json.dumps({
+            "product_query": "aeron",
+            "buyer_profile": "Remote worker with back problems.",
+        }),
+    )
+    ranker = FakeRanker([0.9])
+    await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
+    assert ranker.seen_spec.buyer_profile == "Remote worker with back problems."

@@ -23,7 +23,7 @@ async def test_digest_skips_free_users():
 
     with (
         patch("dealbot.worker.digest.get_async_session") as mock_session_ctx,
-        patch("dealbot.worker.digest._matched_deals_for_user", new_callable=AsyncMock) as mock_match,
+        patch("dealbot.worker.digest._matched_listings_for_user", new_callable=AsyncMock) as mock_match,
         patch("dealbot.worker.digest.send_email", new_callable=AsyncMock) as mock_send,
     ):
         mock_session = AsyncMock()
@@ -35,16 +35,49 @@ async def test_digest_skips_free_users():
         execute_result.scalars.return_value.all.return_value = [free_user, pro_user]
         mock_session.execute = AsyncMock(return_value=execute_result)
 
-        mock_deal = MagicMock()
-        mock_deal.real_discount_pct = 20.0
-        mock_deal.score = 75
-        mock_deal.sale_price = 99.99
-        mock_deal.url = "https://example.com/deal"
-        mock_deal.title = "Test Deal"
-        mock_match.return_value = [("My Watchlist", mock_deal)]
+        mock_listing = MagicMock()
+        mock_listing.title = "Test Listing"
+        mock_listing.price = 99.99
+        mock_listing.currency = "CAD"
+        mock_listing.marketplace = "kijiji"
+        mock_listing.raw_url = "https://example.com/listing"
+        mock_match.return_value = [("My Watchlist", mock_listing)]
 
         result = await _send_digests()
 
     assert mock_send.call_count == 1
     assert mock_send.call_args.kwargs["to"] == "pro@example.com"
     assert result["sent"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Pool re-point (Workstream C)
+# ---------------------------------------------------------------------------
+
+def test_digest_body_renders_listings():
+    from dealbot.db.models import Listing
+    from dealbot.worker.digest import _build_digest
+
+    listing = Listing(
+        canonical_url="c1", raw_url="https://kijiji.ca/1",
+        marketplace="kijiji", title="Sony WH-1000XM4",
+        price=180.0, currency="CAD", condition="used",
+    )
+    body = _build_digest("u@example.com", [("Headphones", listing)])
+
+    assert "Sony WH-1000XM4" in body
+    assert "180" in body
+    assert "https://kijiji.ca/1" in body
+    assert "CAD" in body
+    assert "kijiji" in body
+
+
+def test_digest_no_longer_queries_legacy_deals():
+    """The legacy deals table is retiring; the digest must not hold it open."""
+    import inspect
+
+    from dealbot.worker import digest
+
+    source = inspect.getsource(digest)
+    assert "FROM deals" not in source, "SQL still targets the legacy deals table"
+    assert "FROM listings" in source

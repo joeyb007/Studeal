@@ -1,9 +1,16 @@
 """dispatch_alerts — turn a hunt's new listings into user alerts.
 
 Candidate flow: this hunt's was_new_for_watchlist listings → hard budget
-filter → cross-encoder relevance gate (identity fallback keeps candidates
-when Cohere is down) → cap → ListingAlert rows + alert.created events →
-one summary email → web push (pro users, when the push module exists).
+filter → listwise LLM rank with a reason per listing (all-zero scores mean
+every window failed, so the threshold is skipped rather than dropping
+everything) → cap → ListingAlert rows + alert.created events → one summary
+email → web push (pro users, when the push module exists).
+
+Candidates are provenance-scoped — the listings THIS hunt found for THIS
+watchlist. Dense retrieval over the shared pool belongs on the read path,
+where it can surface what other users' agents found; here it would only add
+machinery, since these candidates are already topically relevant by
+construction.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 
@@ -19,7 +27,7 @@ from dealbot.db.models import Hunt, HuntListing, Listing, ListingAlert, User, Wa
 from dealbot.events.publisher import RedisEventPublisher
 from dealbot.events.schema import AlertCreated
 from dealbot.notifications.email import build_alert_email, send_email
-from dealbot.rerank.service import RerankService
+from dealbot.recsys.ranker import RankedListing, rank
 from dealbot.schemas import WatchlistContext
 from dealbot.worker.celery_app import app
 
@@ -27,22 +35,6 @@ logger = logging.getLogger(__name__)
 
 ALERT_SCORE_THRESHOLD = float(os.environ.get("ALERT_SCORE_THRESHOLD", "0.30"))
 ALERT_MAX_PER_HUNT = int(os.environ.get("ALERT_MAX_PER_HUNT", "5"))
-
-
-def _spec_text(context: WatchlistContext) -> str:
-    parts = [context.product_query]
-    if context.condition:
-        parts.append(f"condition: {', '.join(context.condition)}")
-    if context.brands:
-        parts.append(f"brands: {', '.join(context.brands)}")
-    return "; ".join(parts)
-
-
-def _listing_text(listing: Listing) -> str:
-    return (
-        f"{listing.title} — {listing.price} {listing.currency}"
-        f" — {listing.condition} — {listing.location or ''}"
-    )
 
 
 @app.task(name="dealbot.worker.alerts.dispatch_alerts")
@@ -53,10 +45,10 @@ def dispatch_alerts(hunt_id: int) -> dict:
 async def _dispatch(
     hunt_id: int,
     *,
-    rerank: RerankService | None = None,
+    ranker: Callable[..., Awaitable[list[RankedListing]]] | None = None,
     publisher: RedisEventPublisher | None = None,
 ) -> dict:
-    rerank = rerank or RerankService()
+    ranker = ranker or rank
     publisher = publisher or RedisEventPublisher()
     empty = {"alerts": 0, "emailed": False, "pushed": 0}
 
@@ -86,34 +78,30 @@ async def _dispatch(
         if not candidates:
             return empty
 
-        # Relevance gate. Identity fallback (all scores 0.0 — Cohere down or
-        # keyless) must not drop everything: keep candidates in given order.
-        results = await rerank.rerank(
-            _spec_text(context),
-            [_listing_text(listing) for listing in candidates],
-            top_n=len(candidates),
-        )
-        if any(r.relevance_score > 0.0 for r in results):
-            results = [r for r in results if r.relevance_score >= ALERT_SCORE_THRESHOLD]
-            results.sort(key=lambda r: r.relevance_score, reverse=True)
-        selected = [
-            (candidates[r.index], r.relevance_score)
-            for r in results[:ALERT_MAX_PER_HUNT]
-        ]
+        # Relevance gate. rank() never returns empty for non-empty candidates,
+        # but it CAN return all-zero scores when every window failed — applying
+        # the threshold then would drop everything, so skip it.
+        ranked = await ranker(context, candidates, top_n=len(candidates))
+        if any(r.score > 0.0 for r in ranked):
+            ranked = [r for r in ranked if r.score >= ALERT_SCORE_THRESHOLD]
+        selected = ranked[:ALERT_MAX_PER_HUNT]
         if not selected:
             return empty
 
         alerts: list[ListingAlert] = []
-        for listing, score in selected:
+        for ranked_listing in selected:
             alert = ListingAlert(
                 user_id=user.id, watchlist_id=watchlist.id,
-                listing_id=listing.id, hunt_id=hunt_id, score=score,
+                listing_id=ranked_listing.listing.id, hunt_id=hunt_id,
+                score=ranked_listing.score,
+                reason=ranked_listing.reason or None,
             )
             session.add(alert)
             alerts.append(alert)
         await session.commit()
 
-        for alert, (listing, _score) in zip(alerts, selected):
+        for alert, ranked_listing in zip(alerts, selected):
+            listing = ranked_listing.listing
             await publisher.publish(AlertCreated(
                 hunt_id=hunt_id, watchlist_id=watchlist.id,
                 alert_id=alert.id, listing_id=listing.id,
@@ -124,7 +112,7 @@ async def _dispatch(
 
         # One summary email per hunt.
         subject, body = build_alert_email(
-            watchlist.name, [(a, listing) for a, (listing, _s) in zip(alerts, selected)],
+            watchlist.name, [(a, r.listing) for a, r in zip(alerts, selected)],
         )
         emailed = await send_email(user.email, subject, body)
         if emailed:
@@ -153,7 +141,8 @@ async def _try_push(user, watchlist, alerts, selected) -> int:
     except ImportError:
         return 0
     sent = 0
-    for _alert, (listing, _score) in zip(alerts, selected):
+    for _alert, ranked_listing in zip(alerts, selected):
+        listing = ranked_listing.listing
         delivered = await send_push_to_user(user.id, PushPayload(
             title=f"New match: {watchlist.name}",
             body=f"{listing.title} — ${listing.price:.2f} {listing.currency}",

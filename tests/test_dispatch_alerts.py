@@ -172,7 +172,7 @@ async def test_no_candidates_is_noop(rig):
     result = await alerts_mod._dispatch(
         hunt_id, ranker=FakeRanker([0.9]), publisher=publisher,
     )
-    assert result == {"alerts": 0, "emailed": False, "pushed": 0}
+    assert result == {"alerts": 0, "from_pool": 0, "emailed": False, "pushed": 0}
     assert sent_emails == [] and fake_redis.published == []
 
 
@@ -262,3 +262,26 @@ async def test_internal_user_gets_alert_rows_but_no_delivery(rig):
     assert result["alerts"] == 2, "alert rows still created"
     assert result["emailed"] is False
     assert sent_emails == [], "no delivery attempt to an internal address"
+
+
+@pytest.mark.asyncio
+async def test_alert_result_reports_pool_provenance(rig):
+    """How many of this hunt's alerts came from the pool vs live browsing —
+    the % that proves (or disproves) the shared-pool thesis over time."""
+    from dealbot.db.models import HuntListing
+
+    factory, alerts_mod, _, publisher, _ = rig
+    hunt_id = await _seed(factory, prices=[100, 110])
+    async with factory() as s:
+        links = (await s.execute(
+            select(HuntListing).where(HuntListing.hunt_id == hunt_id)
+        )).scalars().all()
+        links[0].source = "pool"
+        await s.commit()
+
+    result = await alerts_mod._dispatch(
+        hunt_id, ranker=FakeRanker([0.9, 0.8]), publisher=publisher,
+    )
+
+    assert result["alerts"] == 2
+    assert result["from_pool"] == 1

@@ -182,6 +182,12 @@ class HuntListing(Base):
     listing_id: Mapped[int] = mapped_column(
         ForeignKey("listings.id", ondelete="CASCADE"), nullable=False, primary_key=True
     )
+    # How this listing joined the hunt: "browsed" (found live by this hunt's
+    # own browsing) or "pool" (served from another agent's earlier find).
+    # The %-of-alerts-from-pool metric is the pool thesis as a measurement.
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="browsed"
+    )
     was_new_for_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 

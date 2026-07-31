@@ -42,7 +42,7 @@ export type HuntEvent = HuntEventBase &
       }
     | {
         type: "hunt.finished";
-        status: "succeeded" | "failed";
+        status: "succeeded" | "failed" | "cached";
         duration_s: number;
         error: string | null;
       }

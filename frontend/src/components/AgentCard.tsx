@@ -113,7 +113,9 @@ export default function AgentCard({
         <span className={styles.title}>{hunt.watchlist_name}</span>
         <span className={done ? styles.statusDone : styles.statusHunting}>
           {done
-            ? `Done · ${Math.round(derived.finished!.duration)}s`
+            ? derived.finished!.status === "cached"
+              ? `Checked the fleet's latest findings — ${derived.fresh ?? 0} new match${derived.fresh === 1 ? "" : "es"}, no browse needed`
+              : `Done · ${Math.round(derived.finished!.duration)}s`
             : connected
               ? "Hunting"
               : "Connecting"}

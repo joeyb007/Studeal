@@ -20,7 +20,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Hunt, HuntListing, Listing, ListingAlert, User, Watchlist
@@ -51,7 +51,7 @@ async def _dispatch(
 ) -> dict:
     ranker = ranker or rank
     publisher = publisher or RedisEventPublisher()
-    empty = {"alerts": 0, "emailed": False, "pushed": 0}
+    empty = {"alerts": 0, "from_pool": 0, "emailed": False, "pushed": 0}
 
     async with get_async_session() as session:
         hunt = await session.get(Hunt, hunt_id)
@@ -101,6 +101,16 @@ async def _dispatch(
             alerts.append(alert)
         await session.commit()
 
+        # Pool-provenance split: the % of alerts served by other agents'
+        # finds is the pool thesis as a measurement. Rises with user overlap.
+        pool_count = (await session.execute(
+            select(func.count()).select_from(HuntListing).where(
+                HuntListing.hunt_id == hunt_id,
+                HuntListing.listing_id.in_([a.listing_id for a in alerts]),
+                HuntListing.source == "pool",
+            )
+        )).scalar_one()
+
         for alert, ranked_listing in zip(alerts, selected):
             listing = ranked_listing.listing
             await publisher.publish(AlertCreated(
@@ -131,10 +141,13 @@ async def _dispatch(
         await session.commit()
 
     logger.info(
-        "dispatch_alerts: hunt=%d alerts=%d emailed=%s pushed=%d",
-        hunt_id, len(alerts), emailed, pushed,
+        "dispatch_alerts: hunt=%d alerts=%d from_pool=%d emailed=%s pushed=%d",
+        hunt_id, len(alerts), pool_count, emailed, pushed,
     )
-    return {"alerts": len(alerts), "emailed": emailed, "pushed": pushed}
+    return {
+        "alerts": len(alerts), "from_pool": pool_count,
+        "emailed": emailed, "pushed": pushed,
+    }
 
 
 async def _try_push(user, watchlist, alerts, selected) -> int:

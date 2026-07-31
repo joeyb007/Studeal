@@ -75,7 +75,7 @@ class HuntPersisted(_EventBase):
 
 class HuntFinished(_EventBase):
     type: Literal["hunt.finished"] = "hunt.finished"
-    status: Literal["succeeded", "failed"]
+    status: Literal["succeeded", "failed", "cached"]
     duration_s: float
     error: str | None = None
 

@@ -71,3 +71,24 @@ async def test_alert_and_push_rows(session):
     await session.flush()
     assert alert.channels == "feed" and alert.reason is None and alert.read_at is None
     assert sub.id is not None
+
+
+async def test_hunt_listing_source_defaults_to_browsed(session):
+    """Provenance of HOW a listing joined a hunt: browsed live, or served from
+    the pool. The default keeps every existing write path meaning 'browsed'."""
+    wl = await _seed_user_watchlist(session)
+    hunt = Hunt(watchlist_id=wl.id)
+    listing = Listing(
+        canonical_url="c1", raw_url="https://m.test/1", marketplace="kijiji",
+        title="Item", price=10.0, currency="CAD", condition="used",
+    )
+    session.add_all([hunt, listing])
+    await session.flush()
+    link = HuntListing(hunt_id=hunt.id, listing_id=listing.id)
+    session.add(link)
+    await session.commit()
+
+    assert link.source == "browsed"
+
+    pool_link = HuntListing(hunt_id=hunt.id, listing_id=listing.id, source="pool")
+    assert pool_link.source == "pool"

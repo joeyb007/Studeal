@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 
 from dealbot.agents.composition import HuntEventContext, run_hunt
 from dealbot.db.database import get_async_session
-from dealbot.db.models import Hunt, Watchlist
+from dealbot.db.models import Hunt, User, Watchlist
 from dealbot.events.publisher import RedisEventPublisher
 from dealbot.events.schema import HuntFinished, HuntPersisted, HuntStarted
 from dealbot.persistence.listings import mark_new_for_watchlist, persist_offers
+from dealbot.recsys.gate import GATE_SUFFICIENCY_K, link_pool_candidates, pool_candidates
 from dealbot.schemas import WatchlistContext
 from dealbot.worker.celery_app import app
 
@@ -72,6 +73,18 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
             logger.warning("research_for_agent: watchlist %d has no context", watchlist_id)
             return {"watchlist_id": watchlist_id, "error": "no_context"}
         context = WatchlistContext.model_validate_json(watchlist.context)
+        user = await session.get(User, watchlist.user_id)
+
+    # 1b. Sufficiency gate (non-pro only): if the pool already holds enough
+    # fresh, novel matches, serve the refresh from it — no browser, no
+    # governor slot. Pro always hunts live; freshness is the paid feature.
+    # The house user is pro, so house seeds always hunt fully — they are
+    # the pump that keeps the pool fed.
+    candidates: list = []
+    if user is not None and not user.is_pro:
+        candidates = await pool_candidates(watchlist_id)
+        if len(candidates) >= GATE_SUFFICIENCY_K:
+            return await _serve_from_pool(watchlist_id, candidates)
 
     # 2. Capacity gate — BEFORE any row exists, so a requeue leaves no orphan.
     # Governor errors fail open: a Redis blip must not stop the fleet.
@@ -109,6 +122,10 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
 
         # 5. Persist offers with hunt provenance; flag alert candidates.
         result = await persist_offers(offers, hunt_id=hunt_id)
+        # Pool-first alerts, both branches: even below k, matches from other
+        # agents' finds ride along as alert candidates.
+        if candidates:
+            await link_pool_candidates(hunt_id, [c.id for c in candidates])
         new_ids = await mark_new_for_watchlist(hunt_id)
     except Exception as exc:
         await _close_hunt(
@@ -159,6 +176,57 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         "offer_count": len(offers),
         "persisted": result.written,
         "new_for_watchlist": len(new_ids),
+    }
+
+
+async def _serve_from_pool(watchlist_id: int, candidates: list) -> dict:
+    """A refresh answered entirely by other agents' finds.
+
+    Same bookkeeping contract as a real hunt — Hunt row, events, novelty,
+    alerts, last_hunt_at — with zero browsing. Alerts are never cached: the
+    novelty → rank → alert chain runs exactly as it would post-hunt.
+    """
+    publisher = _get_publisher()
+    async with get_async_session() as session:
+        hunt = Hunt(watchlist_id=watchlist_id)
+        session.add(hunt)
+        await session.commit()
+        hunt_id = hunt.id
+        started_at = hunt.started_at
+    await publisher.publish(HuntStarted(hunt_id=hunt_id, watchlist_id=watchlist_id))
+
+    linked = await link_pool_candidates(hunt_id, [c.id for c in candidates])
+    new_ids = await mark_new_for_watchlist(hunt_id)
+
+    async with get_async_session() as session:
+        hunt = await session.get(Hunt, hunt_id)
+        hunt.status = "cached"
+        hunt.finished_at = datetime.now(timezone.utc)
+        hunt.offer_count = 0                    # offer_count means BROWSED offers
+        hunt.persisted_count = 0
+        hunt.new_listing_count = len(new_ids)
+        watchlist = await session.get(Watchlist, watchlist_id)
+        watchlist.last_hunt_at = started_at     # cadence resets — this WAS the refresh
+        await session.commit()
+
+    await publisher.publish(HuntPersisted(
+        hunt_id=hunt_id, watchlist_id=watchlist_id,
+        offer_count=0, persisted_count=0, new_for_watchlist=len(new_ids),
+    ))
+    await publisher.publish(HuntFinished(
+        hunt_id=hunt_id, watchlist_id=watchlist_id,
+        status="cached", duration_s=_elapsed_s(started_at),
+    ))
+    if new_ids:
+        _maybe_dispatch_alerts(hunt_id)
+
+    logger.info(
+        "research_for_agent: wl=%d hunt=%d CACHED linked=%d new=%d",
+        watchlist_id, hunt_id, linked, len(new_ids),
+    )
+    return {
+        "watchlist_id": watchlist_id, "hunt_id": hunt_id,
+        "cached": True, "linked": linked, "new": len(new_ids),
     }
 
 

@@ -45,9 +45,18 @@ async def rig(monkeypatch):
         async with factory() as s:
             yield s
 
+    import dealbot.persistence.listings as listings_mod
+    import dealbot.recsys.gate as gate_mod
     import dealbot.worker.tasks as tasks_mod
 
     monkeypatch.setattr(tasks_mod, "get_async_session", _session)
+    # gate and persistence open their own sessions; without these patches
+    # they dial the real DATABASE_URL. The rig watchlist has no
+    # intent_embedding, so the real pool_candidates returns [] →
+    # pre-existing tests take the full-hunt path; the real
+    # mark_new_for_watchlist novelty logic runs against sqlite.
+    monkeypatch.setattr(gate_mod, "get_async_session", _session)
+    monkeypatch.setattr(listings_mod, "get_async_session", _session)
 
     fake = FakeRedis()
     monkeypatch.setattr(tasks_mod, "_get_publisher", lambda: RedisEventPublisher(client=fake))
@@ -205,3 +214,143 @@ async def test_missing_watchlist_short_circuits(rig):
     result = await tasks_mod._run_hunt_and_persist(99999)
     assert result == {"watchlist_id": 99999, "error": "not_found"}
     assert fake.published == []
+
+
+# ---------------------------------------------------------------------------
+# Sufficiency gate (§8b)
+# ---------------------------------------------------------------------------
+
+def _pool_listing(n: int):
+    from dealbot.db.models import Listing
+
+    return Listing(
+        canonical_url=f"pc{n}", raw_url=f"https://m.test/p{n}",
+        marketplace="kijiji", title=f"Pool find {n}", price=50.0,
+        currency="CAD", condition="used",
+    )
+
+
+@pytest.mark.asyncio
+async def test_sufficient_pool_serves_a_cached_hunt(rig):
+    """≥ k novel fresh matches → no browsing: run_hunt must not be called,
+    the hunt closes as "cached", and alerts still fire on the novel rows."""
+    factory, fake, wl_id, tasks_mod, monkeypatch = rig
+    from dealbot.db.models import Listing as L
+
+    async with factory() as s:
+        listings = [_pool_listing(i) for i in range(10)]
+        s.add_all(listings)
+        await s.commit()
+        ids = [l.id for l in listings]
+
+    async def _candidates(watchlist_id, *, limit=50):
+        async with factory() as s:
+            return list((await s.execute(
+                select(L).where(L.id.in_(ids))
+            )).scalars().all())
+
+    browsed = {"called": False}
+
+    async def _no_browse(context, events=None):
+        browsed["called"] = True
+        return []
+
+    dispatched: list[int] = []
+    monkeypatch.setattr(tasks_mod, "pool_candidates", _candidates)
+    monkeypatch.setattr(tasks_mod, "run_hunt", _no_browse)
+    monkeypatch.setattr(tasks_mod, "_maybe_dispatch_alerts", dispatched.append)
+
+    result = await tasks_mod._run_hunt_and_persist(wl_id)
+
+    assert browsed["called"] is False, "sufficient pool must not browse"
+    async with factory() as s:
+        hunt = await s.get(Hunt, result["hunt_id"])
+        wl = await s.get(Watchlist, wl_id)
+    assert hunt.status == "cached"
+    assert hunt.new_listing_count == 10, "pool rows are novel on first serve"
+    assert wl.last_hunt_at is not None, "cached refresh must reset cadence"
+    assert dispatched == [hunt.id], "alerts are never cached"
+
+    finished = [m for _c, m in fake.published if '"hunt.finished"' in m]
+    assert finished and '"cached"' in finished[-1]
+
+
+@pytest.mark.asyncio
+async def test_insufficient_pool_runs_the_full_hunt_and_merges(rig):
+    """< k matches → full hunt, and the few pool matches still become alert
+    candidates (pool-first alerts in BOTH branches)."""
+    factory, fake, wl_id, tasks_mod, monkeypatch = rig
+    from dealbot.db.models import HuntListing, Listing as L
+
+    async with factory() as s:
+        pool_row = _pool_listing(99)
+        s.add(pool_row)
+        await s.commit()
+        pool_id = pool_row.id
+
+    async def _thin_candidates(watchlist_id, *, limit=50):
+        async with factory() as s:
+            return list((await s.execute(
+                select(L).where(L.id == pool_id)
+            )).scalars().all())
+
+    browsed = {"called": False}
+
+    async def _browse(context, events=None):
+        browsed["called"] = True
+        return []
+
+    async def _persist(offers, hunt_id=None):
+        return PersistResult(written=0)
+
+    monkeypatch.setattr(tasks_mod, "pool_candidates", _thin_candidates)
+    monkeypatch.setattr(tasks_mod, "run_hunt", _browse)
+    monkeypatch.setattr(tasks_mod, "persist_offers", _persist)
+
+    result = await tasks_mod._run_hunt_and_persist(wl_id)
+
+    assert browsed["called"] is True, "1 < k → hunt"
+    async with factory() as s:
+        links = (await s.execute(
+            select(HuntListing).where(HuntListing.hunt_id == result["hunt_id"])
+        )).scalars().all()
+    assert [(l.listing_id, l.source) for l in links] == [(pool_id, "pool")], (
+        "the thin pool match must still ride along as an alert candidate"
+    )
+    async with factory() as s:
+        hunt = await s.get(Hunt, result["hunt_id"])
+    assert hunt.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_pro_user_always_hunts_live(rig):
+    """Freshness is the paid feature: Pro skips the gate entirely."""
+    factory, fake, wl_id, tasks_mod, monkeypatch = rig
+
+    async with factory() as s:
+        user = (await s.execute(select(User))).scalars().one()
+        user.is_pro = True
+        await s.commit()
+
+    gate_called = {"n": 0}
+
+    async def _candidates(watchlist_id, *, limit=50):
+        gate_called["n"] += 1
+        return []
+
+    async def _browse(context, events=None):
+        return []
+
+    async def _persist(offers, hunt_id=None):
+        return PersistResult(written=0)
+
+    monkeypatch.setattr(tasks_mod, "pool_candidates", _candidates)
+    monkeypatch.setattr(tasks_mod, "run_hunt", _browse)
+    monkeypatch.setattr(tasks_mod, "persist_offers", _persist)
+
+    result = await tasks_mod._run_hunt_and_persist(wl_id)
+
+    assert gate_called["n"] == 0, "pro never consults the gate"
+    async with factory() as s:
+        hunt = await s.get(Hunt, result["hunt_id"])
+    assert hunt.status == "succeeded"

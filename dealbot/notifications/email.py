@@ -54,10 +54,16 @@ def build_alert_email(
     n = len(alerts)
     subject = f"Studeal: {n} new match{'es' if n != 1 else ''} for {watchlist_name}"
     lines = [f"Your agent found {n} new listing{'s' if n != 1 else ''}:\n"]
-    for _alert, listing in alerts:
-        lines.append(
+    for alert, listing in alerts:
+        entry = (
             f"• {listing.title} — ${listing.price:.2f} {listing.currency}"
-            f" ({listing.marketplace})\n  {listing.raw_url}\n"
+            f" ({listing.marketplace})"
         )
+        # The ranker's one-liner is the most persuasive part of the alert.
+        # Absent when ranking degraded to retrieval order — omit the line
+        # entirely rather than printing an empty label.
+        if alert.reason:
+            entry += f"\n  {alert.reason}"
+        lines.append(f"{entry}\n  {listing.raw_url}\n")
     lines.append("\nManage your agents at studeal.site")
     return subject, "\n".join(lines)

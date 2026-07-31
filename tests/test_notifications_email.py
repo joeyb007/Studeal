@@ -70,3 +70,34 @@ def test_build_alert_email_pluralizes():
     ]
     subject, _ = build_alert_email("wl", alerts)
     assert subject == "Studeal: 2 new matches for wl"
+
+
+def test_alert_email_renders_the_ranker_reason():
+    """The reason is why the alert is worth opening. The UI renders it; the
+    email must too, or the most persuasive part stays behind a login."""
+    listing = Listing(
+        canonical_url="https://k.ca/2", raw_url="https://k.ca/2",
+        marketplace="kijiji", title="Sony WH-1000XM4", price=180.0,
+        currency="CAD",
+    )
+    alert = ListingAlert(
+        user_id=1, watchlist_id=1, listing_id=2, hunt_id=1, score=0.88,
+        reason="Over-ear ANC, well under your budget.",
+    )
+    _subject, body = build_alert_email("Headphones", [(alert, listing)])
+    assert "Over-ear ANC, well under your budget." in body
+
+
+def test_alert_email_omits_a_missing_reason_cleanly():
+    """Ranking degrades to retrieval order with no reasons; the email must not
+    print a dangling label or the string None."""
+    listing = Listing(
+        canonical_url="https://k.ca/3", raw_url="https://k.ca/3",
+        marketplace="kijiji", title="Aeron chair", price=400.0, currency="CAD",
+    )
+    alert = ListingAlert(
+        user_id=1, watchlist_id=1, listing_id=3, hunt_id=1, score=0.0, reason=None,
+    )
+    _subject, body = build_alert_email("Chairs", [(alert, listing)])
+    assert "None" not in body
+    assert "Aeron chair" in body

@@ -40,7 +40,12 @@ Rules:
     filler words like "please find").
   - No duplicate queries.
   - Do not add price filters or location keywords — that's handled elsewhere.
-  - Stay focused on the product; don't drift to related products."""
+  - Stay focused on the product; don't drift to related products.
+  - The spec may carry a buyer_profile: who this person is and what they value.
+    Use it to choose WHICH queries to emit — a profile mentioning back problems
+    makes "ergonomic lumbar support chair" a good query. NEVER copy profile
+    prose into a query. Queries stay short marketplace search strings; the
+    profile never lengthens them or adds narrative."""
 
 
 class QueryGenerator:

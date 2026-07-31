@@ -14,6 +14,7 @@ from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.api.routes.hunts import HuntListResponse, to_summary
 from dealbot.db.models import Deal, Hunt, Listing, User, Watchlist
+from dealbot.recsys.intent import compose_intent_document
 from dealbot.rerank.service import RerankService
 from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
@@ -131,8 +132,9 @@ async def create_watchlist(
             )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
-        # Embed the product_query as the watchlist's "intent embedding"
-        intent_embedding = await embed_text(body.context.product_query)
+        # The user's preference vector: the whole elicited context, not just the
+        # query string. See dealbot/recsys/intent.py.
+        intent_embedding = await embed_text(compose_intent_document(body.context))
 
         watchlist = Watchlist(
             user_id=current_user.id,
@@ -276,8 +278,17 @@ async def patch_watchlist(
             ctx.condition = body.condition
         if body.brands is not None:
             ctx.brands = body.brands
+        if body.buyer_profile is not None:
+            ctx.buyer_profile = body.buyer_profile
 
         watchlist.context = ctx.model_dump_json()
+        # Any context edit changes what the user wants; a vector describing the
+        # pre-edit intent would silently mis-retrieve until the next edit.
+        # embed_text returns [] on backend failure — keeping a slightly stale
+        # vector beats overwriting a good one with nothing.
+        revised = await embed_text(compose_intent_document(ctx))
+        if revised:
+            watchlist.intent_embedding = revised
         await session.commit()
         await session.refresh(watchlist)
 

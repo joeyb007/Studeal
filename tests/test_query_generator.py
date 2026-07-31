@@ -84,3 +84,52 @@ async def test_empty_llm_output_falls_back_to_original_query():
     gen = QueryGenerator(llm=llm)
     queries = await gen.generate(_spec())
     assert queries == ["Herman Miller Aeron"]
+
+
+# ---------------------------------------------------------------------------
+# buyer_profile shapes discovery (Workstream C)
+# ---------------------------------------------------------------------------
+
+class _CapturingLLM:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.messages: list[dict] = []
+
+    async def complete(self, messages, response_format=None, **kwargs):
+        self.messages = list(messages)
+        return _MockResponse(self.content)
+
+
+@pytest.mark.asyncio
+async def test_profile_reaches_the_prompt():
+    llm = _CapturingLLM(json.dumps({"queries": ["aeron chair", "used aeron"]}))
+    spec = WatchlistContext(
+        product_query="Herman Miller Aeron",
+        buyer_profile="Remote worker with back problems; needs full lumbar support.",
+    )
+    await QueryGenerator(llm=llm).generate(spec)
+    blob = " ".join(m["content"] for m in llm.messages)
+    assert "back problems" in blob, "the profile must inform query generation"
+
+
+@pytest.mark.asyncio
+async def test_prompt_guards_against_prose_queries():
+    llm = _CapturingLLM(json.dumps({"queries": ["aeron chair"]}))
+    await QueryGenerator(llm=llm).generate(WatchlistContext(
+        product_query="Herman Miller Aeron",
+        buyer_profile="Remote worker with back problems.",
+    ))
+    system = llm.messages[0]["content"].lower()
+    # The profile shapes WHICH queries, never their length or phrasing.
+    assert "buyer profile" in system or "buyer_profile" in system
+    assert "never" in system
+
+
+@pytest.mark.asyncio
+async def test_absent_profile_adds_no_stray_text():
+    llm = _CapturingLLM(json.dumps({"queries": ["aeron chair"]}))
+    await QueryGenerator(llm=llm).generate(
+        WatchlistContext(product_query="Herman Miller Aeron")
+    )
+    blob = " ".join(m["content"] for m in llm.messages)
+    assert "None" not in blob, "a null profile must not be stringified"

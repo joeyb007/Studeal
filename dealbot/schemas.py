@@ -70,6 +70,10 @@ class WatchlistContext(BaseModel):
     condition: list[str] = []
     brands: list[str] = []
     keywords: list[str] = []
+    # 1-2 sentences on who this buyer is and what they value. Elicited by Scout,
+    # never asked for directly. Shapes discovery and ranking only — hard
+    # constraints stay in the typed fields above.
+    buyer_profile: Optional[str] = None
 
 
 class ChatMessage(BaseModel):
@@ -93,4 +97,5 @@ class WatchlistContextPatch(BaseModel):
     min_discount_pct: Optional[int] = None
     condition: Optional[list[str]] = None
     brands: Optional[list[str]] = None
+    buyer_profile: Optional[str] = None
 

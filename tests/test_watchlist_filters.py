@@ -125,3 +125,25 @@ def test_no_context_returns_all_deals():
     result, filtered = _apply_filters(deals, ctx)
     assert len(result) == 2
     assert filtered is True
+
+
+def test_buyer_profile_defaults_to_none_and_round_trips():
+    bare = WatchlistContext(product_query="used laptop")
+    assert bare.buyer_profile is None, "existing payloads must keep parsing"
+
+    with_profile = WatchlistContext(
+        product_query="used laptop",
+        buyer_profile=(
+            "CS student who codes on the go; values battery life and a good "
+            "keyboard over raw specs."
+        ),
+    )
+    restored = WatchlistContext.model_validate_json(with_profile.model_dump_json())
+    assert restored.buyer_profile == with_profile.buyer_profile
+
+
+def test_patch_carries_buyer_profile():
+    from dealbot.schemas import WatchlistContextPatch
+
+    assert WatchlistContextPatch().buyer_profile is None
+    assert WatchlistContextPatch(buyer_profile="hi").buyer_profile == "hi"

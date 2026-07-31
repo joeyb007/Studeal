@@ -198,3 +198,83 @@ def test_create_watchlist_with_context(authed_client):
     }
     assert data["context"]["product_query"] == "gaming laptop"
     assert data["context"]["max_budget"] == 1000.0
+
+
+# ---------------------------------------------------------------------------
+# buyer_profile elicitation (Workstream C)
+# ---------------------------------------------------------------------------
+
+class _ProfileLLM(LLMClient):
+    """Captures the system prompt and returns a canned turn."""
+
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.system_prompt = ""
+
+    async def complete(self, messages, tools=None, response_format=None) -> LLMResponse:
+        self.system_prompt = messages[0]["content"]
+        return LLMResponse(content=json_lib.dumps(self.payload), tool_calls=[])
+
+
+def _opening_turn() -> dict:
+    return {
+        "reply": "What are you hunting for?",
+        "suggestions": [],
+        "context": {"product_query": "", "condition": [], "brands": [], "keywords": []},
+        "is_complete": False,
+        "aborted": False,
+        "abort_code": None,
+        "abort_reason": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_parses_buyer_profile_from_llm():
+    from dealbot.agents.nl_watchlist import NLWatchlistAgent
+
+    llm = _ProfileLLM({
+        "reply": "Agent ready — name it and deploy.",
+        "suggestions": [],
+        "context": {
+            "product_query": "used laptop",
+            "max_budget": 1200.0,
+            "min_discount_pct": None,
+            "condition": ["used", "refurb"],
+            "brands": [],
+            "keywords": [],
+            "buyer_profile": (
+                "CS student who codes on the go; values battery and keyboard "
+                "over raw specs."
+            ),
+        },
+        "is_complete": True,
+        "aborted": False,
+        "abort_code": None,
+        "abort_reason": None,
+    })
+    result = await NLWatchlistAgent(llm).turn(
+        [{"role": "user", "content": "need a laptop for school"}], None,
+    )
+    assert result.context.buyer_profile.startswith("CS student")
+
+
+@pytest.mark.asyncio
+async def test_prompt_asks_for_buyer_profile_and_forbids_interrogating():
+    from dealbot.agents.nl_watchlist import NLWatchlistAgent
+
+    llm = _ProfileLLM(_opening_turn())
+    await NLWatchlistAgent(llm).turn([{"role": "user", "content": "hi"}], None)
+
+    assert "buyer_profile" in llm.system_prompt
+    # The profile must be inferred from what the user volunteers, never asked for.
+    assert "never ask" in llm.system_prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_turn_budget_is_twelve():
+    from dealbot.agents.nl_watchlist import MAX_TURNS, NLWatchlistAgent
+
+    assert MAX_TURNS == 12
+    llm = _ProfileLLM(_opening_turn())
+    result = await NLWatchlistAgent(llm).turn([{"role": "user", "content": "hi"}], None)
+    assert result.turns_remaining == 11, "first turn of a 12-turn budget leaves 11"

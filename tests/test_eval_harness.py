@@ -387,3 +387,13 @@ def test_estimate_cost_is_model_aware():
     assert abs(c_mini - 0.15) < 1e-6
     # unknown model → conservative gpt-4o rate
     assert abs(_estimate_cost(1_000_000, 0, 0, 0, nav_model="mystery") - 2.50) < 1e-6
+
+
+def test_resolve_targets_carries_the_entry_referer():
+    """FB serves its public page to Google referrals; the harness must measure
+    the production entry mechanism, not a bare goto that hits the auth wall."""
+    from tests.evals.harness import _resolve_targets
+
+    targets = _resolve_targets(["fb_marketplace", "kijiji"], "aeron chair", "template")
+    by_key = {t.marketplace: t for t in targets}
+    assert by_key["fb_marketplace"].entry_referer == "https://www.google.com/"

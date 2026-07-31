@@ -55,3 +55,4 @@
 | expand_openbox_ca | MacBook Air M2 | template | ['openbox_ca'] | 33 | 25 | 1 | 83.64431175007485 | 0 | 0.46617765 | False | 0.97 |
 | expand_dell_refurbished | Dell XPS 13 | template | ['dell_refurbished'] | 0 | 0 | 0 | 7.78573187510483 | 0 | 0.024334 | False |  |
 | expand_refurbio | ThinkPad X1 Carbon | template | ['refurbio'] | 4 | 4 | 1 | 20.377292457967997 | 0 | 0.19607025 | False | 1.00 |
+| reliability_run_1 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 91 | 37 | 1 | 376.4857639579568 | 0 | 1.5763715000000003 | False | 0.99 |

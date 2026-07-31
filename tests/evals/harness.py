@@ -134,6 +134,10 @@ def _resolve_targets(
         targets.append(MarketplaceSearchTarget(
             marketplace=config.key,
             entry_url=entry_url,
+            # Production entry rides the config's referer (FB serves its
+            # public page to Google referrals; bare entry hits the auth
+            # wall). Dropping it here made evals measure a dead entry path.
+            entry_referer=config.entry_referer,
         ))
     return targets
 

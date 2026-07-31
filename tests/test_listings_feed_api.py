@@ -153,3 +153,39 @@ async def test_search_falls_back_to_ilike(pool_client):
 def test_endpoints_require_auth(client):
     assert client.get("/listings/feed").status_code == 401
     assert client.get("/listings/search", params={"q": "x"}).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_stale_listings_are_invisible_even_on_max_window(pool_client):
+    """A listing the fleet stopped seeing is probably sold. The days param
+    narrows the window; it must not be able to widen past the stale cutoff."""
+    from dealbot.lifecycle import LISTING_STALE_DAYS
+
+    client, factory, mp = pool_client
+    await _seed_pool(factory)
+    async with factory() as s:
+        s.add(Listing(
+            canonical_url="stale", raw_url="https://m.test/stale",
+            marketplace="kijiji", title="Probably Sold", price=10.0,
+            currency="CAD", condition="used",
+            first_seen_at=NOW - timedelta(days=LISTING_STALE_DAYS + 3),
+            last_seen_at=NOW - timedelta(days=LISTING_STALE_DAYS + 3),
+        ))
+        await s.commit()
+
+    # Pin the keyword-fallback branch: the semantic branch's <=> operator is
+    # pgvector-only, and a leaked OPENAI_API_KEY (scripts load .env at import
+    # in some test modules) would otherwise make this a real network call.
+    async def _no_embedding(q):
+        return []
+
+    mp.setattr("dealbot.api.routes.listings_feed.embed_text", _no_embedding)
+
+    resp = client.get("/listings/feed", params={"days": 90})
+    assert resp.status_code == 422, "days beyond the stale window must be rejected"
+
+    titles = [r["title"] for r in client.get("/listings/feed").json()["listings"]]
+    assert "Probably Sold" not in titles
+
+    search = client.get("/listings/search", params={"q": "Probably Sold"})
+    assert all(r["title"] != "Probably Sold" for r in search.json()["listings"])

@@ -150,3 +150,35 @@ async def test_no_candidates_returns_empty_without_calling_the_ranker(rig):
     assert data["listings"] == []
     assert data["total_candidates"] == 0
     assert called["n"] == 0, "no candidates → no LLM spend"
+
+
+@pytest.mark.asyncio
+async def test_stale_pool_listings_never_reach_the_ranker(rig):
+    """Cosine proximity must not resurrect a listing the fleet stopped seeing."""
+    from dealbot.lifecycle import LISTING_STALE_DAYS
+    from dealbot.recsys.ranker import RankedListing
+
+    client, factory, mp = rig
+    wl_id = await _seed(
+        factory, prices=[100.0],
+        context=WatchlistContext(product_query="aeron chair"),
+    )
+    async with factory() as s:
+        s.add(Listing(
+            canonical_url="stale", raw_url="https://m.test/stale",
+            marketplace="kijiji", title="Sold Weeks Ago", price=90.0,
+            currency="CAD", condition="used",
+            first_seen_at=NOW - timedelta(days=LISTING_STALE_DAYS + 5),
+            last_seen_at=NOW - timedelta(days=LISTING_STALE_DAYS + 5),
+        ))
+        await s.commit()
+
+    seen: dict = {}
+
+    async def _rank(spec, candidates, *, llm=None, top_n=20):
+        seen["titles"] = [c.title for c in candidates]
+        return [RankedListing(listing=c, score=0.5, reason="") for c in candidates]
+
+    mp.setattr("dealbot.api.routes.watchlists.rank", _rank)
+    client.get(f"/watchlists/{wl_id}/listings")
+    assert "Sold Weeks Ago" not in seen["titles"]

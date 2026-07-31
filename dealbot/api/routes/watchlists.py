@@ -14,6 +14,7 @@ from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.api.routes.hunts import HuntListResponse, to_summary
 from dealbot.db.models import Deal, Hunt, Listing, User, Watchlist
+from dealbot.lifecycle import stale_cutoff
 from dealbot.recsys.intent import compose_intent_document
 from dealbot.recsys.ranker import rank
 from dealbot.db.semantic import retrieve_similar_deals
@@ -433,6 +434,9 @@ async def list_watchlist_listings(
         # Hard constraints first. The ranker must be structurally unable to
         # relax them, so they never reach it as instructions.
         stmt = select(Listing)
+        # Pool metabolism: a listing the fleet stopped seeing is probably sold.
+        # Applies to BOTH branches — cosine proximity must not resurrect it.
+        stmt = stmt.where(Listing.last_seen_at >= stale_cutoff())
         if ctx.max_budget:
             stmt = stmt.where(Listing.price <= ctx.max_budget * 1.2)
         if ctx.condition:

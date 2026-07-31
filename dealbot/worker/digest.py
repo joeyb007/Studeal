@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Listing, User
+from dealbot.lifecycle import is_internal_user
 from dealbot.notifications.email import send_email
 from dealbot.worker.celery_app import app
 
@@ -84,7 +85,7 @@ async def _send_digests() -> dict:
 
     async with get_async_session() as session:
         all_users = (await session.execute(select(User).where(User.is_pro == True))).scalars().all()  # noqa: E712
-        users = [u for u in all_users if u.is_pro]
+        users = [u for u in all_users if u.is_pro and not is_internal_user(u.email)]
 
         for user in users:
             matches = await _matched_listings_for_user(session, user, since)

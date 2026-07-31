@@ -81,3 +81,34 @@ def test_digest_no_longer_queries_legacy_deals():
     source = inspect.getsource(digest)
     assert "FROM deals" not in source, "SQL still targets the legacy deals table"
     assert "FROM listings" in source
+
+
+@pytest.mark.asyncio
+async def test_digest_skips_internal_users():
+    """The house user is is_pro=True and would otherwise get a daily digest
+    bounced off Resend."""
+    from dealbot.db.models import User
+
+    house = User()
+    house.id = 3
+    house.email = "house@studeal.internal"
+    house.is_pro = True
+
+    with (
+        patch("dealbot.worker.digest.get_async_session") as mock_session_ctx,
+        patch("dealbot.worker.digest._matched_listings_for_user", new_callable=AsyncMock) as mock_match,
+        patch("dealbot.worker.digest.send_email", new_callable=AsyncMock) as mock_send,
+    ):
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session_ctx.return_value = mock_session
+
+        execute_result = MagicMock()
+        execute_result.scalars.return_value.all.return_value = [house]
+        mock_session.execute = AsyncMock(return_value=execute_result)
+
+        await _send_digests()
+
+    mock_match.assert_not_called()
+    mock_send.assert_not_called()

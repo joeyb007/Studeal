@@ -21,6 +21,7 @@ from dealbot.api.auth import get_current_user
 from dealbot.api.limiter import limiter
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Hunt, HuntListing, Listing, User
+from dealbot.lifecycle import LISTING_STALE_DAYS
 from dealbot.llm.embeddings import embed_text
 
 router = APIRouter(prefix="/listings", tags=["pool"])
@@ -129,7 +130,9 @@ async def pool_feed(
     marketplace: str | None = Query(None),
     max_price: float | None = Query(None, gt=0),
     condition: str | None = Query(None),
-    days: int = Query(7, ge=1, le=90),
+    # Narrowing-only: the stale window is the ceiling — listings the fleet
+    # stopped seeing are probably sold and must not be browsable back in.
+    days: int = Query(LISTING_STALE_DAYS, ge=1, le=LISTING_STALE_DAYS),
     current_user: User = Depends(get_current_user),
 ) -> PoolFeedResponse:
     """Diversified browse over everything the fleet has surfaced recently."""
@@ -178,7 +181,7 @@ async def pool_search(
     marketplace: str | None = Query(None),
     max_price: float | None = Query(None, gt=0),
     condition: str | None = Query(None),
-    days: int = Query(30, ge=1, le=90),
+    days: int = Query(LISTING_STALE_DAYS, ge=1, le=LISTING_STALE_DAYS),
     current_user: User = Depends(get_current_user),
 ) -> PoolSearchResponse:
     """Natural-language search: the query IS the intent profile. Structured

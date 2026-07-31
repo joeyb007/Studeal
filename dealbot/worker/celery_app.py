@@ -74,6 +74,14 @@ app.conf.update(
             "task": "dealbot.worker.celery_app.cleanup_stale_watchlists",
             "schedule": crontab(hour=5, minute=10),
         },
+        # 05:20 UTC — hard-delete listings unseen for LISTING_PURGE_DAYS.
+        # Reads already stopped serving them at LISTING_STALE_DAYS; this is
+        # capacity management, deliberately far behind so price history
+        # survives for the future price-intelligence layer.
+        "cleanup-old-listings": {
+            "task": "dealbot.worker.celery_app.cleanup_old_listings",
+            "schedule": crontab(hour=5, minute=20),
+        },
     },
 )
 
@@ -99,6 +107,33 @@ async def _run_cleanup() -> dict:
         await session.commit()
 
     logger.info("cleanup_old_deals: deleted %d deal(s) older than 3 days", deleted)
+    return {"deleted": deleted}
+
+
+@app.task(name="dealbot.worker.celery_app.cleanup_old_listings")
+def cleanup_old_listings() -> dict:
+    """Delete listings unseen for LISTING_PURGE_DAYS. FK cascade removes their
+    listing_alerts and hunt_listings rows — accepted (90-day-old history)."""
+    return asyncio.run(_run_listing_purge())
+
+
+async def _run_listing_purge() -> dict:
+    from sqlalchemy import delete
+
+    from dealbot.db.database import get_async_session
+    from dealbot.db.models import Listing
+    from dealbot.lifecycle import purge_cutoff
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            delete(Listing)
+            .where(Listing.last_seen_at < purge_cutoff())
+            .returning(Listing.id)
+        )
+        deleted = len(result.fetchall())
+        await session.commit()
+
+    logger.info("cleanup_old_listings: deleted %d listing(s)", deleted)
     return {"deleted": deleted}
 
 

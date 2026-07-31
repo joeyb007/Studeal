@@ -242,3 +242,23 @@ async def test_ranker_receives_the_full_context_including_profile(rig):
     ranker = FakeRanker([0.9])
     await alerts_mod._dispatch(hunt_id, ranker=ranker, publisher=publisher)
     assert ranker.seen_spec.buyer_profile == "Remote worker with back problems."
+
+
+@pytest.mark.asyncio
+async def test_internal_user_gets_alert_rows_but_no_delivery(rig):
+    """House hunts must feed the pool and the alert feed — but never Resend:
+    bounces to @studeal.internal damage sender reputation for real alerts."""
+    factory, alerts_mod, _, publisher, sent_emails = rig
+    hunt_id = await _seed(factory, prices=[100, 110])
+    async with factory() as s:
+        user = (await s.execute(select(User))).scalars().one()
+        user.email = "house@studeal.internal"
+        await s.commit()
+
+    result = await alerts_mod._dispatch(
+        hunt_id, ranker=FakeRanker([0.9, 0.8]), publisher=publisher,
+    )
+
+    assert result["alerts"] == 2, "alert rows still created"
+    assert result["emailed"] is False
+    assert sent_emails == [], "no delivery attempt to an internal address"

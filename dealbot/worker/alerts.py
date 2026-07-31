@@ -25,6 +25,7 @@ from sqlalchemy import select
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Hunt, HuntListing, Listing, ListingAlert, User, Watchlist
 from dealbot.events.publisher import RedisEventPublisher
+from dealbot.lifecycle import is_internal_user
 from dealbot.events.schema import AlertCreated
 from dealbot.notifications.email import build_alert_email, send_email
 from dealbot.recsys.ranker import RankedListing, rank
@@ -110,19 +111,23 @@ async def _dispatch(
                 url=listing.raw_url,
             ))
 
-        # One summary email per hunt.
-        subject, body = build_alert_email(
-            watchlist.name, [(a, r.listing) for a, r in zip(alerts, selected)],
-        )
-        emailed = await send_email(user.email, subject, body)
-        if emailed:
-            for alert in alerts:
-                alert.channels = f"{alert.channels},email"
+        # One summary email per hunt — except to system accounts, whose
+        # addresses are undeliverable and would bounce off Resend daily.
+        emailed = False
+        pushed = 0
+        if not is_internal_user(user.email):
+            subject, body = build_alert_email(
+                watchlist.name, [(a, r.listing) for a, r in zip(alerts, selected)],
+            )
+            emailed = await send_email(user.email, subject, body)
+            if emailed:
+                for alert in alerts:
+                    alert.channels = f"{alert.channels},email"
 
-        pushed = await _try_push(user, watchlist, alerts, selected)
-        if pushed:
-            for alert in alerts:
-                alert.channels = f"{alert.channels},push"
+            pushed = await _try_push(user, watchlist, alerts, selected)
+            if pushed:
+                for alert in alerts:
+                    alert.channels = f"{alert.channels},push"
         await session.commit()
 
     logger.info(

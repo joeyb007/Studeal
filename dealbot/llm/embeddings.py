@@ -89,6 +89,11 @@ class OllamaEmbeddingClient(EmbeddingClient):
 
 def _get_client() -> EmbeddingClient:
     backend = os.environ.get("EMBEDDING_BACKEND", "openai")
+    if backend == "bedrock":
+        # Titan V2, 1024-dim. Selecting this before migration 0025 fails
+        # loudly at the pgvector write (EMBED_DIM is still 1536) — intended.
+        from dealbot.llm.bedrock_client import BedrockEmbeddingClient
+        return BedrockEmbeddingClient()
     if backend == "ollama":
         return OllamaEmbeddingClient()
     return OpenAIEmbeddingClient()

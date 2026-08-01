@@ -37,6 +37,9 @@ CANDIDATE_POOL_SIZE = 150
 
 def _get_llm() -> LLMClient:
     backend = os.environ.get("LLM_BACKEND", "openai")
+    if backend == "bedrock":
+        from dealbot.llm.bedrock_client import BedrockClient
+        return BedrockClient()
     if backend == "openai":
         from dealbot.llm.openai_client import OpenAIClient
         return OpenAIClient()

@@ -111,11 +111,18 @@ class ThrottledLLM(LLMClient):
 # ---------------------------------------------------------------------------
 
 def build_nav_llm() -> LLMClient:
-    """Navigator model — frontier by default, concurrency-capped."""
+    """Navigator model — frontier by default, concurrency-capped.
+
+    LLM_BACKEND=bedrock wins explicitly; otherwise key-presence rules as
+    before (OpenAI if keyed, Groq fallback)."""
     limit = int(os.environ.get("AGENT_NAV_CONCURRENCY", "2"))
-    if os.environ.get("OPENAI_API_KEY"):
-        inner: LLMClient = OpenAIClient(
-            model=os.environ.get("AGENT_NAV_MODEL", "gpt-4o"))
+    if os.environ.get("LLM_BACKEND") == "bedrock":
+        from dealbot.llm.bedrock_client import DEFAULT_NAV_MODEL, BedrockClient
+
+        inner: LLMClient = BedrockClient(
+            model=os.environ.get("BEDROCK_NAV_MODEL", DEFAULT_NAV_MODEL))
+    elif os.environ.get("OPENAI_API_KEY"):
+        inner = OpenAIClient(model=os.environ.get("AGENT_NAV_MODEL", "gpt-4o"))
     else:
         inner = GroqClient(model=_GROQ_70B)
     return ThrottledLLM(inner, max_concurrency=limit)
@@ -123,6 +130,10 @@ def build_nav_llm() -> LLMClient:
 
 def build_extract_llm() -> LLMClient:
     """Extraction model — high-volume, structured output. Cheap by default."""
+    if os.environ.get("LLM_BACKEND") == "bedrock":
+        from dealbot.llm.bedrock_client import BedrockClient
+
+        return BedrockClient(model=os.environ.get("BEDROCK_EXTRACT_MODEL"))
     if os.environ.get("OPENAI_API_KEY"):
         return OpenAIClient(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     return GroqClient(model=_GROQ_70B)

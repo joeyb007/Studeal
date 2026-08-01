@@ -31,6 +31,7 @@ dependencies = [
     "playwright>=1.44",
     "sentry-sdk[fastapi,celery,sqlalchemy,httpx]>=2.0",
     "pywebpush>=2.0",
+    "aioboto3>=13.0",
 ]
 
 [project.optional-dependencies]

@@ -15,7 +15,7 @@ from dealbot.worker.celery_app import app
 logger = logging.getLogger(__name__)
 
 # pgvector cosine distance threshold — anything <= this is "close enough"
-_SIMILARITY_THRESHOLD = 0.45
+_SIMILARITY_THRESHOLD = 0.60  # distance; sim>=0.40, aligned to the gate bar in Titan space
 # Cap listings-per-user-per-digest so emails stay skim-able
 _MAX_LISTINGS_PER_DIGEST = 20
 

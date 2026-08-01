@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 from pgvector.sqlalchemy import Vector
+
+from dealbot.llm.embeddings import EMBED_DIM
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint, Column
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -33,7 +35,8 @@ class Listing(Base):
     condition: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     # Semantic search over the pool (Daily Drops). Nullable: embedding is an
     # enhancement, never a precondition for persisting a listing.
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    # Dimension follows EMBEDDING_BACKEND (migration 0025).
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBED_DIM), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -64,6 +67,7 @@ class Deal(Base):
     student_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     condition: Mapped[str] = mapped_column(String(8), nullable=False, default="unknown")
     affiliate_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Legacy OpenAI space, retiring with the deals pipeline — NOT migrated.
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     legitimate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     validation_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -119,7 +123,7 @@ class Watchlist(Base):
     min_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
-    intent_embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    intent_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBED_DIM), nullable=True)
     hunting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     hunt_frequency_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_hunt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -141,7 +145,7 @@ class HuntQuery(Base):
         ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False
     )
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBED_DIM), nullable=True)
     hunt_timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -8,7 +8,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-EMBED_DIM = 1536
+# Backend-derived: Titan V2 is 1024-d, OpenAI text-embedding-3-small is
+# 1536-d. Read at import time — the process must start with the backend it
+# will write with, and mixed-dimension writes fail loudly at pgvector.
+EMBED_DIM = 1024 if os.environ.get("EMBEDDING_BACKEND") == "bedrock" else 1536
 
 
 class EmbeddingClient(ABC):

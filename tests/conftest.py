@@ -6,6 +6,15 @@ import os
 # import time, and the test suite has no Redis.
 os.environ.setdefault("RATELIMIT_STORAGE_URI", "memory://")
 
+# Deterministic offline test env. Some test modules import scripts that call
+# load_dotenv() at import time, leaking the developer's .env (backends, live
+# AWS keys) into the suite mid-run. load_dotenv never overrides pre-set vars,
+# so pinning here wins regardless of import order: tests always run the
+# openai code paths (offline: no key → embed returns []), never dial AWS,
+# and EMBED_DIM is import-time-stable at 1536.
+os.environ["LLM_BACKEND"] = "openai"
+os.environ["EMBEDDING_BACKEND"] = "openai"
+
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 

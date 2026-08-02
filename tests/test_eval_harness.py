@@ -180,16 +180,18 @@ class TestPassedBar:
         r = _make_result(marketplaces_with_listings=2)
         assert _passed_bar(r) is True
 
-    def test_fails_when_wall_clock_at_or_above_240s(self):
-        r = _make_result(wall_clock_s=240.0)
+    # Bar re-baselined 240s → 600s on 2026-08-01: chunked extraction trades
+    # wall-clock for 4-5x recall, so ~450s runs are the design point now.
+    def test_fails_when_wall_clock_at_or_above_600s(self):
+        r = _make_result(wall_clock_s=600.0)
         assert _passed_bar(r) is False
 
-    def test_fails_when_wall_clock_exceeds_240s(self):
-        r = _make_result(wall_clock_s=300.0)
+    def test_fails_when_wall_clock_exceeds_600s(self):
+        r = _make_result(wall_clock_s=700.0)
         assert _passed_bar(r) is False
 
-    def test_passes_just_under_240s(self):
-        r = _make_result(wall_clock_s=239.9)
+    def test_passes_a_chunked_era_run(self):
+        r = _make_result(wall_clock_s=454.0)
         assert _passed_bar(r) is True
 
     def test_fails_when_error_stops_nonzero(self):

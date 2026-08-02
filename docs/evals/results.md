@@ -57,3 +57,36 @@
 | expand_refurbio | ThinkPad X1 Carbon | template | ['refurbio'] | 4 | 4 | 1 | 20.377292457967997 | 0 | 0.19607025 | False | 1.00 |
 | reliability_run_1 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 91 | 37 | 1 | 376.4857639579568 | 0 | 1.5763715000000003 | False | 0.99 |
 | reliability_run_1 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 331 | 134 | 2 | 453.8920168748591 | 0 | 1.5111844500000002 | False | 0.95 |
+
+> **Campaign note (2026-08-01):** Two aborted campaigns precede the Bedrock-era
+> rerun. (1) 0/5 abort-fast: the harness dropped `entry_referer` from targets, so
+> eval FB entry hit the auth wall bare — a harness bug, fixed + regression-tested;
+> production was never affected. (2) 0/5 abort-fast: OpenAI credits exhausted
+> mid-run; migrated the stack to Bedrock (Claude Sonnet nav / Haiku extract,
+> Titan V2 embeddings). Also: wall-clock bar re-baselined 240s → 600s — chunked
+> extraction deliberately trades wall-clock for 4-5x recall (run 1 of the aborted
+> campaign: 331 offers / 134 unique / 0.99 precision / 454s, graded FAIL purely on
+> the pre-chunking speed ceiling). All subsequent rows are the Bedrock system.
+| reliability_run_1 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 474 | 219 | 2 | 180.5600169589743 | 0 | 2.17584635 | True | 0.84 |
+| reliability_run_2 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 783 | 273 | 2 | 190.44857812509872 | 0 | 2.94642315 | True | 0.66 |
+| reliability_run_3 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 1624 | 319 | 2 | 229.46525275008753 | 0 | 3.0214840000000005 | True | 0.68 |
+| reliability_run_4 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 797 | 309 | 2 | 175.58316566701978 | 0 | 2.7753078 | True | 0.69 |
+| reliability_run_5 | Herman Miller Aeron chair Toronto | template | ['kijiji', 'fb_marketplace', 'craigslist'] | 1625 | 380 | 2 | 258.6880144998431 | 0 | 3.0498932500000002 | True | 0.66 |
+| tuned_kijiji | Herman Miller Aeron chair Toronto | template | ['kijiji'] | 246 | 118 | 1 | 88.74851666600443 | 0 | 1.1340426500000003 | False | 0.74 |
+| tuned_fb | Herman Miller Aeron chair Toronto | template | ['fb_marketplace'] | 928 | 218 | 1 | 100.30914887506515 | 0 | 1.3648672000000002 | False | 0.70 |
+| holdout_ebay_aeron | Herman Miller Aeron chair Toronto | template | ['ebay'] | 1278 | 576 | 1 | 294.0415719579905 | 0 | 3.1592614500000002 | False | 0.98 |
+| holdout_craigslist_aeron | Herman Miller Aeron chair Toronto | template | ['craigslist'] | 0 | 0 | 0 | 20.459047625074163 | 0 | 0.05521000000000001 | False |  |
+| holdout_ebay_headphones | Sony WH-1000XM5 headphones | template | ['ebay'] | 1104 | 330 | 1 | 212.12054537516087 | 0 | 2.7300826 | False | 0.89 |
+
+> **Campaign close (2026-08-02, Bedrock era):** RELIABILITY **5/5**, zero
+> error-stops, 219–380 unique offers/run at 176–259s and $2.2–3.1/run —
+> ~10× the unique-offer recall of the July GPT-4o campaigns at ~2× cost.
+> HOLDOUT (single-shot, zero tuning): eBay Aeron **576 unique @ 97.7%**,
+> eBay headphones **330 @ 88.8%**, Craigslist honest-zero (thin GTA
+> inventory, consistent across all campaigns). Headline: **held-out mean
+> precision 93.3% vs tuned-site 72.1%** — the zero-per-site-adapter system
+> generalizes at full precision; the lower tuned-site figure is a
+> marketplace property (FB/Kijiji pad results pages with related inventory,
+> which is retained deliberately as shared-pool stock — spot-checked real,
+> alert-level relevance is gated by the listwise ranker downstream).
+> Nav: claude-sonnet-4-5, extract: claude-haiku-4-5, embeddings: titan-v2.

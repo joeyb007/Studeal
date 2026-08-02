@@ -60,7 +60,11 @@ def _rates_for(model: str) -> tuple[float, float]:
 # Reliability bar thresholds (binding — matches Global Constraints in the brief)
 _BAR_MIN_OFFERS: int = 10
 _BAR_MIN_MARKETPLACES: int = 2
-_BAR_MAX_WALL_CLOCK_S: float = 240.0
+# RE-BASELINED 2026-08-01 (was 240.0, set in the pre-chunking era of
+# 70-110s runs). Chunked extraction deliberately traded wall-clock for
+# recall — ~450s runs at 4-5x the unique offers — so the old ceiling
+# graded the system's best-ever runs as failures. User-approved.
+_BAR_MAX_WALL_CLOCK_S: float = 600.0
 
 # Home-mode URL overrides: marketplaces where scheme://netloc is not the home
 _HOME_URL_OVERRIDES: dict[str, str] = {

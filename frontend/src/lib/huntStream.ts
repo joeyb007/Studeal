@@ -40,6 +40,7 @@ export type HuntEvent = HuntEventBase &
         persisted_count: number;
         new_for_watchlist: number;
       }
+    | { type: "lanes.planned"; query: string; marketplaces: string[] }
     | {
         type: "lane.finished";
         query: string;

@@ -222,6 +222,30 @@ class ListingAlert(Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class HuntLane(Base):
+    """Per-(query, marketplace) lane state for one hunt — the DB half of the
+    Mission Control contract: pub/sub has no replay, so the UI seeds from
+    these rows on load and treats the SSE stream as live augmentation.
+    Screenshots are deliberately not persisted (heavy, refresh within
+    seconds of reconnect)."""
+
+    __tablename__ = "hunt_lanes"
+
+    hunt_id: Mapped[int] = mapped_column(
+        ForeignKey("hunts.id", ondelete="CASCADE"), primary_key=True
+    )
+    query: Mapped[str] = mapped_column(String(256), primary_key=True)
+    marketplace: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    done_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class WatchlistRanking(Base):
     """Precomputed recsys output: the full ordered ranking of pool listings
     for one watchlist. The read path serves these rows (~50ms); recomputes

@@ -34,7 +34,7 @@ from dealbot.agents.tracing import (
 )
 from dealbot.agents.workers.extractor import Extractor, Offer
 from dealbot.events.publisher import RedisEventPublisher
-from dealbot.events.schema import ExtractionSubmitted, LaneFinished, QueriesPlanned
+from dealbot.events.schema import ExtractionSubmitted, LaneFinished, LanesPlanned, QueriesPlanned
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.openai_client import OpenAIClient
@@ -162,6 +162,45 @@ def build_session_from_env() -> BrowserSession:
 # Lane workers: one BrowserSession per (query, marketplace)
 # ---------------------------------------------------------------------------
 
+async def _record_lane(
+    events: HuntEventContext | None,
+    query: str,
+    marketplace: str,
+    *,
+    status: str,
+    pages: int = 0,
+    done_reason: str | None = None,
+) -> None:
+    """Upsert one lane's persisted state. Best-effort; never raises."""
+    if events is None:
+        return
+    try:
+        from datetime import datetime, timezone
+
+        from dealbot.db.database import get_async_session
+        from dealbot.db.models import HuntLane
+
+        async with get_async_session() as session:
+            lane = await session.get(
+                HuntLane, (events.hunt_id, query, marketplace)
+            )
+            if lane is None:
+                lane = HuntLane(
+                    hunt_id=events.hunt_id, query=query, marketplace=marketplace,
+                )
+                session.add(lane)
+            lane.status = status
+            if pages:
+                lane.pages = pages
+            if done_reason is not None:
+                lane.done_reason = done_reason
+            lane.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+    except Exception:
+        logger.warning("lane state write failed (%s/%s)", marketplace, query,
+                       exc_info=True)
+
+
 async def _run_one_lane(
     query: str,
     target,
@@ -213,6 +252,7 @@ async def _run_one_lane(
     done_reason = "error"
     try:
         async with lane_semaphore:
+            await _record_lane(events, query, target.marketplace, status="running")
             async with build_session_from_env() as session:
                 explorer = Explorer(nav_llm, trace=trace)
                 result = await explorer.explore(
@@ -278,6 +318,11 @@ async def _run_one_lane(
                 query=query, marketplace=target.marketplace,
                 pages=pages, done_reason=done_reason,
             ))
+            await _record_lane(
+                events, query, target.marketplace,
+                status="error" if done_reason == "error" else "done",
+                pages=pages, done_reason=done_reason,
+            )
 
 
 async def _run_one_query(
@@ -295,6 +340,14 @@ async def _run_one_query(
     except Exception:
         logger.exception("_run_one_query: router failed for %r", query)
         return
+
+    if events is not None:
+        events.publisher.publish_nowait(LanesPlanned(
+            hunt_id=events.hunt_id, watchlist_id=events.watchlist_id,
+            query=query, marketplaces=[t.marketplace for t in targets],
+        ))
+        for t in targets:
+            await _record_lane(events, query, t.marketplace, status="queued")
 
     trace_stamp = trace_slug = None
     if os.environ.get("AGENT_TRACE_DIR"):

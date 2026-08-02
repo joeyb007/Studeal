@@ -73,6 +73,17 @@ class HuntPersisted(_EventBase):
     new_for_watchlist: int
 
 
+class LanesPlanned(_EventBase):
+    """Published per query right after routing: the full set of lanes this
+    query will run. Mission Control renders them as queued tiles immediately,
+    so progress is legible (N of M complete) even while the concurrency cap
+    staggers actual browsing."""
+
+    type: Literal["lanes.planned"] = "lanes.planned"
+    query: str
+    marketplaces: list[str]
+
+
 class LaneFinished(_EventBase):
     """One (query, marketplace) browse lane completed — others may still
     be running. Mission Control flips that lane's tile to its done state."""
@@ -111,6 +122,7 @@ Event = Annotated[
         ExplorerError,
         ExtractionSubmitted,
         HuntPersisted,
+        LanesPlanned,
         LaneFinished,
         HuntFinished,
         AlertCreated,

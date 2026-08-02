@@ -58,12 +58,16 @@
 }
 
 .shotEmpty {
-  display: grid;
-  place-items: center;
-  height: 100%;
-  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
   font-size: 12px;
-  color: var(--text-faint);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  opacity: 0.6;
+  animation: livePulse 2s ease-in-out infinite;
+  text-align: center;
 }
 
 .shotCap {
@@ -196,7 +200,10 @@
 
 .laneGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* auto-fit + centered: a few lanes sit as a centered group instead of
+     hugging the left edge with phantom columns beside them. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 300px));
+  justify-content: center;
   gap: 10px;
   margin-bottom: 12px;
 }
@@ -296,6 +303,13 @@
   font-weight: 700;
 }
 
+.laneDoneLabel {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--success);
+}
+
 .laneDoneReason {
   font-size: 10.5px;
   font-family: var(--font-mono);
@@ -315,4 +329,61 @@
 
 .laneActionError {
   color: var(--danger);
+}
+
+.laneQueued {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  opacity: 0.45;
+}
+
+/* Collapsed complete state: the grid folds into one quiet summary strip
+   with the countdown to the next scheduled hunt. */
+
+.runComplete {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 16px;
+  border: 1px solid rgba(111, 191, 143, 0.25);
+  border-radius: 10px;
+  background: rgba(111, 191, 143, 0.05);
+  margin-bottom: 12px;
+}
+
+.runCheck {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1.5px solid var(--success);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.runComplete_body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.runCompleteTitle {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.runCompleteStats {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }

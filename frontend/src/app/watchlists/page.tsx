@@ -31,21 +31,6 @@ interface Watchlist {
   context: WatchlistContext | null;
 }
 
-interface Deal {
-  id: number;
-  title: string;
-  source: string;
-  url: string | null;
-  affiliate_url: string | null;
-  listed_price: number;
-  sale_price: number;
-  deal_score: number | null;
-  category: string;
-  real_discount_pct: number | null;
-  student_eligible: boolean;
-  condition: string;
-}
-
 interface Listing {
   id: number;
   marketplace: string;
@@ -70,12 +55,6 @@ interface ListingsResponse {
 /** listing_id → alert facts, for score/reason badges on results */
 export type AlertIndex = Record<number, { reason: string | null; score: number; created_at: string }>;
 
-function scoreColor(score: number | null): string {
-  if (score == null) return "transparent";
-  const s = Math.round((score / 100) * 75);
-  const l = Math.round(32 + (score / 100) * 16);
-  return `hsl(142, ${s}%, ${l}%)`;
-}
 
 function daysUntil(isoString: string): number {
   const ms = new Date(isoString).getTime() - Date.now();
@@ -126,52 +105,17 @@ function ListingRow({ listing, alert }: { listing: Listing; alert?: AlertIndex[n
   );
 }
 
-function DealRow({ deal }: { deal: Deal }) {
-  const discount = deal.real_discount_pct ?? pct(deal.listed_price, deal.sale_price);
-  const buyUrl = deal.affiliate_url || deal.url;
-  return (
-    <div className={styles.dealRow}>
-      <div className={styles.dealRowLeft}>
-        <span className={styles.dealDiscount}>−{discount}%</span>
-        <div>
-          <p className={styles.dealTitle}>{deal.title}</p>
-          <span className={styles.dealSource}>{deal.source} · {deal.category}</span>
-        </div>
-      </div>
-      <div className={styles.dealRowRight}>
-        <span className={styles.dealPrice}>${deal.sale_price.toFixed(2)}</span>
-        {deal.deal_score != null && (
-          <span className={styles.dealScore} style={{ color: scoreColor(deal.deal_score) }}>
-            {deal.deal_score}
-          </span>
-        )}
-        {buyUrl && (
-          <a href={buyUrl} target="_blank" rel="noopener noreferrer" className={styles.dealBuyBtn}>
-            Buy →
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function WatchlistCard({
   watchlist,
   onDelete,
   token,
-  onNewWatchlist,
   alertIndex,
 }: {
   watchlist: Watchlist;
   onDelete: (id: number) => void;
   token: string | undefined;
-  onNewWatchlist: () => void;
   alertIndex: AlertIndex;
 }) {
-  const [deals, setDeals] = useState<Deal[] | null>(null);
-  const [dealCount, setDealCount] = useState<number | null>(null);
-  const [usedFallback, setUsedFallback] = useState(false);
-  const [loadingDeals, setLoadingDeals] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [ctx, setCtx] = useState<WatchlistContext | null>(watchlist.context);
@@ -216,22 +160,6 @@ function WatchlistCard({
     await patchContext(patch);
   }
 
-  async function loadDeals() {
-    setLoadingDeals(true);
-    try {
-      const res = await fetch(`/api/watchlists/${watchlist.id}/deals`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      const dealList: Deal[] = Array.isArray(data) ? data : (data.deals ?? []);
-      setDeals(dealList);
-      setDealCount(dealList.length);
-      setUsedFallback(data.filtered === false);
-    } catch {
-      setDeals([]);
-    }
-    setLoadingDeals(false);
-  }
 
   async function patchContext(patch: Partial<WatchlistContext>) {
     if (!token) return;
@@ -283,7 +211,6 @@ function WatchlistCard({
 
   function toggle() {
     if (!expanded) {
-      loadDeals();
       loadListings();
     }
     setExpanded(v => !v);
@@ -451,25 +378,6 @@ function WatchlistCard({
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {expanded && (
-        <div className={styles.dealsSection}>
-          {loadingDeals && <p className={styles.dealsLoading}>Finding matches…</p>}
-          {!loadingDeals && deals !== null && deals.length === 0 && (
-            <div className={styles.dealsEmpty}>
-              <p>Our agents are still scanning — nothing surfaced yet.</p>
-              <button className={styles.dealsEmptyLink} onClick={onNewWatchlist}>
-                Deploy an AI agent to find it for you →
-              </button>
-            </div>
-          )}
-          {!loadingDeals && deals && deals.length > 0 && (
-            <div className={styles.dealsList}>
-              {deals.map(d => <DealRow key={d.id} deal={d} />)}
-            </div>
-          )}
         </div>
       )}
 
@@ -785,7 +693,6 @@ function WatchlistsPageInner() {
                 watchlist={wl}
                 token={token}
                 onDelete={id => setWatchlists(prev => prev.filter(w => w.id !== id))}
-                onNewWatchlist={openChat}
                 alertIndex={alertIndex}
               />
               </div>

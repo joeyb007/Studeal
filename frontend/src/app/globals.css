@@ -56,7 +56,9 @@ a {
 }
 
 .pageEnter {
-  animation: pageEnter 0.5s ease both;
+  /* fill 'backwards', never 'both': a retained transform would make this
+     wrapper the containing block for every position:fixed modal in the app. */
+  animation: pageEnter 0.5s ease backwards;
 }
 
 button {

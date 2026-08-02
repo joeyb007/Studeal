@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import styles from "./AgentBuilder.module.css";
 
 // The UI thesis: under the hood Scout runs an LLM-driven state machine that
@@ -216,6 +217,7 @@ export default function AgentBuilder({
             </button>
           </div>
         ) : (
+          createPortal(
           <div className={styles.overlay} onClick={() => setModalDismissed(true)}>
             <div className={styles.modal} onClick={e => e.stopPropagation()}>
               <span className={styles.modalTitle}>Your agent is ready</span>
@@ -241,7 +243,8 @@ export default function AgentBuilder({
               </button>
               {formError && <div className={styles.errorRow}>{formError}</div>}
             </div>
-          </div>
+          </div>,
+          document.body)
         )
       ) : (
         <>

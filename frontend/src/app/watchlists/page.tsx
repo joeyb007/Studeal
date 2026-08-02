@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AgentBuilder from "@/components/AgentBuilder";
@@ -286,8 +287,10 @@ function WatchlistCard({
     setExpanded(v => !v);
   }
 
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
   async function handleDelete() {
-    if (!confirm(`Delete "${watchlist.name}"?`)) return;
+    setConfirmingDelete(false);
     setDeleting(true);
     await fetch(`/api/watchlists/${watchlist.id}`, {
       method: "DELETE",
@@ -317,7 +320,7 @@ function WatchlistCard({
           >
             {hunting ? "Hunting…" : "↻"}
           </button>
-          <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
+          <button className={styles.deleteBtn} onClick={() => setConfirmingDelete(true)} disabled={deleting}>
             {deleting ? "…" : "✕"}
           </button>
         </div>
@@ -327,6 +330,27 @@ function WatchlistCard({
         <div className={styles.keywords}>
           <span className={styles.keyword}>{ctx.product_query}</span>
         </div>
+      )}
+
+      {confirmingDelete && createPortal(
+        <div className={styles.modalOverlay} onClick={() => setConfirmingDelete(false)}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <p className={styles.modalTitle}>Retire &quot;{watchlist.name}&quot;?</p>
+            <p className={styles.modalMessage}>
+              This agent stops hunting and its setup is gone for good. Alerts
+              you already received stay in your feed.
+            </p>
+            <div className={styles.modalBtnRow}>
+              <button className={styles.modalBtnGhost} onClick={() => setConfirmingDelete(false)}>
+                Keep it
+              </button>
+              <button className={styles.modalBtnDanger} onClick={handleDelete}>
+                Retire agent
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {ctx && (
@@ -638,7 +662,7 @@ function WatchlistsPageInner() {
   return (
     <>
 
-      {modal && (
+      {modal && createPortal(
         <div className={styles.modalOverlay} onClick={() => setModal(null)}>
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
             <div className={modal.type === "cancelled" ? styles.modalIconCancelled : styles.modalIconError}>
@@ -650,7 +674,8 @@ function WatchlistsPageInner() {
             <p className={styles.modalMessage}>{modal.message}</p>
             <button className={styles.modalBtn} onClick={() => setModal(null)}>Got it</button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       <main className={styles.main}>

@@ -1,12 +1,13 @@
 .card {
+  /* No backdrop-filter: it samples a SQUARE region and bleeds blur past the
+     rounded corners (Chromium). The card is in-page, so it bought nothing. */
   background: var(--bg-card);
-  backdrop-filter: blur(12px);
   border: 1px solid rgba(168, 188, 232, 0.1);
   border-radius: 16px;
   padding: 20px 24px;
   box-shadow: 0 4px 24px rgba(168, 188, 232, 0.08);
   margin-bottom: 24px;
-  animation: cardEnter 0.4s ease both;
+  animation: cardEnter 0.4s ease backwards; /* 'both' would trap the fixed overlay */
 }
 
 @keyframes cardEnter {

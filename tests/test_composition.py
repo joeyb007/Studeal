@@ -191,7 +191,7 @@ async def test_no_results_retries_with_core_query(composition_rig):
         ExplorerResult(stop_reason="done", done_reason="no_results for this query"),
         ExplorerResult(stop_reason="done", done_reason="done after retry"),
     ]
-    await _run_one_query("used aeron chair herman miller", spec, router, None, _NullPool())
+    await _run_one_query("used aeron chair herman miller", spec, router, None, _NullPool(), asyncio.Semaphore(6))
 
     assert len(_ScriptedExplorer.calls) == 2
     assert _ScriptedExplorer.calls[0][0] == "used aeron chair herman miller"
@@ -207,7 +207,7 @@ async def test_no_retry_when_query_already_core(composition_rig):
     _ScriptedExplorer.results = [
         ExplorerResult(stop_reason="done", done_reason="no_results"),
     ]
-    await _run_one_query("aeron chair", spec, router, None, _NullPool())
+    await _run_one_query("aeron chair", spec, router, None, _NullPool(), asyncio.Semaphore(6))
     assert len(_ScriptedExplorer.calls) == 1
 
 
@@ -218,5 +218,5 @@ async def test_no_retry_on_normal_done(composition_rig):
     _ScriptedExplorer.results = [
         ExplorerResult(stop_reason="done", done_reason="paginated fully"),
     ]
-    await _run_one_query("used aeron chair", spec, router, None, _NullPool())
+    await _run_one_query("used aeron chair", spec, router, None, _NullPool(), asyncio.Semaphore(6))
     assert len(_ScriptedExplorer.calls) == 1

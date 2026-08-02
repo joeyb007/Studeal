@@ -41,6 +41,13 @@ export type HuntEvent = HuntEventBase &
         new_for_watchlist: number;
       }
     | {
+        type: "lane.finished";
+        query: string;
+        marketplace: string;
+        pages: number;
+        done_reason: string;
+      }
+    | {
         type: "hunt.finished";
         status: "succeeded" | "failed" | "cached";
         duration_s: number;

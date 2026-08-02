@@ -73,6 +73,17 @@ class HuntPersisted(_EventBase):
     new_for_watchlist: int
 
 
+class LaneFinished(_EventBase):
+    """One (query, marketplace) browse lane completed — others may still
+    be running. Mission Control flips that lane's tile to its done state."""
+
+    type: Literal["lane.finished"] = "lane.finished"
+    query: str
+    marketplace: str
+    pages: int
+    done_reason: str
+
+
 class HuntFinished(_EventBase):
     type: Literal["hunt.finished"] = "hunt.finished"
     status: Literal["succeeded", "failed", "cached"]
@@ -100,6 +111,7 @@ Event = Annotated[
         ExplorerError,
         ExtractionSubmitted,
         HuntPersisted,
+        LaneFinished,
         HuntFinished,
         AlertCreated,
     ],

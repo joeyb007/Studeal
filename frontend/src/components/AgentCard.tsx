@@ -38,31 +38,64 @@ export default function AgentCard({
   hunt: HuntSummary;
   onAlert: (alert: AlertEvent) => void;
 }) {
-  const { events, latestScreenshot, connected } = useHuntStream(hunt.watchlist_id);
+  const { events, connected } = useHuntStream(hunt.watchlist_id);
   const [elapsed, setElapsed] = useState("0:00");
+
+  interface Lane {
+    marketplace: string;
+    query: string;
+    shot: string | null;
+    action: string | null;
+    pages: number;
+    error: string | null;
+    done: boolean;
+    doneReason: string | null;
+  }
 
   const derived = useMemo(() => {
     let pages = 0;
     let extractions = 0;
     let offers: number | null = null;
     let fresh: number | null = null;
-    let currentUrl: string | null = null;
-    let now: { marketplace: string; text: string; error: boolean } | null = null;
     let finished: { status: string; duration: number } | null = null;
+    const lanes = new Map<string, Lane>();
+
+    const lane = (marketplace: string, query: string): Lane => {
+      const key = `${marketplace}::${query}`;
+      let l = lanes.get(key);
+      if (!l) {
+        l = { marketplace, query, shot: null, action: null, pages: 0, error: null, done: false, doneReason: null };
+        lanes.set(key, l);
+      }
+      return l;
+    };
 
     for (const event of events) {
       switch (event.type) {
-        case "explorer.turn":
+        case "explorer.turn": {
           pages += 1;
-          currentUrl = event.url;
-          now = { marketplace: event.marketplace, text: event.action, error: false };
+          const l = lane(event.marketplace, event.query);
+          l.pages += 1;
+          l.action = event.action;
+          l.error = null;
+          break;
+        }
+        case "explorer.screenshot":
+          lane(event.marketplace, event.query).shot = event.image_data_url;
           break;
         case "extraction.submitted":
           extractions += 1;
           break;
         case "explorer.error":
-          now = { marketplace: event.marketplace, text: event.error, error: true };
+          lane(event.marketplace, event.query).error = event.error;
           break;
+        case "lane.finished": {
+          const l = lane(event.marketplace, event.query);
+          l.done = true;
+          l.doneReason = event.done_reason;
+          if (event.pages > l.pages) l.pages = event.pages;
+          break;
+        }
         case "hunt.persisted":
           offers = event.offer_count;
           fresh = event.new_for_watchlist;
@@ -72,7 +105,7 @@ export default function AgentCard({
           break;
       }
     }
-    return { pages, extractions, offers, fresh, currentUrl, now, finished };
+    return { pages, extractions, offers, fresh, finished, lanes: [...lanes.values()] };
   }, [events]);
 
   // surface alert moments to the page (toast)
@@ -123,26 +156,47 @@ export default function AgentCard({
         {!done && <span className={styles.elapsed}>{elapsed}</span>}
       </div>
 
-      <div className={styles.shotWrap}>
-        {latestScreenshot ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={latestScreenshot} alt="agent viewport" className={styles.shot} />
-        ) : (
-          <div className={styles.shotEmpty}>waiting for first look…</div>
-        )}
-        {derived.currentUrl && <span className={styles.shotCap}>{derived.currentUrl}</span>}
-      </div>
-
-      <div className={[styles.now, derived.now?.error ? styles.nowError : ""].join(" ")}>
-        {derived.now ? (
-          <>
-            <span className={styles.nowMkt}>{derived.now.marketplace}</span>
-            <span className={styles.nowText}>{derived.now.text}</span>
-          </>
-        ) : (
-          <span className={styles.nowText}>starting up</span>
-        )}
-      </div>
+      {derived.lanes.length === 0 ? (
+        <div className={styles.shotEmpty}>agents dispatching…</div>
+      ) : (
+        <div className={styles.laneGrid}>
+          {derived.lanes.map(l => (
+            <div
+              key={`${l.marketplace}::${l.query}`}
+              className={[
+                styles.lane,
+                l.done ? styles.laneDone : "",
+                l.error && !l.done ? styles.laneError : "",
+              ].join(" ")}
+            >
+              <div className={styles.laneHead}>
+                <span className={styles.laneMkt}>{l.marketplace.replace(/_/g, " ")}</span>
+                <span className={styles.laneQuery} title={l.query}>{l.query}</span>
+              </div>
+              <div className={styles.laneShotWrap}>
+                {l.done ? (
+                  <div className={styles.laneDoneOverlay}>
+                    <span className={styles.laneCheck}>✓</span>
+                    <span className={styles.laneDoneReason}>
+                      {l.doneReason ?? "complete"} · {l.pages} pages
+                    </span>
+                  </div>
+                ) : l.shot ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={l.shot} alt={`${l.marketplace} viewport`} className={styles.laneShot} />
+                ) : (
+                  <div className={styles.laneWaiting}>connecting…</div>
+                )}
+              </div>
+              {!l.done && (
+                <span className={[styles.laneAction, l.error ? styles.laneActionError : ""].join(" ")}>
+                  {l.error ?? l.action ?? "starting up"}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className={styles.meta}>
         <span><b>{derived.pages}</b> pages</span>

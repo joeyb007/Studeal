@@ -410,6 +410,20 @@ class Explorer:
                 urls_visited=seen_urls, query=query,
                 no_effect_streak=no_effect_streak,
             )
+            if getattr(self.trace, "wants_live_screenshots", False):
+                # Mission Control theater: one small JPEG per turn. Healthy
+                # hunts previously NEVER screenshotted (vision fallback only),
+                # so the live viewport sat on "waiting for first look" forever.
+                try:
+                    frame = await session.page.screenshot(type="jpeg", quality=55)
+                except Exception:
+                    frame = None
+                if frame:
+                    self.trace.record_screenshot(
+                        orchestrator_turn=0, sub_turn=turn,
+                        label="live", png_bytes=frame,
+                    )
+
             want_vision = (
                 getattr(self.llm, "supports_vision", False)
                 and (failed_action_streak >= 2 or snap.captcha_detected)

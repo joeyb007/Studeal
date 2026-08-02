@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AgentBuilder from "@/components/AgentBuilder";
-import AlertFeed from "@/components/AlertFeed";
+import { toast } from "@/components/Toast";
 import styles from "./page.module.css";
 
 interface WatchlistContext {
@@ -181,10 +181,39 @@ function WatchlistCard({
   const [listings, setListings] = useState<Listing[] | null>(null);
   const [listingsMeta, setListingsMeta] = useState<{ total: number; reranked: boolean } | null>(null);
   const [loadingListings, setLoadingListings] = useState(false);
-  const [hunting, setHunting] = useState(false);
-  const [huntNotice, setHuntNotice] = useState<string | null>(null);
 
   const days = watchlist.expires_at ? daysUntil(watchlist.expires_at) : null;
+
+  // Scout's notes: the qualitative state the agent hunts with. Editing it
+  // PATCHes buyer_profile, which re-embeds the intent vector server-side —
+  // telling your friend more literally re-aims the hunt.
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [budgetDraft, setBudgetDraft] = useState("");
+  const [conditionDraft, setConditionDraft] = useState<string[]>([]);
+  const [brandsDraft, setBrandsDraft] = useState("");
+
+  function openNotesEditor() {
+    setNotesDraft(ctx?.buyer_profile ?? "");
+    setBudgetDraft(ctx?.max_budget != null ? String(ctx.max_budget) : "");
+    setConditionDraft(ctx?.condition ?? []);
+    setBrandsDraft((ctx?.brands ?? []).join(", "));
+    setEditingNotes(true);
+  }
+
+  async function saveNotes() {
+    setEditingNotes(false);
+    const patch: Partial<WatchlistContext> = {
+      // "" not null for profile: the PATCH endpoint treats null as "field
+      // not sent" — empty string is the explicit "clear my notes".
+      buyer_profile: notesDraft.trim(),
+      condition: conditionDraft,
+      brands: brandsDraft.split(",").map(b => b.trim()).filter(Boolean),
+    };
+    const budget = parseFloat(budgetDraft);
+    if (!isNaN(budget) && budget > 0) patch.max_budget = budget;
+    await patchContext(patch);
+  }
 
   async function loadDeals() {
     setLoadingDeals(true);
@@ -218,17 +247,18 @@ function WatchlistCard({
       if (res.ok) {
         const data = await res.json();
         setCtx(data.context);
-        setDeals(null);
-        setDealCount(null);
-        if (expanded) loadDeals();
+        // Background re-aim: the intent vector just changed, so re-run
+        // retrieval + ranking quietly. Stale results stay on screen until
+        // fresh ones replace them.
+        if (listings !== null) void loadListings({ quiet: true });
       }
     } finally {
       setPatching(false);
     }
   }
 
-  async function loadListings() {
-    setLoadingListings(true);
+  async function loadListings(opts?: { quiet?: boolean }) {
+    if (!opts?.quiet) setLoadingListings(true);
     try {
       const res = await fetch(`/api/watchlists/${watchlist.id}/listings?top_n=20`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -246,38 +276,6 @@ function WatchlistCard({
     setLoadingListings(false);
   }
 
-  async function triggerHunt() {
-    if (hunting) return;
-    setHunting(true);
-    setHuntNotice(null);
-    try {
-      const res = await fetch(`/api/watchlists/${watchlist.id}/hunt`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.status === 429) {
-        const data = await res.json().catch(() => null);
-        setHuntNotice(data?.detail ?? "This agent hunted recently — try again later.");
-        setHunting(false);
-        return;
-      }
-    } catch {
-      // fall through — polling below still runs
-    }
-
-    // Poll listings for up to 4 minutes. Stop early if new listings arrive.
-    const startCount = listings?.length ?? 0;
-    const started = Date.now();
-    const poll = async (): Promise<void> => {
-      if (Date.now() - started > 240_000) return;
-      await loadListings();
-      if ((listings?.length ?? 0) > startCount) return;
-      await new Promise(r => setTimeout(r, 5000));
-      return poll();
-    };
-    await poll();
-    setHunting(false);
-  }
 
   function toggle() {
     if (!expanded) {
@@ -312,14 +310,6 @@ function WatchlistCard({
               {days === 0 ? "Expires today" : `${days}d left`}
             </span>
           )}
-          <button
-            className={styles.deleteBtn}
-            onClick={triggerHunt}
-            disabled={hunting}
-            title="Trigger a fresh marketplace hunt"
-          >
-            {hunting ? "Hunting…" : "↻"}
-          </button>
           <button className={styles.deleteBtn} onClick={() => setConfirmingDelete(true)} disabled={deleting}>
             {deleting ? "…" : "✕"}
           </button>
@@ -354,68 +344,109 @@ function WatchlistCard({
       )}
 
       {ctx && (
-        <div className={styles.filterControls}>
-          <div className={styles.filterRow}>
-            <label className={styles.filterLabel}>Budget</label>
-            <input
-              className={styles.filterInput}
-              type="number"
-              placeholder="Max $"
-              defaultValue={ctx.max_budget ?? ""}
-              disabled={patching}
-              onBlur={e => {
-                const val = parseFloat(e.target.value);
-                if (!isNaN(val) && val !== ctx.max_budget) patchContext({ max_budget: val });
-                if (!e.target.value) patchContext({ max_budget: null });
-              }}
-            />
+        <div className={styles.notesBlock}>
+          <div className={styles.notesHeader}>
+            <span className={styles.notesLabel}>scout&apos;s notes</span>
+            {patching && <span className={styles.notesReaiming}>re-aiming…</span>}
+            {!editingNotes && !patching && (
+              <button className={styles.notesEdit} onClick={openNotesEditor}>
+                edit
+              </button>
+            )}
           </div>
-          <div className={styles.filterRow}>
-            <label className={styles.filterLabel}>Min discount</label>
-            <input
-              className={styles.filterInput}
-              type="number"
-              placeholder="% off"
-              defaultValue={ctx.min_discount_pct ?? ""}
-              disabled={patching}
-              onBlur={e => {
-                const val = parseInt(e.target.value);
-                if (!isNaN(val) && val !== ctx.min_discount_pct) patchContext({ min_discount_pct: val });
-                if (!e.target.value) patchContext({ min_discount_pct: null });
-              }}
-            />
-          </div>
-          <div className={styles.filterRow}>
-            <label className={styles.filterLabel}>Condition</label>
-            <div className={styles.conditionPills}>
-              {(["new", "refurb", "used"] as const).map(c => (
-                <button
-                  key={c}
-                  disabled={patching}
-                  className={[
-                    styles.pill,
-                    ((ctx.condition?.length ?? 0) === 0 || ctx.condition?.includes(c)) ? styles.pillActive : "",
-                  ].join(" ")}
-                  onClick={() => {
-                    const current = ctx.condition ?? [];
-                    const next = current.includes(c)
-                      ? current.filter(x => x !== c)
-                      : [...current, c];
-                    patchContext({ condition: next });
-                  }}
-                >
-                  {c.charAt(0).toUpperCase() + c.slice(1)}
+          {editingNotes ? (
+            <div className={styles.notesEditor}>
+              <textarea
+                className={styles.notesTextarea}
+                value={notesDraft}
+                onChange={e => setNotesDraft(e.target.value)}
+                rows={3}
+                placeholder="Who's this for, and what matters? e.g. WFH full-time, back pain, needs real lumbar support"
+                autoFocus
+              />
+              <div className={styles.notesEditorActions}>
+                <button className={styles.notesCancel} onClick={() => setEditingNotes(false)}>
+                  Cancel
                 </button>
-              ))}
+                <button className={styles.notesSave} onClick={saveNotes} disabled={patching}>
+                  {patching ? "Saving…" : "Save"}
+                </button>
+              </div>
             </div>
-          </div>
-          {dealCount !== null && (
-            <p className={styles.dealCount}>
-              {usedFallback
-                ? "No exact matches — showing closest deals"
-                : `${dealCount} deal${dealCount !== 1 ? "s" : ""} match your filters`}
+          ) : (
+            <p className={styles.notesText}>
+              {ctx.buyer_profile || (
+                <span className={styles.notesEmpty}>
+                  No notes yet — tell Scout who this is for and it hunts smarter.
+                </span>
+              )}
             </p>
           )}
+
+          <div className={styles.stateGrid}>
+            <div className={styles.stateItem}>
+              <span className={styles.stateLabel}>budget</span>
+              {editingNotes ? (
+                <input
+                  className={styles.notesInlineInput}
+                  type="number"
+                  placeholder="Max $"
+                  value={budgetDraft}
+                  onChange={e => setBudgetDraft(e.target.value)}
+                />
+              ) : (
+                <span className={styles.stateValue}>
+                  {ctx.max_budget != null ? `$${ctx.max_budget}` : "—"}
+                </span>
+              )}
+            </div>
+            <div className={styles.stateItem}>
+              <span className={styles.stateLabel}>brands</span>
+              {editingNotes ? (
+                <input
+                  className={styles.notesInlineInput}
+                  type="text"
+                  placeholder="Comma-sep"
+                  value={brandsDraft}
+                  onChange={e => setBrandsDraft(e.target.value)}
+                />
+              ) : (
+                <span className={styles.stateValue}>
+                  {(ctx.brands?.length ?? 0) > 0 ? ctx.brands.join(", ") : "—"}
+                </span>
+              )}
+            </div>
+            <div className={styles.stateItem}>
+              <span className={styles.stateLabel}>condition</span>
+              {editingNotes ? (
+                <div className={styles.notesPills}>
+                  {(["new", "refurb", "used"] as const).map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={[
+                        styles.notesPill,
+                        conditionDraft.includes(c) ? styles.notesPillActive : "",
+                      ].join(" ")}
+                      onClick={() =>
+                        setConditionDraft(prev =>
+                          prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c],
+                        )
+                      }
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className={styles.stateValue}>
+                  {(ctx.condition?.length ?? 0) > 0 && (ctx.condition?.length ?? 0) < 3
+                    ? ctx.condition.join(" · ")
+                    : "Any"}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -450,15 +481,10 @@ function WatchlistCard({
               </>
             )}
           </p>
-          {huntNotice && (
-            <p className={styles.huntNotice}>{huntNotice}</p>
+          {loadingListings && (
+            <p className={styles.dealsLoading}>Loading listings…</p>
           )}
-          {(loadingListings || hunting) && (
-            <p className={styles.dealsLoading}>
-              {hunting ? "Agents hunting marketplaces…" : "Loading listings…"}
-            </p>
-          )}
-          {!loadingListings && !hunting && listings !== null && listings.length === 0 && (
+          {!loadingListings && listings !== null && listings.length === 0 && (
             <div className={styles.dealsEmpty}>
               <p>No marketplace listings yet. Trigger a hunt with ↻.</p>
             </div>
@@ -515,6 +541,7 @@ function WatchlistsPageInner() {
   const [atCap, setAtCap] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [modal, setModal] = useState<{ type: "cancelled" | "error" | "abort"; message: string; title?: string } | null>(null);
+  const [justCreatedId, setJustCreatedId] = useState<number | null>(null);
 
   useEffect(() => {
     if (searchParams.get("checkout_cancelled") === "1") {
@@ -635,6 +662,8 @@ function WatchlistsPageInner() {
       return;
     }
     setWatchlists(prev => [...prev, data]);
+    setJustCreatedId(data.id);
+    toast(`${chatName.trim()} deployed — Scout hunts on its next cycle`, "success");
     setShowChat(false);
     setChatMessages([]);
     setChatContext(null);
@@ -716,8 +745,6 @@ function WatchlistsPageInner() {
           />
         )}
 
-        <AlertFeed />
-
         {loading ? (
           <div className={styles.empty}>Loading...</div>
         ) : watchlists.length === 0 ? (
@@ -725,14 +752,15 @@ function WatchlistsPageInner() {
         ) : (
           <div className={styles.list}>
             {watchlists.map(wl => (
+              <div key={wl.id} className={wl.id === justCreatedId ? styles.cardPop : undefined}>
               <WatchlistCard
-                key={wl.id}
                 watchlist={wl}
                 token={token}
                 onDelete={id => setWatchlists(prev => prev.filter(w => w.id !== id))}
                 onNewWatchlist={openChat}
                 alertIndex={alertIndex}
               />
+              </div>
             ))}
           </div>
         )}

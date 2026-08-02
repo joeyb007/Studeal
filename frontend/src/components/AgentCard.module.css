@@ -191,3 +191,128 @@
 .alertLine .tMkt {
   color: var(--amber);
 }
+
+/* Partitioned theater: one tile per (marketplace, query) lane. */
+
+.laneGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.lane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid rgba(168, 188, 232, 0.1);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(168, 188, 232, 0.03);
+  transition: border-color 0.3s, background 0.3s;
+}
+
+.laneDone {
+  border-color: rgba(111, 191, 143, 0.35);
+  background: rgba(111, 191, 143, 0.05);
+}
+
+.laneError {
+  border-color: rgba(224, 122, 95, 0.3);
+}
+
+.laneHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.laneMkt {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.laneQuery {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.laneShotWrap {
+  aspect-ratio: 16 / 10;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(10, 12, 18, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.laneShot {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
+.laneWaiting {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  opacity: 0.6;
+  animation: livePulse 2s ease-in-out infinite;
+}
+
+.laneDoneOverlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+  background: rgba(111, 191, 143, 0.07);
+}
+
+.laneCheck {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--success);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.laneDoneReason {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--success);
+  opacity: 0.9;
+  text-align: center;
+  padding: 0 8px;
+}
+
+.laneAction {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.laneActionError {
+  color: var(--danger);
+}

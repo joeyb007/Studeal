@@ -34,7 +34,7 @@ from dealbot.agents.tracing import (
 )
 from dealbot.agents.workers.extractor import Extractor, Offer
 from dealbot.events.publisher import RedisEventPublisher
-from dealbot.events.schema import ExtractionSubmitted, QueriesPlanned
+from dealbot.events.schema import ExtractionSubmitted, LaneFinished, QueriesPlanned
 from dealbot.llm.base import LLMClient
 from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.openai_client import OpenAIClient
@@ -115,7 +115,7 @@ def build_nav_llm() -> LLMClient:
 
     LLM_BACKEND=bedrock wins explicitly; otherwise key-presence rules as
     before (OpenAI if keyed, Groq fallback)."""
-    limit = int(os.environ.get("AGENT_NAV_CONCURRENCY", "2"))
+    limit = int(os.environ.get("AGENT_NAV_CONCURRENCY", "4"))
     if os.environ.get("LLM_BACKEND") == "bedrock":
         from dealbot.llm.bedrock_client import DEFAULT_NAV_MODEL, BedrockClient
 
@@ -159,37 +159,47 @@ def build_session_from_env() -> BrowserSession:
 
 
 # ---------------------------------------------------------------------------
-# Per-query worker (one BrowserSession + N marketplaces)
+# Lane workers: one BrowserSession per (query, marketplace)
 # ---------------------------------------------------------------------------
 
-async def _run_one_query(
+async def _run_one_lane(
     query: str,
+    target,
     spec: WatchlistContext,
     router: MarketplaceRouter,
     nav_llm: LLMClient,
     pool: ExtractorPool,
+    lane_semaphore: "asyncio.Semaphore",
     events: HuntEventContext | None = None,
+    trace_stamp: str | None = None,
+    trace_slug: str | None = None,
 ) -> None:
-    """Route the query, open a session, explore each marketplace sequentially.
+    """One (query, marketplace) browse lane with its own browser session.
 
-    Sessions are per-query — one browser context per parallel worker. Within
-    a session, marketplaces run sequentially (single browser, single tab).
-    Each query gets its own TraceWriter so traces are isolated per worker.
+    Lanes across ALL queries run concurrently, bounded by lane_semaphore
+    (browser-session budget) — the nav-LLM ThrottledLLM bounds the thinking
+    separately. Wall clock collapses toward the slowest single lane instead
+    of summing marketplaces per query. Per-site politeness is unchanged: a
+    site is still hit by at most one lane per query, same as the sequential
+    era where all query-lanes started on the same site together.
     """
-    try:
-        targets = await router.route(query, spec)
-    except Exception:
-        logger.exception("_run_one_query: router failed for %r", query)
-        return
-
     trace_dir = os.environ.get("AGENT_TRACE_DIR")
-    if trace_dir:
-        from datetime import datetime, timezone
+    if trace_dir and trace_stamp and trace_slug:
         from pathlib import Path
-        slug = re.sub(r"[^a-z0-9]+", "-", query.lower())[:40]
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+
+        trace: TraceWriter = FilesystemTraceWriter(
+            Path(trace_dir) / f"{trace_stamp}_{trace_slug}" / target.marketplace
+        )
     else:
-        stamp = slug = None  # unused when trace_dir is None
+        trace = NullTraceWriter()
+    if events is not None:
+        trace = PublishingTraceWriter(
+            trace, events.publisher,
+            hunt_id=events.hunt_id,
+            watchlist_id=events.watchlist_id,
+            query=query,
+            marketplace=target.marketplace,
+        )
 
     async def sink(snap, marketplace):
         if events is not None:
@@ -199,84 +209,110 @@ async def _run_one_query(
             ))
         await pool.submit(snap, marketplace, spec)
 
+    pages = 0
+    done_reason = "error"
     try:
-        async with build_session_from_env() as session:
-            for target in targets:
-                if trace_dir:
-                    from pathlib import Path
-                    trace: TraceWriter = FilesystemTraceWriter(
-                        Path(trace_dir) / f"{stamp}_{slug}" / target.marketplace
-                    )
-                else:
-                    trace = NullTraceWriter()
-                if events is not None:
-                    trace = PublishingTraceWriter(
-                        trace, events.publisher,
-                        hunt_id=events.hunt_id,
-                        watchlist_id=events.watchlist_id,
-                        query=query,
-                        marketplace=target.marketplace,
-                    )
+        async with lane_semaphore:
+            async with build_session_from_env() as session:
                 explorer = Explorer(nav_llm, trace=trace)
-                try:
-                    try:
-                        result = await explorer.explore(
-                            entry_url=target.entry_url,
-                            entry_referer=target.entry_referer,
-                            marketplace=target.marketplace,
-                            query=query,
+                result = await explorer.explore(
+                    entry_url=target.entry_url,
+                    entry_referer=target.entry_referer,
+                    marketplace=target.marketplace,
+                    query=query,
+                    spec=spec,
+                    session=session,
+                    sink=sink,
+                )
+                pages = result.turns_used
+                done_reason = result.done_reason or result.stop_reason
+                logger.info(
+                    "run_hunt[%s]: %s urls=%d turns=%d stop=%s",
+                    query, target.marketplace,
+                    len(result.urls_visited), result.turns_used,
+                    result.stop_reason,
+                )
+                # No-results broadening: verbose query variants can
+                # legitimately match nothing on thin marketplaces (craigslist
+                # AND-matches every term). One retry with the spec's core
+                # product query, re-routed so the entry URL is rebuilt.
+                if (
+                    result.stop_reason == "done"
+                    and result.done_reason
+                    and "no_results" in result.done_reason.lower()
+                    and query.strip().lower() != spec.product_query.strip().lower()
+                ):
+                    retry_query = spec.product_query
+                    retry_targets = await router.route(retry_query, spec)
+                    retry_target = next(
+                        (t for t in retry_targets
+                         if t.marketplace == target.marketplace),
+                        None,
+                    )
+                    if retry_target is not None:
+                        logger.info(
+                            "run_hunt[%s]: %s no_results — retrying with core query %r",
+                            query, target.marketplace, retry_query,
+                        )
+                        retry_explorer = Explorer(nav_llm, trace=trace)
+                        retry_result = await retry_explorer.explore(
+                            entry_url=retry_target.entry_url,
+                            entry_referer=retry_target.entry_referer,
+                            marketplace=retry_target.marketplace,
+                            query=retry_query,
                             spec=spec,
                             session=session,
                             sink=sink,
                         )
-                        logger.info(
-                            "run_hunt[%s]: %s urls=%d turns=%d stop=%s",
-                            query, target.marketplace,
-                            len(result.urls_visited), result.turns_used,
-                            result.stop_reason,
-                        )
-                        # No-results broadening: verbose query variants can
-                        # legitimately match nothing on thin marketplaces
-                        # (craigslist AND-matches every term). One retry with
-                        # the spec's core product query, re-routed so the
-                        # entry URL is rebuilt for the simplified query.
-                        if (
-                            result.stop_reason == "done"
-                            and result.done_reason
-                            and "no_results" in result.done_reason.lower()
-                            and query.strip().lower() != spec.product_query.strip().lower()
-                        ):
-                            retry_query = spec.product_query
-                            retry_targets = await router.route(retry_query, spec)
-                            retry_target = next(
-                                (t for t in retry_targets
-                                 if t.marketplace == target.marketplace),
-                                None,
-                            )
-                            if retry_target is not None:
-                                logger.info(
-                                    "run_hunt[%s]: %s no_results — retrying with core query %r",
-                                    query, target.marketplace, retry_query,
-                                )
-                                retry_explorer = Explorer(nav_llm, trace=trace)
-                                await retry_explorer.explore(
-                                    entry_url=retry_target.entry_url,
-                                    entry_referer=retry_target.entry_referer,
-                                    marketplace=retry_target.marketplace,
-                                    query=retry_query,
-                                    spec=spec,
-                                    session=session,
-                                    sink=sink,
-                                )
-                    except Exception:
-                        logger.exception(
-                            "run_hunt[%s]: explorer failed on %s",
-                            query, target.marketplace,
-                        )
-                finally:
-                    trace.finalize()
+                        pages += retry_result.turns_used
+                        done_reason = retry_result.done_reason or retry_result.stop_reason
     except Exception:
-        logger.exception("_run_one_query: session setup failed for %r", query)
+        logger.exception(
+            "run_hunt[%s]: lane failed on %s", query, target.marketplace,
+        )
+    finally:
+        trace.finalize()
+        if events is not None:
+            events.publisher.publish_nowait(LaneFinished(
+                hunt_id=events.hunt_id, watchlist_id=events.watchlist_id,
+                query=query, marketplace=target.marketplace,
+                pages=pages, done_reason=done_reason,
+            ))
+
+
+async def _run_one_query(
+    query: str,
+    spec: WatchlistContext,
+    router: MarketplaceRouter,
+    nav_llm: LLMClient,
+    pool: ExtractorPool,
+    lane_semaphore: "asyncio.Semaphore",
+    events: HuntEventContext | None = None,
+) -> None:
+    """Route the query, then fan out one lane per routed marketplace."""
+    try:
+        targets = await router.route(query, spec)
+    except Exception:
+        logger.exception("_run_one_query: router failed for %r", query)
+        return
+
+    trace_stamp = trace_slug = None
+    if os.environ.get("AGENT_TRACE_DIR"):
+        from datetime import datetime, timezone
+
+        trace_slug = re.sub(r"[^a-z0-9]+", "-", query.lower())[:40]
+        trace_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+
+    await asyncio.gather(
+        *(
+            _run_one_lane(
+                query, target, spec, router, nav_llm, pool,
+                lane_semaphore, events, trace_stamp, trace_slug,
+            )
+            for target in targets
+        ),
+        return_exceptions=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +348,14 @@ async def run_hunt(
 
     # Fan out per-query workers. return_exceptions so one query failing doesn't
     # kill the whole hunt. Each worker builds its own Explorer + TraceWriter.
+    # Lane budget: concurrent browser sessions across ALL lanes. LLM thinking
+    # is bounded separately by the nav ThrottledLLM.
+    lane_semaphore = asyncio.Semaphore(int(os.environ.get("AGENT_LANE_CONCURRENCY", "6")))
     await asyncio.gather(
-        *(_run_one_query(q, spec, router, nav_llm, pool, events) for q in queries),
+        *(
+            _run_one_query(q, spec, router, nav_llm, pool, lane_semaphore, events)
+            for q in queries
+        ),
         return_exceptions=True,
     )
 

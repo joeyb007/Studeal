@@ -731,3 +731,220 @@
 
 .modalBtnGhost:active,
 .modalBtnDanger:active { transform: scale(0.97); }
+
+/* Scout's notes on the agent card — same dossier the builder showed, carried
+   forward. Prose, never fields; editing re-aims the intent vector. */
+
+.notesBlock {
+  border-top: 1px solid rgba(168, 188, 232, 0.08);
+  margin-top: 14px;
+  padding: 12px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notesHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.notesLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
+.notesEdit {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  transition: color 0.15s;
+}
+
+.notesEdit:hover { color: var(--accent); }
+
+.notesText {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.notesEmpty {
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.notesEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notesTextarea {
+  width: 100%;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(168, 188, 232, 0.15);
+  background: var(--bg-card);
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.notesTextarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(168, 188, 232, 0.08);
+}
+
+.notesEditorActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.notesCancel {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 188, 232, 0.15);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.notesCancel:hover { color: var(--text-primary); }
+
+.notesSave {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s;
+}
+
+.notesSave:hover:not(:disabled) { opacity: 0.9; }
+.notesSave:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Inline state controls inside the notes editor — part of the dossier, not a
+   form section. */
+
+.notesInlineRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.notesInlineInput {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(168, 188, 232, 0.15);
+  background: var(--bg-card);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.notesInlineInput:focus { border-color: var(--accent); }
+
+.notesPills { display: flex; gap: 6px; }
+
+.notesPill {
+  padding: 6px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(168, 188, 232, 0.18);
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.notesPillActive {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: rgba(168, 188, 232, 0.08);
+}
+
+.notesReaiming {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  opacity: 0.85;
+  animation: reaimPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes reaimPulse {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 0.35; }
+}
+
+/* New agent card pops in (fill backwards — retained transforms trap fixed
+   overlays, we learned). */
+
+.cardPop {
+  animation: cardPopIn 0.45s cubic-bezier(0.21, 1.02, 0.73, 1) backwards;
+}
+
+@keyframes cardPopIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Always-visible structured state under the freeform notes — labeled values
+   at rest, inputs when editing. */
+
+.stateGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  padding-top: 10px;
+}
+
+.stateItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 110px;
+}
+
+.stateLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  opacity: 0.65;
+}
+
+.stateValue {
+  font-size: 13px;
+  color: var(--text-primary);
+}

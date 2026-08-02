@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 
 
 class TraceWriter(ABC):
+    # Live per-turn viewport frames for Mission Control. Only the publishing
+    # writer wants these — capturing them costs ~150ms/turn, which evals and
+    # untraced hunts must not pay.
+    wants_live_screenshots: bool = False
+
     """Per-run observability sink. One instance per agent run."""
 
     @abstractmethod
@@ -354,6 +359,8 @@ class FilesystemTraceWriter(TraceWriter):
 
 
 class PublishingTraceWriter(TraceWriter):
+    wants_live_screenshots = True
+
     """Wraps another TraceWriter; forwards every call, additionally publishing
     explorer turn/screenshot/error events to the hunt event stream via
     `publish_nowait` (fire-and-forget — observability must never break a hunt).
@@ -440,7 +447,8 @@ class PublishingTraceWriter(TraceWriter):
         )
         import base64
 
-        data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+        mime = "image/jpeg" if png_bytes[:3] == b"\xff\xd8\xff" else "image/png"
+        data_url = f"data:{mime};base64," + base64.b64encode(png_bytes).decode()
         if len(data_url) > self._MAX_DATA_URL_CHARS:
             return
         from dealbot.events.schema import ExplorerScreenshot

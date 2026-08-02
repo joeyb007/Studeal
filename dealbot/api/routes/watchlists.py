@@ -13,10 +13,10 @@ from dealbot.agents.nl_watchlist import NLWatchlistAgent
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.api.routes.hunts import HuntListResponse, to_summary
-from dealbot.db.models import Deal, Hunt, Listing, User, Watchlist
+from dealbot.db.models import Deal, Hunt, Listing, User, Watchlist, WatchlistRanking
 from dealbot.lifecycle import stale_cutoff
 from dealbot.recsys.intent import compose_intent_document
-from dealbot.recsys.ranker import rank
+from dealbot.recsys.rank_cache import rankings_are_stale, recompute_rankings
 from dealbot.db.semantic import retrieve_similar_deals
 from dealbot.llm.base import LLMClient
 from dealbot.llm.embeddings import embed_text
@@ -304,6 +304,14 @@ async def patch_watchlist(
         await session.commit()
         await session.refresh(watchlist)
 
+    # The vector moved — re-rank in the background. Broker-down is tolerable:
+    # the read path's staleness backstop will catch it later.
+    try:
+        from dealbot.worker.tasks import recompute_rankings_task
+        recompute_rankings_task.delay(watchlist_id)
+    except Exception:
+        pass
+
     return WatchlistResponse(
         id=watchlist.id,
         name=watchlist.name,
@@ -341,8 +349,9 @@ class ListingResponse(BaseModel):
 
 class ListingsResponse(BaseModel):
     listings: list[ListingResponse]
-    total_candidates: int                       # pre-rank shortlist size
+    total_candidates: int                       # rankings in the cache
     reranked: bool                              # False if ranking degraded
+    computed_at: Optional[str] = None           # when the cache was built
 
 
 @router.post(
@@ -410,78 +419,63 @@ async def trigger_hunt(
 @router.get("/{watchlist_id}/listings", response_model=ListingsResponse)
 async def list_watchlist_listings(
     watchlist_id: int,
-    top_n: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
 ) -> ListingsResponse:
-    """Two-stage recommendation against the shared listings pool.
+    """Serve the precomputed ranking cache (~50ms; no LLM on the request path).
 
-    1. Dense retrieval: cosine-match the watchlist's intent embedding — which
-       encodes the whole elicited context, not just the query — against the
-       pool. This is what surfaces listings OTHER users' agents found.
-       Hard constraints (budget, condition) are SQL filters applied first, so
-       no ranker verdict can surface a listing that violates them.
-    2. Listwise LLM rank over that shortlist, emitting a reason per listing.
+    Recomputes are event-driven — hunt completion, context edits — with a lazy
+    staleness backstop here: rankings older than RANKINGS_STALE_HOURS are
+    served as-is while a background recompute is enqueued (stale-while-
+    revalidate). Only a watchlist that has never been ranked computes inline,
+    paying the old live latency exactly once.
 
-    Degrades rather than fails: no intent embedding falls back to recency
-    candidates, and a ranking outage returns them in retrieval order.
+    Returns the FULL ordered ranking: with compute off the request path,
+    truncating to a top-N buys nothing — the UI shows the quality continuum.
     """
-    async with get_async_session() as session:
-        watchlist = await session.get(Watchlist, watchlist_id)
-        if watchlist is None or watchlist.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.",
-            )
-        if not watchlist.context:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Watchlist has no context.",
-            )
-        ctx = WatchlistContext.model_validate_json(watchlist.context)
+    async def _read() -> list[tuple[WatchlistRanking, Listing]]:
+        async with get_async_session() as session:
+            watchlist = await session.get(Watchlist, watchlist_id)
+            if watchlist is None or watchlist.user_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.",
+                )
+            return list((await session.execute(
+                select(WatchlistRanking, Listing)
+                .join(Listing, Listing.id == WatchlistRanking.listing_id)
+                .where(WatchlistRanking.watchlist_id == watchlist_id)
+                .order_by(WatchlistRanking.position)
+            )).all())
 
-        # Hard constraints first. The ranker must be structurally unable to
-        # relax them, so they never reach it as instructions.
-        stmt = select(Listing)
-        # Pool metabolism: a listing the fleet stopped seeing is probably sold.
-        # Applies to BOTH branches — cosine proximity must not resurrect it.
-        stmt = stmt.where(Listing.last_seen_at >= stale_cutoff())
-        if ctx.max_budget:
-            stmt = stmt.where(Listing.price <= ctx.max_budget * 1.2)
-        if ctx.condition:
-            stmt = stmt.where(Listing.condition.in_(ctx.condition))
-
-        if watchlist.intent_embedding is not None:
-            stmt = stmt.where(Listing.embedding.isnot(None)).order_by(
-                Listing.embedding.cosine_distance(watchlist.intent_embedding)
-            )
-        else:
-            # No intent vector (embedding backend was down at create time).
-            # Recency is a weak but non-empty candidate source.
-            stmt = stmt.order_by(Listing.last_seen_at.desc())
-        candidates = list(
-            (await session.execute(stmt.limit(CANDIDATE_POOL_SIZE))).scalars().all()
-        )
-
-    if not candidates:
-        return ListingsResponse(listings=[], total_candidates=0, reranked=False)
-
-    ranked = await rank(ctx, candidates, top_n=top_n)
+    rows = await _read()
+    if not rows:
+        # Never ranked (or cache cleared): compute inline, once.
+        await recompute_rankings(watchlist_id)
+        rows = await _read()
+    elif rankings_are_stale(rows[0][0].computed_at):
+        # Serve stale immediately; refresh in the background.
+        try:
+            from dealbot.worker.tasks import recompute_rankings_task
+            recompute_rankings_task.delay(watchlist_id)
+        except Exception:
+            pass  # broker down — stale keeps serving; next read retries
 
     return ListingsResponse(
         listings=[
             ListingResponse(
-                id=r.listing.id, marketplace=r.listing.marketplace,
-                title=r.listing.title, price=r.listing.price,
-                currency=r.listing.currency, url=r.listing.raw_url,
-                image_url=r.listing.image_url, location=r.listing.location,
-                condition=r.listing.condition,
-                relevance_score=r.score, reason=r.reason or None,
-                first_seen_at=r.listing.first_seen_at.isoformat(),
-                last_seen_at=r.listing.last_seen_at.isoformat(),
+                id=listing.id, marketplace=listing.marketplace,
+                title=listing.title, price=listing.price,
+                currency=listing.currency, url=listing.raw_url,
+                image_url=listing.image_url, location=listing.location,
+                condition=listing.condition,
+                relevance_score=ranking.score, reason=ranking.reason,
+                first_seen_at=listing.first_seen_at.isoformat(),
+                last_seen_at=listing.last_seen_at.isoformat(),
             )
-            for r in ranked
+            for ranking, listing in rows
         ],
-        total_candidates=len(candidates),
-        reranked=any(r.score > 0 for r in ranked),
+        total_candidates=len(rows),
+        reranked=any(r.score > 0 for r, _l in rows),
+        computed_at=rows[0][0].computed_at.isoformat() if rows else None,
     )
 
 

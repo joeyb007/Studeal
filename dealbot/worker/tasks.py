@@ -165,6 +165,7 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
     ))
     if new_ids:
         _maybe_dispatch_alerts(hunt_id)
+    _maybe_recompute_rankings(watchlist_id)
 
     logger.info(
         "research_for_agent: wl=%d hunt=%d offers=%d persisted=%d new=%d",
@@ -219,6 +220,7 @@ async def _serve_from_pool(watchlist_id: int, candidates: list) -> dict:
     ))
     if new_ids:
         _maybe_dispatch_alerts(hunt_id)
+    _maybe_recompute_rankings(watchlist_id)
 
     logger.info(
         "research_for_agent: wl=%d hunt=%d CACHED linked=%d new=%d",
@@ -264,6 +266,21 @@ def _maybe_governor():
     from dealbot.worker.governor import build_governor
 
     return build_governor()
+
+
+@app.task(name="dealbot.worker.tasks.recompute_rankings_task")
+def recompute_rankings_task(watchlist_id: int) -> dict:
+    from dealbot.recsys.rank_cache import recompute_rankings
+
+    return {"written": asyncio.run(recompute_rankings(watchlist_id))}
+
+
+def _maybe_recompute_rankings(watchlist_id: int) -> None:
+    """Fire-and-forget ranking recompute; a dead broker must not fail a hunt."""
+    try:
+        recompute_rankings_task.delay(watchlist_id)
+    except Exception:
+        logger.warning("rankings recompute enqueue failed for wl %d", watchlist_id)
 
 
 def _maybe_dispatch_alerts(hunt_id: int) -> None:

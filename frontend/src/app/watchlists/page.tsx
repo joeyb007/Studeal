@@ -179,6 +179,7 @@ function WatchlistCard({
 
   // v14 marketplace listings + hunt trigger
   const [listings, setListings] = useState<Listing[] | null>(null);
+  const [showAllListings, setShowAllListings] = useState(false);
   const [listingsMeta, setListingsMeta] = useState<{ total: number; reranked: boolean } | null>(null);
   const [loadingListings, setLoadingListings] = useState(false);
 
@@ -247,10 +248,13 @@ function WatchlistCard({
       if (res.ok) {
         const data = await res.json();
         setCtx(data.context);
-        // Background re-aim: the intent vector just changed, so re-run
-        // retrieval + ranking quietly. Stale results stay on screen until
-        // fresh ones replace them.
-        if (listings !== null) void loadListings({ quiet: true });
+        // Re-aim happens server-side as a background task now; the cache
+        // updates a few seconds after the patch. Quiet-refetch twice on a
+        // delay — stale results stay on screen until fresh ones land.
+        if (listings !== null) {
+          setTimeout(() => void loadListings({ quiet: true }), 7000);
+          setTimeout(() => void loadListings({ quiet: true }), 16000);
+        }
       }
     } finally {
       setPatching(false);
@@ -486,14 +490,38 @@ function WatchlistCard({
           )}
           {!loadingListings && listings !== null && listings.length === 0 && (
             <div className={styles.dealsEmpty}>
-              <p>No marketplace listings yet. Trigger a hunt with ↻.</p>
+              <p>Nothing ranked yet — Scout's first pass lands after its next hunt.</p>
             </div>
           )}
-          {!loadingListings && listings && listings.length > 0 && (
-            <div className={styles.dealsList}>
-              {listings.map(l => <ListingRow key={l.id} listing={l} alert={alertIndex[l.id]} />)}
-            </div>
-          )}
+          {!loadingListings && listings && listings.length > 0 && (() => {
+            const WEAK_SCORE = 0.4;
+            const visible = showAllListings ? listings : listings.slice(0, 20);
+            const weakStart = visible.findIndex(
+              l => l.relevance_score > 0 && l.relevance_score < WEAK_SCORE,
+            );
+            return (
+              <div className={styles.dealsList}>
+                {visible.map((l, i) => (
+                  <div key={l.id}>
+                    {i === weakStart && weakStart > 0 && (
+                      <div className={styles.weakDivider}>weaker matches</div>
+                    )}
+                    <ListingRow listing={l} alert={alertIndex[l.id]} />
+                  </div>
+                ))}
+                {listings.length > 20 && (
+                  <button
+                    className={styles.showAllBtn}
+                    onClick={() => setShowAllListings(v => !v)}
+                  >
+                    {showAllListings
+                      ? "Show fewer"
+                      : `Show all ${listings.length}`}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

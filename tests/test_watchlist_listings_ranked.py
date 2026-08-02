@@ -33,6 +33,9 @@ def rig(authed_client, db_factory, monkeypatch):
     monkeypatch.setattr(
         "dealbot.api.routes.watchlists.get_async_session", _test_session,
     )
+    monkeypatch.setattr(
+        "dealbot.recsys.rank_cache.get_async_session", _test_session,
+    )
     return authed_client, factory, monkeypatch
 
 
@@ -76,7 +79,7 @@ async def test_listings_carry_ranker_reasons(rig):
             for c in candidates[:top_n]
         ]
 
-    mp.setattr("dealbot.api.routes.watchlists.rank", _fake_rank)
+    mp.setattr("dealbot.recsys.rank_cache.rank", _fake_rank)
     resp = client.get(f"/watchlists/{wl_id}/listings")
 
     assert resp.status_code == 200, resp.text
@@ -104,7 +107,7 @@ async def test_budget_ceiling_is_enforced_in_sql_not_by_the_ranker(rig):
         seen["prices"] = [c.price for c in candidates]
         return [RankedListing(listing=c, score=1.0, reason="great") for c in candidates]
 
-    mp.setattr("dealbot.api.routes.watchlists.rank", _rank_everything)
+    mp.setattr("dealbot.recsys.rank_cache.rank", _rank_everything)
     rows = client.get(f"/watchlists/{wl_id}/listings").json()["listings"]
 
     assert seen["prices"] == [50.0], "the ranker never sees over-budget rows"
@@ -124,7 +127,7 @@ async def test_condition_is_a_sql_filter(rig):
     async def _rank(spec, candidates, *, llm=None, top_n=20):
         return [RankedListing(listing=c, score=0.5, reason="") for c in candidates]
 
-    mp.setattr("dealbot.api.routes.watchlists.rank", _rank)
+    mp.setattr("dealbot.recsys.rank_cache.rank", _rank)
     rows = client.get(f"/watchlists/{wl_id}/listings").json()["listings"]
     assert rows == [], "the seeded listing is 'used'; condition=['new'] excludes it"
 
@@ -144,7 +147,7 @@ async def test_no_candidates_returns_empty_without_calling_the_ranker(rig):
         called["n"] += 1
         return []
 
-    mp.setattr("dealbot.api.routes.watchlists.rank", _rank)
+    mp.setattr("dealbot.recsys.rank_cache.rank", _rank)
     data = client.get(f"/watchlists/{wl_id}/listings").json()
 
     assert data["listings"] == []
@@ -179,6 +182,6 @@ async def test_stale_pool_listings_never_reach_the_ranker(rig):
         seen["titles"] = [c.title for c in candidates]
         return [RankedListing(listing=c, score=0.5, reason="") for c in candidates]
 
-    mp.setattr("dealbot.api.routes.watchlists.rank", _rank)
+    mp.setattr("dealbot.recsys.rank_cache.rank", _rank)
     client.get(f"/watchlists/{wl_id}/listings")
     assert "Sold Weeks Ago" not in seen["titles"]

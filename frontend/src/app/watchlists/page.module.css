@@ -948,3 +948,32 @@
   font-size: 13px;
   color: var(--text-primary);
 }
+
+.weakDivider {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  opacity: 0.6;
+  padding: 12px 0 6px;
+  border-top: 1px dashed rgba(168, 188, 232, 0.15);
+  margin-top: 10px;
+}
+
+.showAllBtn {
+  margin-top: 10px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 188, 232, 0.15);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+  width: 100%;
+}
+
+.showAllBtn:hover { color: var(--text-primary); border-color: var(--accent); }

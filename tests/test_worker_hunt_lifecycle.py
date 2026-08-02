@@ -62,6 +62,7 @@ async def rig(monkeypatch):
     monkeypatch.setattr(tasks_mod, "_get_publisher", lambda: RedisEventPublisher(client=fake))
     monkeypatch.setattr(tasks_mod, "_maybe_governor", lambda: None)
     monkeypatch.setattr(tasks_mod, "_maybe_dispatch_alerts", lambda hunt_id: None)
+    monkeypatch.setattr(tasks_mod, "_maybe_recompute_rankings", lambda watchlist_id: None)
 
     async with factory() as s:
         user = User(email="w@t.com", hashed_password="x")

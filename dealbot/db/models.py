@@ -222,6 +222,30 @@ class ListingAlert(Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WatchlistRanking(Base):
+    """Precomputed recsys output: the full ordered ranking of pool listings
+    for one watchlist. The read path serves these rows (~50ms); recomputes
+    are event-driven (hunt completion, context edit) with a lazy staleness
+    backstop — the LLM never runs on a request path."""
+
+    __tablename__ = "watchlist_rankings"
+
+    watchlist_id: Mapped[int] = mapped_column(
+        ForeignKey("watchlists.id", ondelete="CASCADE"), primary_key=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
 

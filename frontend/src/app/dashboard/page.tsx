@@ -4,7 +4,6 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
 interface PoolListing {
@@ -265,7 +264,6 @@ function DashboardPageInner() {
 
   return (
     <>
-      <Nav />
       <main className={`${styles.main} pageEnter`}>
 
         {upgraded && (

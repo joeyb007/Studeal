@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import Nav from "@/components/Nav";
 import styles from "./page.module.css";
 
 interface Deal {
@@ -124,7 +123,6 @@ export default function CatalogPage() {
 
   return (
     <>
-      <Nav />
       <div className={`${styles.layout} pageEnter`}>
         <aside className={styles.sidebar}>
           <div className={styles.sidebarSection}>

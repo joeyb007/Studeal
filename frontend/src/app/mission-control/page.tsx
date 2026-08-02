@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Nav from "@/components/Nav";
 import AgentCard, { AlertEvent, HuntSummary } from "@/components/AgentCard";
 import styles from "./page.module.css";
 
@@ -53,7 +52,6 @@ export default function MissionControlPage() {
 
   return (
     <>
-      <Nav />
       <main className={styles.wrap}>
         <header className={styles.pagehead}>
           <h1>Mission Control</h1>

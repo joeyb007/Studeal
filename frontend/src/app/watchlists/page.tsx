@@ -3,7 +3,6 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Nav from "@/components/Nav";
 import AgentBuilder from "@/components/AgentBuilder";
 import AlertFeed from "@/components/AlertFeed";
 import styles from "./page.module.css";
@@ -625,7 +624,6 @@ function WatchlistsPageInner() {
 
   return (
     <>
-      <Nav />
 
       {modal && (
         <div className={styles.modalOverlay} onClick={() => setModal(null)}>

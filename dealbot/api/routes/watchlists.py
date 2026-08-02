@@ -38,8 +38,12 @@ CANDIDATE_POOL_SIZE = 150
 def _get_llm() -> LLMClient:
     backend = os.environ.get("LLM_BACKEND", "openai")
     if backend == "bedrock":
-        from dealbot.llm.bedrock_client import BedrockClient
-        return BedrockClient()
+        from dealbot.llm.bedrock_client import DEFAULT_NAV_MODEL, BedrockClient
+        # Scout runs on the judgment-tier model: Haiku reliably ignores the
+        # close-instead-of-fishing gate (probed 3x), Sonnet obeys it. A whole
+        # onboarding conversation costs ~2-3¢ — the first impression is worth it.
+        return BedrockClient(
+            model=os.environ.get("BEDROCK_SCOUT_MODEL", DEFAULT_NAV_MODEL))
     if backend == "openai":
         from dealbot.llm.openai_client import OpenAIClient
         return OpenAIClient()

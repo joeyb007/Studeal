@@ -14,6 +14,7 @@ interface WatchlistContext {
   condition: string[];
   brands: string[];
   keywords: string[];
+  buyer_profile?: string | null;
 }
 
 interface ChatMessage {
@@ -515,11 +516,23 @@ function WatchlistsPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Rotating openers: instant (no LLM round-trip for a greeting), varied,
+  // and every line stays hand-written. The header already says "scout" —
+  // no self-introduction needed.
+  const OPENERS = [
+    "What are you hunting for today?",
+    "What can I find you?",
+    "Alright — what are we after?",
+    "Tell me what you need. I'll find where it's cheap.",
+    "What's on the list today?",
+    "Give me something to hunt.",
+  ];
+
   function openChat() {
     setShowChat(true);
     setChatMessages([{
       role: "assistant",
-      content: "I'm Scout. What are we hunting today?",
+      content: OPENERS[Math.floor(Math.random() * OPENERS.length)],
     }]);
     setChatContext(null);
     setChatComplete(false);

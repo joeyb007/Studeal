@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import styles from "./AgentBuilder.module.css";
 
+// The UI thesis: under the hood Scout runs an LLM-driven state machine that
+// pushes toward a deployable spec — but what the user experiences is a real
+// conversation. No field stages, no progress pipeline, no "extracting budget"
+// copy. The spec surfaces only as "Scout's notes": prose fragments a friend
+// jots while listening, in whatever order the conversation actually took.
+
 function useTypewriter(text: string, speed = 22): { displayed: string; done: boolean } {
   const [displayed, setDisplayed] = useState("");
   const [done, setDone] = useState(false);
@@ -52,6 +58,7 @@ interface WatchlistContext {
   condition: string[];
   brands: string[];
   keywords: string[];
+  buyer_profile?: string | null;
 }
 
 interface AgentBuilderProps {
@@ -70,7 +77,24 @@ interface AgentBuilderProps {
   formError: string | null;
 }
 
-const STAGE_ICONS = ["⌕", "$", "◈", "✦", "◎"];
+/** Scout's running notes: short jotted fragments, never labeled fields.
+ *  Condition is only worth a note when it's an actual narrowing (a strict
+ *  subset) — "open to anything" is the default, and a friend wouldn't write
+ *  that down. */
+function notesFrom(context: WatchlistContext | null): string[] {
+  if (!context) return [];
+  const notes: string[] = [];
+  if (context.product_query) notes.push(context.product_query);
+  if (context.max_budget != null) notes.push(`$${context.max_budget} cap`);
+  const condition = context.condition ?? [];
+  if (condition.length > 0 && condition.length < 3) {
+    notes.push(`open to ${condition.join(" / ")}`);
+  }
+  if ((context.brands?.length ?? 0) > 0) {
+    notes.push(`prefers ${context.brands.join(", ")}`);
+  }
+  return notes;
+}
 
 export default function AgentBuilder({
   context,
@@ -87,191 +111,164 @@ export default function AgentBuilder({
   submitting,
   formError,
 }: AgentBuilderProps) {
-  const lastAssistantMsg = [...messages].reverse().find(m => m.role === "assistant");
+  const lastAssistantIdx = messages.map(m => m.role).lastIndexOf("assistant");
+  const lastAssistantMsg = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
   const { displayed: typewriterText, done: typewriterDone } = useTypewriter(
     lastAssistantMsg?.content ?? "",
   );
 
-  const stages = [
-    {
-      label: "Query",
-      done: !!context?.product_query,
-      value: context?.product_query || null,
-    },
-    {
-      label: "Budget",
-      done: context?.max_budget !== null && context?.max_budget !== undefined,
-      value: context?.max_budget != null ? `$${context.max_budget}` : null,
-    },
-    {
-      label: "Condition",
-      done: (context?.condition?.length ?? 0) > 0,
-      values: context?.condition ?? [],
-    },
-    {
-      label: "Keywords",
-      done: (context?.keywords?.length ?? 0) >= 3,
-      values: context?.keywords ?? [],
-    },
-    {
-      label: "Ready",
-      done: isComplete,
-      value: isComplete ? "ready" : null,
-    },
-  ];
-
-  const nextUndoneIdx = stages.findIndex(s => !s.done);
-  const activeIdx = isComplete ? 4 : nextUndoneIdx === -1 ? 4 : nextUndoneIdx;
+  const notes = notesFrom(context);
+  const profile = context?.buyer_profile ?? null;
 
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!isLoading && !isComplete) inputRef.current?.focus();
   }, [isLoading, isComplete]);
 
+  const threadRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, typewriterText, isLoading]);
+
+  const userTurns = messages.filter(m => m.role === "user").length;
+
+  // Deploy modal: completion is a discrete commit step and deserves an
+  // announced moment, not a silently morphing input. Prefill the name from
+  // what Scout learned so the step costs one click, not one decision.
+  const [modalDismissed, setModalDismissed] = useState(false);
+  useEffect(() => {
+    if (isComplete && !name && context?.product_query) {
+      const suggested = context.product_query
+        .split(/\s+/)
+        .slice(0, 4)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+      onNameChange(suggested);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isComplete]);
+
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
-        <span className={styles.cardLabel}>configuring agent</span>
+        <span className={styles.cardLabel}>scout</span>
         <span className={styles.liveDot} />
       </div>
 
-      <div className={styles.pipeline}>
-        {stages.map((stage, i) => (
-          <div key={stage.label} className={styles.stageCol}>
-            <div
-              className={[
-                styles.node,
-                stage.done ? styles.nodeDone : "",
-                i === activeIdx && !stage.done ? styles.nodeActive : "",
-              ].join(" ")}
-            >
-              <span className={styles.nodeIcon}>{STAGE_ICONS[i]}</span>
-              {i === activeIdx && !stage.done && <span className={styles.nodePulse} />}
+      <div className={styles.thread} ref={threadRef}>
+        {messages.map((message, i) =>
+          message.role === "user" ? (
+            <div key={i} className={styles.userRow}>
+              <span className={styles.userBubble}>{message.content}</span>
             </div>
-            <span
-              className={[
-                styles.nodeLabel,
-                stage.done ? styles.nodeLabelDone : "",
-                i === activeIdx && !stage.done ? styles.nodeLabelActive : "",
-              ].join(" ")}
-            >
-              {stage.label}
-            </span>
-            {i < stages.length - 1 && (
-              <div
-                className={[
-                  styles.connector,
-                  stage.done && stages[i + 1].done ? styles.connectorDone : "",
-                  stage.done && !stages[i + 1].done ? styles.connectorActive : "",
-                ].join(" ")}
-              />
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div className={styles.panelArea}>
-        {stages.slice(0, 4).map(stage => {
-          const isList = "values" in stage;
-          const values = (isList ? stage.values : undefined) ?? [];
-          const hasValues = values.length > 0;
-          return (
-            <div key={stage.label} className={styles.panelRow}>
-              <div className={styles.panelRowMain}>
-                <span className={styles.panelKey}>{stage.label.toLowerCase()}</span>
-                <span className={styles.panelDots} />
-                {!isList && (
-                  <span
-                    className={[
-                      styles.panelValue,
-                      stage.done ? styles.panelValueDone : "",
-                    ].join(" ")}
-                  >
-                    {stage.value ?? "—"}
-                  </span>
+          ) : (
+            <div key={i} className={styles.scoutRow}>
+              <ScoutAvatar active={i === lastAssistantIdx && !typewriterDone} />
+              <span className={styles.scoutText}>
+                {i === lastAssistantIdx ? typewriterText : message.content}
+                {i === lastAssistantIdx && !typewriterDone && (
+                  <span className={styles.cursor}>▍</span>
                 )}
-                {isList && !hasValues && <span className={styles.panelValue}>—</span>}
-                {isList && hasValues && stage.label === "Keywords" && (
-                  <span className={[styles.panelValue, styles.panelValueDone].join(" ")}>
-                    {values.length} variants
-                  </span>
-                )}
-                <span className={styles.panelCheck}>{stage.done ? "✓" : ""}</span>
-              </div>
-              {isList && hasValues && stage.label !== "Keywords" && (
-                <div className={styles.chipList}>
-                  {values.map(v => (
-                    <span key={v} className={styles.valueChip}>{v}</span>
-                  ))}
-                </div>
-              )}
-              {isList && hasValues && stage.label === "Keywords" && (
-                <div className={styles.chipList}>
-                  {values.slice(0, 5).map(v => (
-                    <span key={v} className={styles.valueChip}>{v}</span>
-                  ))}
-                </div>
-              )}
+              </span>
             </div>
-          );
-        })}
-      </div>
-
-      {!isComplete && lastAssistantMsg && (
-        <div className={styles.scoutRow}>
-          <ScoutAvatar active={!typewriterDone} />
-          <div className={styles.scoutBody}>
-            <span className={styles.scoutPrefix}>Scout</span>
-            <span className={styles.scoutText}>
-              {typewriterText}
-              {!typewriterDone && <span className={styles.cursor}>▍</span>}
+          ),
+        )}
+        {isLoading && (
+          <div className={styles.scoutRow}>
+            <ScoutAvatar active />
+            <span className={styles.typing}>
+              <span /><span /><span />
             </span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {!isComplete && suggestions.length > 0 && !isLoading && typewriterDone && (
-        <div className={styles.suggestionRow}>
-          {suggestions.map(s => (
-            <button
-              key={s}
-              className={styles.suggestionChip}
-              onClick={() => onSend(s)}
-              disabled={isLoading}
-            >
-              {s}
-            </button>
-          ))}
+      {(notes.length > 0 || profile) && (
+        <div className={styles.notes}>
+          <span className={styles.notesLabel}>scout&apos;s notes</span>
+          {notes.length > 0 && (
+            <span className={styles.notesLine}>{notes.join(" · ")}</span>
+          )}
+          {profile && <span className={styles.notesProfile}>{profile}</span>}
         </div>
       )}
 
       {isComplete ? (
-        <div className={styles.deployRow}>
-          <input
-            className={styles.nameInput}
-            type="text"
-            placeholder="Name your agent..."
-            value={name}
-            onChange={e => onNameChange(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") onDeploy(); }}
-            autoFocus
-            disabled={submitting}
-          />
-          <button
-            className={styles.deployBtn}
-            onClick={onDeploy}
-            disabled={submitting || !name.trim()}
-          >
-            {submitting ? "Deploying..." : "Deploy agent →"}
-          </button>
-        </div>
+        modalDismissed ? (
+          <div className={styles.deployRow}>
+            <input
+              className={styles.nameInput}
+              type="text"
+              placeholder="Name your agent..."
+              value={name}
+              onChange={e => onNameChange(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") onDeploy(); }}
+              autoFocus
+              disabled={submitting}
+            />
+            <button
+              className={styles.deployBtn}
+              onClick={onDeploy}
+              disabled={submitting || !name.trim()}
+            >
+              {submitting ? "Deploying..." : "Deploy agent →"}
+            </button>
+          </div>
+        ) : (
+          <div className={styles.overlay} onClick={() => setModalDismissed(true)}>
+            <div className={styles.modal} onClick={e => e.stopPropagation()}>
+              <span className={styles.modalTitle}>Your agent is ready</span>
+              <span className={styles.modalSub}>
+                Scout has what it needs. Name your agent and set it loose.
+              </span>
+              <input
+                className={styles.nameInput}
+                type="text"
+                placeholder="Name your agent..."
+                value={name}
+                onChange={e => onNameChange(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") onDeploy(); }}
+                autoFocus
+                disabled={submitting}
+              />
+              <button
+                className={styles.deployBtn}
+                onClick={onDeploy}
+                disabled={submitting || !name.trim()}
+              >
+                {submitting ? "Deploying..." : "Deploy agent →"}
+              </button>
+              {formError && <div className={styles.errorRow}>{formError}</div>}
+            </div>
+          </div>
+        )
       ) : (
+        <>
+          {suggestions.length > 0 && !isLoading && typewriterDone && (
+            <div className={styles.ghostRow}>
+              {suggestions.slice(0, 3).map(s => (
+                <button
+                  key={s}
+                  className={styles.ghostChip}
+                  onClick={() => onSend(s)}
+                  tabIndex={-1}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
         <div className={styles.inputRow}>
           <input
             ref={inputRef}
             className={styles.input}
             type="text"
-            placeholder={isLoading ? "Scout is thinking..." : "Type your response..."}
+            placeholder={
+              userTurns === 0
+                ? "e.g. \"a cheap 1440p monitor for my dorm setup\""
+                : "Reply to Scout..."
+            }
             value={input}
             onChange={e => onInputChange(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") onSend(); }}
@@ -285,19 +282,10 @@ export default function AgentBuilder({
             →
           </button>
         </div>
+        </>
       )}
 
-      <div className={styles.thoughtTrace}>
-        {isLoading && (
-          <>
-            <span className={styles.thoughtPrefix}>→</span>
-            <span className={styles.thoughtText}>
-              parsing intent · extracting {stages[activeIdx]?.label.toLowerCase() ?? "context"}...
-            </span>
-          </>
-        )}
-        {formError && <span className={styles.errorText}>{formError}</span>}
-      </div>
+      {formError && <div className={styles.errorRow}>{formError}</div>}
     </div>
   );
 }

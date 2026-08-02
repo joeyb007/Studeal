@@ -18,7 +18,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .cardLabel {
@@ -44,219 +44,41 @@
   50% { opacity: 0.4; }
 }
 
-.pipeline {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  align-items: center;
-  position: relative;
-  margin-bottom: 8px;
-}
+/* --- The conversation thread --- */
 
-.stageCol {
+.thread {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  position: relative;
+  gap: 14px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px 2px 14px;
+  scrollbar-width: thin;
 }
 
-.node {
-  position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  border: 1.5px solid rgba(168, 188, 232, 0.15);
-  background: var(--bg-card);
+.userRow {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: border-color 0.4s, box-shadow 0.4s, background 0.4s;
-  z-index: 1;
+  justify-content: flex-end;
+  animation: fadeIn 0.25s ease both;
 }
 
-.node.nodeActive {
-  border-color: var(--accent);
-  background: rgba(168, 188, 232, 0.07);
-  box-shadow:
-    0 0 16px rgba(168, 188, 232, 0.22),
-    0 0 36px rgba(168, 188, 232, 0.1);
-}
-
-.node.nodeDone {
-  border-color: var(--success);
-  background: rgba(111, 191, 143, 0.05);
-  box-shadow: 0 0 10px rgba(111, 191, 143, 0.2);
-}
-
-.nodeIcon {
-  font-size: 18px;
-  color: var(--text-secondary);
-  transition: color 0.3s;
-}
-
-.node.nodeActive .nodeIcon { color: var(--accent); }
-.node.nodeDone .nodeIcon { color: var(--success); }
-
-.nodeLabel {
-  margin-top: 10px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  transition: color 0.3s;
-  text-align: center;
-  white-space: nowrap;
-}
-
-.nodeLabelActive { color: var(--accent); }
-.nodeLabelDone { color: var(--success); }
-
-.nodePulse {
-  position: absolute;
-  inset: -6px;
-  border-radius: 18px;
-  border: 1.5px solid var(--accent);
-  opacity: 0;
-  animation: pulse 1.6s ease-out infinite;
-}
-
-@keyframes pulse {
-  0% { opacity: 0.7; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.25); }
-}
-
-.connector {
-  position: absolute;
-  top: 24px;
-  left: calc(50% + 24px);
-  width: calc(100% - 48px);
-  height: 1.5px;
-  background: repeating-linear-gradient(
-    90deg,
-    rgba(168, 188, 232, 0.18) 0px,
-    rgba(168, 188, 232, 0.18) 4px,
-    transparent 4px,
-    transparent 8px
-  );
-  transition: background 0.4s, box-shadow 0.4s;
-}
-
-.connector.connectorDone {
-  background: var(--success);
-  box-shadow: 0 0 6px 1px rgba(111, 191, 143, 0.45);
-}
-
-.connector.connectorActive {
-  background: linear-gradient(
-    90deg,
-    var(--accent) 0%,
-    var(--accent) 20%,
-    rgba(255, 255, 255, 0.85) 50%,
-    var(--accent) 80%,
-    var(--accent) 100%
-  );
-  background-size: 250% 100%;
-  background-position: 120% 0;
-  box-shadow: 0 0 8px 2px rgba(168, 188, 232, 0.35);
-  animation: beamSweep 1.4s ease-in-out infinite;
-}
-
-@keyframes beamSweep {
-  0%   { background-position: 160% 0; }
-  100% { background-position: -60% 0; }
-}
-
-.panelArea {
-  border-top: 1px solid rgba(168, 188, 232, 0.08);
-  margin-top: 18px;
-  padding: 14px 0 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.panelRow {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.panelRowMain {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.panelKey {
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  min-width: 78px;
-  opacity: 0.7;
-  flex-shrink: 0;
-}
-
-.panelDots {
-  flex: 1;
-  height: 1px;
-  background-image: linear-gradient(to right, rgba(168, 188, 232, 0.18) 50%, transparent 50%);
-  background-size: 6px 1px;
-  opacity: 0.6;
-  min-width: 12px;
-}
-
-.panelValue {
-  color: var(--text-secondary);
-  opacity: 0.4;
-  font-size: 13px;
-  text-align: right;
-  transition: color 0.4s, opacity 0.4s;
-  flex-shrink: 0;
-}
-
-.panelValueDone {
+.userBubble {
+  max-width: 78%;
+  padding: 9px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: rgba(168, 188, 232, 0.1);
+  border: 1px solid rgba(168, 188, 232, 0.12);
+  font-size: 14px;
   color: var(--text-primary);
-  opacity: 1;
-  font-weight: 500;
-}
-
-.panelCheck {
-  color: var(--success);
-  font-size: 13px;
-  font-weight: 700;
-  width: 12px;
-  display: inline-block;
-  flex-shrink: 0;
-}
-
-.chipList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-left: 88px;
-}
-
-.valueChip {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  padding: 3px 9px;
-  border-radius: 20px;
-  background: rgba(111, 191, 143, 0.08);
-  color: var(--success);
-  border: 1px solid rgba(111, 191, 143, 0.15);
-  letter-spacing: 0.01em;
+  line-height: 1.45;
 }
 
 .scoutRow {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 14px 0 12px;
-  border-top: 1px solid rgba(168, 188, 232, 0.08);
-  margin-top: 14px;
   animation: fadeIn 0.3s ease both;
+  max-width: 92%;
 }
 
 @keyframes fadeIn {
@@ -291,27 +113,12 @@
   50%      { transform: scale(1.06); }
 }
 
-.scoutBody {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 1;
-  min-width: 0;
-}
-
-.scoutPrefix {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent);
-  font-family: var(--font-mono);
-}
-
 .scoutText {
   font-size: 14px;
   color: var(--text-primary);
   line-height: 1.5;
+  padding-top: 4px;
+  min-width: 0;
 }
 
 .cursor {
@@ -325,38 +132,99 @@
   to { visibility: hidden; }
 }
 
-.suggestionRow {
+/* Typing indicator — three breathing dots, no "extracting field" copy ever */
+
+.typing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 10px 2px;
+}
+
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  opacity: 0.4;
+  animation: typingDot 1.2s ease-in-out infinite;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typingDot {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50%      { opacity: 0.9; transform: translateY(-2px); }
+}
+
+/* --- Scout's notes: jotted understanding, never labeled fields --- */
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid rgba(168, 188, 232, 0.08);
+  padding: 12px 2px 14px;
+  animation: fadeIn 0.35s ease both;
+}
+
+.notesLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
+.notesLine {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.notesProfile {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* --- Chips + input + deploy --- */
+
+/* Ghost chips — Smart-Reply grammar: they live WITH the composer and read as
+   optional shortcuts for typing, not as the answer set for the question.
+   Muted at rest (typing is the primary act), alive on hover. */
+
+.ghostRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 4px 0 14px;
+  gap: 6px;
+  padding: 2px 2px 8px;
   animation: fadeIn 0.3s ease both;
 }
 
-.suggestionChip {
-  padding: 7px 14px;
-  border-radius: 20px;
-  border: 1px solid rgba(168, 188, 232, 0.15);
-  background: var(--bg-card);
-  font-size: 13px;
-  color: var(--text-primary);
+.ghostChip {
+  padding: 4px 11px;
+  border-radius: 14px;
+  border: 1px dashed rgba(168, 188, 232, 0.22);
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
   cursor: pointer;
   font-family: inherit;
-  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s;
 }
 
-.suggestionChip:hover {
+.ghostChip:hover {
   border-color: var(--accent);
+  border-style: solid;
+  color: var(--text-primary);
   background: rgba(168, 188, 232, 0.06);
 }
 
-.suggestionChip:active {
+.ghostChip:active {
   transform: scale(0.96);
-}
-
-.suggestionChip:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .inputRow,
@@ -436,41 +304,61 @@
   cursor: not-allowed;
 }
 
-.thoughtTrace {
-  margin-top: 14px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(168, 188, 232, 0.06);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 18px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-  opacity: 0.7;
-}
-
-.thoughtPrefix {
-  color: var(--accent);
-  opacity: 0.8;
-}
-
-.thoughtText {
-  letter-spacing: 0.02em;
-}
-
-.errorText {
+.errorRow {
+  margin-top: 10px;
   color: var(--danger);
   font-size: 12px;
-  font-family: inherit;
+}
+
+/* Deploy modal — completion is a commit ceremony, announced, not a silently
+   morphed input. Backdrop click falls back to the inline row. */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 18, 0.55);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  animation: fadeIn 0.2s ease both;
+}
+
+.modal {
+  width: min(420px, calc(100vw - 48px));
+  background: var(--bg-card);
+  border: 1px solid rgba(168, 188, 232, 0.16);
+  border-radius: 16px;
+  padding: 26px 26px 22px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4), 0 0 32px rgba(168, 188, 232, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: modalPop 0.25s ease both;
+}
+
+@keyframes modalPop {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modalTitle {
+  font-size: 17px;
+  font-weight: 650;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.modalSub {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 4px;
 }
 
 @media (max-width: 640px) {
   .card { padding: 16px 14px; }
-  .node { width: 44px; height: 44px; border-radius: 12px; }
-  .nodeIcon { font-size: 15px; }
-  .nodeLabel { font-size: 8px; }
-  .connector { top: 22px; left: calc(50% + 22px); width: calc(100% - 44px); }
-  .panelKey { min-width: 64px; font-size: 11px; }
-  .panelValue { max-width: 140px; font-size: 12px; }
+  .thread { max-height: 300px; }
+  .userBubble { max-width: 88%; }
 }

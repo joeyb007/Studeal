@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import AgentCard, { AlertEvent, HuntSummary } from "@/components/AgentCard";
 import styles from "./page.module.css";
 
@@ -22,6 +23,11 @@ export default function MissionControlPage() {
   const [hunts, setHunts] = useState<HuntSummary[] | null>(null);
   const [toast, setToast] = useState<AlertEvent | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Portal target for the toast: the page template animates a transform on
+  // enter, which makes it the containing block for position:fixed children.
+  // Rendering into document.body keeps the toast anchored to the viewport.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/hunts?limit=30");
@@ -121,19 +127,23 @@ export default function MissionControlPage() {
         )}
       </main>
 
-      <div
-        className={[styles.toast, toast ? styles.toastShow : ""].join(" ")}
-        aria-live="polite"
-      >
-        {toast && (
-          <>
-            <div className={styles.toastTitle}>{toast.title}</div>
-            <div className={styles.toastMeta}>
-              ${toast.price.toFixed(2)} {toast.currency} · {Math.round(toast.score * 100)}% match
-            </div>
-          </>
+      {mounted &&
+        createPortal(
+          <div
+            className={[styles.toast, toast ? styles.toastShow : ""].join(" ")}
+            aria-live="polite"
+          >
+            {toast && (
+              <>
+                <div className={styles.toastTitle}>{toast.title}</div>
+                <div className={styles.toastMeta}>
+                  ${toast.price.toFixed(2)} {toast.currency} · {Math.round(toast.score * 100)}% match
+                </div>
+              </>
+            )}
+          </div>,
+          document.body,
         )}
-      </div>
     </>
   );
 }

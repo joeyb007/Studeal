@@ -51,6 +51,12 @@ class MarketplaceConfig:
     # 57 elems walled vs 562 elems with a Google referer). Config data, not
     # per-site logic — the explorer just sets the header.
     entry_referer: str | None = None
+    # Thumbnail capture (probe-verified 2026-08-02, scripts/probe_listing_images.py).
+    # Pattern identifies listing-card anchors on gallery pages; hosts whitelist
+    # the CDN a product image may live on (suffix match). None pattern = site
+    # not yet probed, capture skipped entirely.
+    listing_href_pattern: str | None = None
+    image_cdn_hosts: tuple[str, ...] = ()
 
 
 @dataclass
@@ -83,6 +89,8 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://www.kijiji.ca/b-buy-sell/{q.replace(' ', '-').lower()}/k0c10"
         ),
+        listing_href_pattern="/v-",
+        image_cdn_hosts=("media.kijiji.ca",),
     ),
     MarketplaceConfig(
         key="fb_marketplace",
@@ -97,6 +105,8 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
             f"https://www.facebook.com/marketplace/{_FB_CITY}/search/?query={quote_plus(q)}"
         ),
         entry_referer="https://www.google.com/",
+        listing_href_pattern="/marketplace/item/",
+        image_cdn_hosts=(".fbcdn.net",),
     ),
     MarketplaceConfig(
         key="ebay",
@@ -108,6 +118,8 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://www.ebay.ca/sch/i.html?_nkw={quote_plus(q)}"
         ),
+        listing_href_pattern="/itm/",
+        image_cdn_hosts=("i.ebayimg.com",),
     ),
     MarketplaceConfig(
         key="craigslist",
@@ -119,6 +131,8 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://toronto.craigslist.org/search/sss?query={quote_plus(q)}"
         ),
+        listing_href_pattern="/d/",
+        image_cdn_hosts=("images.craigslist.org",),
     ),
     # --- Retailer refurb / open-box (ship Canada-wide; no geography). Added
     # --- in the 2026-07-30 site expansion; every entry below survived a
@@ -190,6 +204,8 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         ),
     ),
 ]
+
+CONFIG_BY_KEY: dict[str, MarketplaceConfig] = {m.key: m for m in CURATED_MARKETPLACES}
 
 # First-exposure eval 2026-07-30 (docs/evals/results.md expand_* rows).
 # PARKED, not tuned — re-attempt post-launch:

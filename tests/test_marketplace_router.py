@@ -150,3 +150,27 @@ def test_targets_propagate_entry_referer():
     by_key = {t.marketplace: t for t in targets}
     assert by_key["fb_marketplace"].entry_referer == "https://www.google.com/"
     assert by_key["kijiji"].entry_referer is None
+
+
+def test_capture_config_present_for_probed_marketplaces():
+    from dealbot.agents.marketplace_router import CONFIG_BY_KEY
+
+    expected = {
+        "kijiji": ("/v-", ("media.kijiji.ca",)),
+        "fb_marketplace": ("/marketplace/item/", (".fbcdn.net",)),
+        "ebay": ("/itm/", ("i.ebayimg.com",)),
+        "craigslist": ("/d/", ("images.craigslist.org",)),
+    }
+    for key, (pattern, hosts) in expected.items():
+        cfg = CONFIG_BY_KEY[key]
+        assert cfg.listing_href_pattern == pattern
+        assert cfg.image_cdn_hosts == hosts
+
+
+def test_unprobed_marketplaces_have_no_capture_pattern():
+    from dealbot.agents.marketplace_router import CONFIG_BY_KEY
+
+    for key, cfg in CONFIG_BY_KEY.items():
+        if key not in {"kijiji", "fb_marketplace", "ebay", "craigslist"}:
+            assert cfg.listing_href_pattern is None
+            assert cfg.image_cdn_hosts == ()

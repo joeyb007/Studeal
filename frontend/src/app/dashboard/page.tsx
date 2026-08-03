@@ -1,59 +1,26 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import PoolCard, { MARKETPLACE_LABELS, PoolListing } from "@/components/PoolCard";
+import { MultiSelect } from "@/components/Select";
 import styles from "./page.module.css";
 
-interface PoolListing {
-  id: number;
-  title: string;
-  price: number;
-  currency: string;
-  marketplace: string;
-  url: string;
-  image_url: string | null;
-  location: string | null;
-  condition: string;
-  first_seen_at: string;
-  last_seen_at: string;
-  relevance: number | null;
-}
+// Daily Drops IS the catalog: one page over the whole live pool. NL-query it
+// or browse everything; the prefilters (store, condition, price) apply to
+// both modes server-side. The only boundary is the lifecycle staleness rule.
 
-const MARKETPLACES = [
-  "kijiji", "fb_marketplace", "ebay", "craigslist", "bestbuy_outlet",
-  "canada_computers", "visions_openbox", "newegg_ca", "openbox_ca", "refurbio",
+const MARKETPLACES = Object.keys(MARKETPLACE_LABELS).filter(m => m !== "studeal");
+const CONDITIONS: Array<[string, string]> = [
+  ["new", "New"],
+  ["used", "Used"],
+  ["refurb", "Refurb"],
 ];
-const MARKETPLACE_LABELS: Record<string, string> = {
-  kijiji: "Kijiji",
-  fb_marketplace: "Facebook",
-  ebay: "eBay",
-  craigslist: "Craigslist",
-  bestbuy_outlet: "Best Buy",
-  canada_computers: "Canada Computers",
-  visions_openbox: "Visions",
-  newegg_ca: "Newegg",
-  openbox_ca: "OpenBox.ca",
-  refurbio: "REFURB.io",
-};
-const CONDITIONS = ["new", "used", "refurbished"];
+const PAGE_SIZE = 30;
+const SEARCH_MAX = 300;
 
-function timeAgo(iso: string): string {
-  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-const CONDITION_LABELS: Record<string, string> = { new: "New", used: "Used", refurbished: "Refurb" };
-const CONDITION_CLASS: Record<string, string> = {
-  new: styles.condNew,
-  used: styles.condUsed,
-  refurbished: styles.condRefurb,
-};
-
-// Full sentences, not keywords — the bar takes natural language and embeds it.
+// Full sentences, not keywords: the bar takes natural language and embeds it.
 const PLACEHOLDERS = [
   "a beginner-friendly road bike, nothing over $400",
   "quiet mechanical keyboard for late-night work",
@@ -62,117 +29,76 @@ const PLACEHOLDERS = [
   "a cheap laptop that can handle coursework",
 ];
 
-// Chips are full requests, not keywords — clicking one demonstrates that the
-// bar understands intent rather than matching words.
-const SUGGESTIONS = [
-  "a laptop that can handle coursework, under $600",
-  "comfortable desk chair for long study sessions",
-  "cheap second monitor for a dorm desk",
-  "headphones for a noisy library",
-  "a used bike for campus commuting",
-  "mechanical keyboard that isn't loud",
-];
 
-function CarouselStrip({ feed }: { feed: PoolListing[] }) {
-  if (feed.length === 0) return null;
-  const doubled = [...feed, ...feed];
-  return (
-    <div className={styles.carousel}>
-      <div className={styles.carouselLabel}>Fresh finds</div>
-      <div className={styles.carouselViewport}>
-        <div className={styles.carouselTrack}>
-          {doubled.map((listing, i) => (
-            <a key={`${listing.id}-${i}`} href={listing.url} target="_blank" rel="noopener noreferrer" className={styles.miniCard}>
-              <span className={styles.miniSource}>
-                {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace}
-              </span>
-              <span className={styles.miniTitle}>{listing.title}</span>
-              <span className={styles.miniPrice}>${listing.price.toFixed(2)}</span>
-            </a>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ListingCard({ listing, index }: { listing: PoolListing; index: number }) {
-  return (
-    <div className={styles.card} style={{ animationDelay: `${index * 60}ms` }}>
-      <div className={styles.cardBody}>
-        <div className={styles.cardTop}>
-          <span className={styles.source}>
-            {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace}
-          </span>
-          <span className={styles.seenAt}>{timeAgo(listing.last_seen_at)}</span>
-        </div>
-        <p className={styles.title}>{listing.title}</p>
-        <div className={styles.prices}>
-          <span className={styles.salePrice}>
-            ${listing.price.toFixed(2)}
-          </span>
-          <span className={styles.currency}>{listing.currency}</span>
-          {listing.location && <span className={styles.location}>{listing.location}</span>}
-        </div>
-      </div>
-      <div className={styles.cardFooter}>
-        <div className={styles.badges}>
-          {listing.condition && listing.condition !== "unknown" && (
-            <span className={[styles.condBadge, CONDITION_CLASS[listing.condition] ?? ""].join(" ")}>
-              {CONDITION_LABELS[listing.condition] ?? listing.condition}
-            </span>
-          )}
-        </div>
-        <a href={listing.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
-          View →
-        </a>
-      </div>
-    </div>
-  );
+function useCountUp(target: number | null, ms = 700): string {
+  const [value, setValue] = useState<number | null>(null);
+  const currentRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (target === null) return;
+    const from = currentRef.current ?? 0;
+    if (from === target) {
+      setValue(target);
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / ms);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const next = Math.round(from + (target - from) * eased);
+      currentRef.current = next;
+      setValue(next);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return value === null ? "–" : value.toLocaleString();
 }
 
 function DashboardPageInner() {
-  const { data: session } = useSession();
-  const token = session?.accessToken;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [upgraded, setUpgraded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [typedPlaceholder, setTypedPlaceholder] = useState("");
+
+  const [listings, setListings] = useState<PoolListing[]>([]);
+  const [total, setTotal] = useState(0);
+  const [todayCount, setTodayCount] = useState<number | null>(null);
+  const [semantic, setSemantic] = useState(true);
+  const [loading, setLoading] = useState(true);
+  // Search results are separate from the browse feed: the feed stays on
+  // screen (with its counters) until results actually arrive. No mid-typing
+  // mode flip, no stale-number flash.
+  const [searchResults, setSearchResults] = useState<PoolListing[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [marketplaces, setMarketplaces] = useState<string[]>([]);
+  const [conditions, setConditions] = useState<string[]>([]);
+  const [maxPrice, setMaxPrice] = useState("");
+  const [offset, setOffset] = useState(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (searchParams.get("upgraded") === "1") {
       setUpgraded(true);
       router.replace("/dashboard", { scroll: false });
     }
+    try {
+      const cached = JSON.parse(localStorage.getItem("pool_stats") ?? "null");
+      if (cached && typeof cached.total === "number") {
+        setTotal(cached.total);
+        setTodayCount(cached.today ?? null);
+        setLoading(false);
+      }
+    } catch { /* cold cache is fine */ }
     const q = searchParams.get("q");
     if (q) {
       setQuery(q);
       router.replace("/dashboard", { scroll: false });
     }
-  }, []);
-  const [query, setQuery] = useState("");
-  const [listings, setListings] = useState<PoolListing[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [typedPlaceholder, setTypedPlaceholder] = useState("");
-  const [feed, setFeed] = useState<PoolListing[]>([]);
-  const [semantic, setSemantic] = useState(true);
-  // phase: 'idle' | 'fading' | 'shifted'
-  const [phase, setPhase] = useState<"idle" | "fading" | "shifted">("idle");
-  const [selectedMarketplaces, setSelectedMarketplaces] = useState<string[]>([]);
-  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const phaseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  function toggleSet<T>(set: T[], val: T): T[] {
-    return set.includes(val) ? set.filter(v => v !== val) : [...set, val];
-  }
-
-  useEffect(() => {
-    fetch("/api/listings/feed?limit=40")
-      .then(r => r.json())
-      .then(data => { if (Array.isArray(data?.listings)) setFeed(data.listings); })
-      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Typewriter placeholder
@@ -210,165 +136,241 @@ function DashboardPageInner() {
     return () => clearTimeout(timeoutId);
   }, []);
 
-  // Phase sequencing: idle → fading → shifted
-  useEffect(() => {
-    if (phaseRef.current) clearTimeout(phaseRef.current);
-    if (query.length > 0) {
-      setPhase("fading");
-      phaseRef.current = setTimeout(() => setPhase("shifted"), 400);
-    } else {
-      setPhase("idle");
-    }
-    return () => { if (phaseRef.current) clearTimeout(phaseRef.current); };
-  }, [query.length > 0]);  // only re-run when empty↔non-empty changes
+  const buildParams = useCallback(
+    (extra: Record<string, string>) => {
+      const params = new URLSearchParams(extra);
+      if (marketplaces.length) params.set("marketplace", marketplaces.join(","));
+      if (conditions.length) params.set("condition", conditions.join(","));
+      const price = parseFloat(maxPrice);
+      if (!isNaN(price) && price > 0) params.set("max_price", String(price));
+      return params.toString();
+    },
+    [marketplaces, conditions, maxPrice],
+  );
 
-  // Debounced search
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      if (!query.trim()) {
-        setListings([]);
-        setHasSearched(false);
-        return;
-      }
-      const searchStart = Date.now();
-      setSearching(true);
-      fetch(`/api/listings/search?q=${encodeURIComponent(query.trim())}&limit=40`)
+  const loadFeed = useCallback(
+    (nextOffset: number, append: boolean) => {
+      setLoading(true);
+      fetch(`/api/listings/feed?${buildParams({
+        limit: String(PAGE_SIZE),
+        offset: String(nextOffset),
+      })}`)
         .then(r => r.json())
         .then(data => {
-          const elapsed = Date.now() - searchStart;
-          const minVisible = 1400;
-          const delay = Math.max(0, minVisible - elapsed);
-          setTimeout(() => {
-            setListings(Array.isArray(data?.listings) ? data.listings : []);
-            setSemantic(data?.semantic !== false);
-            setHasSearched(true);
-            setSearching(false);
-          }, delay);
+          const rows: PoolListing[] = Array.isArray(data?.listings) ? data.listings : [];
+          setListings(prev => (append ? [...prev, ...rows] : rows));
+          setTotal(data?.total_in_window ?? rows.length);
+          if (typeof data?.added_today === "number") setTodayCount(data.added_today);
+          try {
+            localStorage.setItem("pool_stats", JSON.stringify({
+              total: data?.total_in_window ?? rows.length,
+              today: data?.added_today ?? null,
+            }));
+          } catch { /* private mode etc. */ }
+          setOffset(nextOffset + rows.length);
         })
-        .catch(() => setSearching(false));
-    }, 900);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, token]);
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    },
+    [buildParams],
+  );
 
-  const isFading = phase === "fading";
-  const isShifted = phase === "shifted";
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchExhausted, setSearchExhausted] = useState(false);
 
-  const filtered = listings
-    .filter(l => selectedMarketplaces.length === 0 || selectedMarketplaces.includes(l.marketplace))
-    .filter(l => selectedConditions.length === 0 || selectedConditions.includes(l.condition));
+  const runSearch = useCallback(
+    (q: string, nextOffset = 0, append = false) => {
+      setSearchLoading(true);
+      fetch(`/api/listings/search?${buildParams({
+        q,
+        limit: String(PAGE_SIZE),
+        offset: String(nextOffset),
+      })}`)
+        .then(r => r.json())
+        .then(data => {
+          const rows: PoolListing[] = Array.isArray(data?.listings) ? data.listings : [];
+          setSearchResults(prev => (append && prev ? [...prev, ...rows] : rows));
+          setSemantic(data?.semantic !== false);
+          setSearchOffset(nextOffset + rows.length);
+          setSearchExhausted(rows.length < PAGE_SIZE || nextOffset + rows.length >= SEARCH_MAX);
+        })
+        .catch(() => {})
+        .finally(() => setSearchLoading(false));
+    },
+    [buildParams],
+  );
 
-  const hasResults = hasSearched && listings.length > 0;
-  const isEmpty = hasSearched && listings.length === 0 && !searching;
-  const hasFilters = selectedMarketplaces.length > 0 || selectedConditions.length > 0;
+  // Browse feed loads on mount + filter changes.
+  useEffect(() => {
+    loadFeed(0, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketplaces, conditions, maxPrice]);
+
+  // Search runs debounced; clearing the query returns to browse instantly.
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = query.trim();
+    if (!q) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    debounceRef.current = setTimeout(() => runSearch(q), 700);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, marketplaces, conditions, maxPrice]);
+
+  const searching = query.trim().length > 0;
+
+  const liveCount = useCountUp(loading && total === 0 ? null : total);
+  const todayDisplay = useCountUp(todayCount);
+
+  const inSearchMode = searchResults !== null;
+  const displayed = searchResults ?? listings;
+  const canLoadMore = inSearchMode
+    ? !searchExhausted
+    : !searching && listings.length < total;
+  const isEmpty = inSearchMode
+    ? searchResults.length === 0 && !searchLoading
+    : !loading && listings.length === 0;
 
   return (
-    <>
-      <main className={`${styles.main} pageEnter`}>
+    <main className={`${styles.main} pageEnter`}>
+      {upgraded && (
+        <div className={styles.upgradedBanner}>
+          <span>You&apos;re now a Pro member. Enjoy unlimited agents and email digests.</span>
+          <button onClick={() => setUpgraded(false)} className={styles.upgradedDismiss}>✕</button>
+        </div>
+      )}
 
-        {upgraded && (
-          <div className={styles.upgradedBanner}>
-            <span>You&apos;re now a Pro member. Enjoy unlimited agents and email digests.</span>
-            <button onClick={() => setUpgraded(false)} className={styles.upgradedDismiss}>✕</button>
-          </div>
-        )}
-
-        {/* Search hero */}
-        <div className={[styles.hero, isShifted ? styles.heroShifted : ""].join(" ")}>
-
-          {/* Sidebar — slides in from left when shifted */}
-          <aside className={[styles.sidebar, isShifted ? styles.sidebarOpen : ""].join(" ")}>
-            <div className={styles.sidebarSection}>
-              <h3 className={styles.sidebarTitle}>Marketplace</h3>
-              {MARKETPLACES.map(m => (
-                <label key={m} className={styles.checkLabel}>
-                  <input type="checkbox" className={styles.checkbox} checked={selectedMarketplaces.includes(m)} onChange={() => setSelectedMarketplaces(prev => toggleSet(prev, m))} />
-                  {MARKETPLACE_LABELS[m] ?? m}
-                </label>
-              ))}
-            </div>
-            <div className={styles.sidebarSection}>
-              <h3 className={styles.sidebarTitle}>Condition</h3>
-              {CONDITIONS.map(c => (
-                <label key={c} className={styles.checkLabel}>
-                  <input type="checkbox" className={styles.checkbox} checked={selectedConditions.includes(c)} onChange={() => setSelectedConditions(prev => toggleSet(prev, c))} />
-                  {CONDITION_LABELS[c]}
-                </label>
-              ))}
-            </div>
-            {hasFilters && (
-              <button className={styles.clearBtn} onClick={() => { setSelectedMarketplaces([]); setSelectedConditions([]); }}>
-                Clear filters
-              </button>
+      <div className={styles.heroUnified}>
+        <h1 className={styles.heading}>Daily Drops</h1>
+        <p className={styles.subheading}>
+          {inSearchMode
+            ? `Top ${searchResults.length} by fit${semantic ? "" : " · keyword match"}`
+            : (
+              <>
+                <span className={styles.statNum}>{liveCount}</span> live listings in the pool ·{" "}
+                <span className={styles.statNum}>{todayDisplay}</span> added today
+              </>
             )}
-          </aside>
+        </p>
+        <div className={styles.searchWrap}>
+          <svg className={styles.searchIcon} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input
+            className={styles.searchInput}
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={typedPlaceholder}
+            autoFocus
+          />
+          {query && (
+            <button className={styles.clearSearch} onClick={() => setQuery("")}>✕</button>
+          )}
+        </div>
+      </div>
 
-          <div className={styles.heroInner}>
-            <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
-              <h1 className={styles.heading}>Daily Drops</h1>
-              <p className={styles.subheading}>Our agents have been scanning the web. Search what they found.</p>
-            </div>
-            <div className={styles.searchWrap}>
-              <svg className={styles.searchIcon} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-              <input
-                ref={inputRef}
-                className={styles.searchInput}
-                type="text"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                placeholder={typedPlaceholder}
-                autoFocus
-              />
-              {query && (
-                <button className={styles.clearSearch} onClick={() => setQuery("")}>✕</button>
-              )}
-            </div>
-            <div className={[styles.idleContent, (isFading || isShifted) ? styles.idleContentHidden : ""].join(" ")}>
-              <p className={styles.searchHint}>
-                Describe what you&apos;re after — plain English works better than keywords.
-              </p>
-              <div className={styles.suggestions}>
-                {SUGGESTIONS.map(s => (
-                  <button key={s} className={styles.suggestionPill} onClick={() => setQuery(s)}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-              <CarouselStrip feed={feed} />
-            </div>
-            {searching && <p className={styles.searching}>Searching the pool…</p>}
-
-            {/* Fixed results panel */}
-            <div className={[styles.resultsPanel, isShifted ? styles.resultsPanelOpen : ""].join(" ")}>
-              {isEmpty && (
-                <div className={styles.empty}>
-                  <p>We haven&apos;t spotted that one yet.</p>
-                  <Link href="/watchlists" className={styles.emptyCtaLink}>
-                    Deploy an AI agent to find it for you →
-                  </Link>
-                </div>
-              )}
-              {hasResults && (
-                <>
-                  <div className={styles.resultsHeader}>
-                    <span className={styles.resultsCount}>
-                      {filtered.length} of {listings.length} listings
-                      {!semantic && " · keyword match"}
-                    </span>
-                    <Link href="/catalog" className={styles.catalogInline}>Browse all →</Link>
-                  </div>
-                  <div className={styles.resultsScroll}>
-                    <div className={styles.grid}>
-                      {filtered.map((listing, i) => <ListingCard key={listing.id} listing={listing} index={i} />)}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+      <div className={styles.filterBar}>
+        <MultiSelect
+          values={marketplaces}
+          onChange={setMarketplaces}
+          allLabel="All stores"
+          options={MARKETPLACES.map(m => ({ value: m, label: MARKETPLACE_LABELS[m] }))}
+        />
+        <MultiSelect
+          values={conditions}
+          onChange={setConditions}
+          allLabel="Any condition"
+          options={CONDITIONS.map(([value, label]) => ({ value, label }))}
+        />
+        <div className={styles.priceWrap}>
+          <span className={styles.pricePrefix}>$</span>
+          <input
+            className={styles.priceInput}
+            type="number"
+            min="0"
+            placeholder="Max"
+            value={maxPrice}
+            onChange={e => setMaxPrice(e.target.value)}
+          />
+          <div className={styles.stepper}>
+            <button
+              type="button"
+              className={styles.stepBtn}
+              aria-label="Increase max price"
+              onClick={() => setMaxPrice(prev => String((parseFloat(prev) || 0) + 25))}
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+            <button
+              type="button"
+              className={styles.stepBtn}
+              aria-label="Decrease max price"
+              onClick={() =>
+                setMaxPrice(prev => {
+                  const next = (parseFloat(prev) || 0) - 25;
+                  return next > 0 ? String(next) : "";
+                })
+              }
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
           </div>
         </div>
-      </main>
-    </>
+        <span className={styles.filterCount}>
+          {searchLoading
+            ? "searching…"
+            : inSearchMode
+              ? `top ${searchResults.length} by fit`
+              : `${total} listing${total === 1 ? "" : "s"}`}
+        </span>
+      </div>
+
+      {loading && listings.length === 0 && !inSearchMode && (
+        <p className={styles.searching}>Loading the pool…</p>
+      )}
+
+      {isEmpty ? (
+        <div className={styles.poolEmpty}>
+          <p className={styles.poolEmptyTitle}>
+            {searching ? "We haven't spotted that one yet." : "The pool is quiet here."}
+          </p>
+          {searching ? (
+            <Link href="/watchlists" className={styles.emptyCtaLink}>
+              Deploy an AI agent to find it for you →
+            </Link>
+          ) : (
+            <p className={styles.poolEmptySub}>
+              Loosen a filter, or let the fleet&apos;s next sweep restock this view.
+            </p>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className={styles.poolGrid} style={searchLoading ? { opacity: 0.55 } : undefined}>
+            {displayed.map((listing, i) => (
+              <PoolCard key={`${listing.id}-${i}`} listing={listing} index={i % PAGE_SIZE} />
+            ))}
+          </div>
+          {canLoadMore && (
+            <button
+              className={styles.loadMore}
+              onClick={() =>
+                inSearchMode
+                  ? runSearch(query.trim(), searchOffset, true)
+                  : loadFeed(offset, true)
+              }
+              disabled={loading || searchLoading}
+            >
+              {loading || searchLoading ? "Loading…" : "Load more"}
+            </button>
+          )}
+        </>
+      )}
+    </main>
   );
 }
 

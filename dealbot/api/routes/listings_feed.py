@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from dealbot.api.auth import get_current_user
 from dealbot.api.limiter import limiter
@@ -52,12 +52,23 @@ class PoolListingResponse(BaseModel):
 
 class PoolFeedResponse(BaseModel):
     listings: list[PoolListingResponse]
-    total_in_window: int
+    total_in_window: int              # TRUE count of live listings matching filters
+    added_today: int = 0              # first_seen within 24h, same filters
 
 
 class PoolSearchResponse(BaseModel):
     listings: list[PoolListingResponse]
     semantic: bool                   # False → keyword fallback ran
+
+
+def _csv_filter(stmt, column, raw: str | None):
+    """Comma-separated multi-select filters (marketplace, condition)."""
+    if not raw:
+        return stmt
+    values = [v.strip() for v in raw.split(",") if v.strip()]
+    if not values:
+        return stmt
+    return stmt.where(column.in_(values))
 
 
 def _to_pool_response(listing: Listing, relevance: float | None = None) -> PoolListingResponse:
@@ -147,13 +158,28 @@ async def pool_feed(
             .order_by(Listing.last_seen_at.desc())
             .limit(_DIVERSIFY_POOL_SIZE)
         )
-        if marketplace:
-            stmt = stmt.where(Listing.marketplace == marketplace)
+        stmt = _csv_filter(stmt, Listing.marketplace, marketplace)
         if max_price is not None:
             stmt = stmt.where(Listing.price <= max_price)
-        if condition:
-            stmt = stmt.where(Listing.condition == condition)
+        stmt = _csv_filter(stmt, Listing.condition, condition)
         rows = (await session.execute(stmt)).all()
+
+        # Honest counters: the diversify fetch is capped, so counting its rows
+        # reports the cap, not the pool. Count for real, same filters.
+        def _counted(base):
+            base = _csv_filter(base, Listing.marketplace, marketplace)
+            if max_price is not None:
+                base = base.where(Listing.price <= max_price)
+            base = _csv_filter(base, Listing.condition, condition)
+            return base
+        total_live = (await session.execute(_counted(
+            select(func.count()).select_from(Listing)
+            .where(Listing.last_seen_at >= cutoff)
+        ))).scalar_one()
+        added_today = (await session.execute(_counted(
+            select(func.count()).select_from(Listing)
+            .where(Listing.first_seen_at >= datetime.now(timezone.utc) - timedelta(days=1))
+        ))).scalar_one()
 
     seen_ids: set[int] = set()
     buckets: dict[tuple[str, int | None], list[Listing]] = {}
@@ -168,7 +194,8 @@ async def pool_feed(
     page = ordered[offset:offset + limit]
     return PoolFeedResponse(
         listings=[_to_pool_response(row) for row in page],
-        total_in_window=len(ordered),
+        total_in_window=total_live,
+        added_today=added_today,
     )
 
 
@@ -178,6 +205,7 @@ async def pool_search(
     request: Request,
     q: str = Query(..., min_length=1),
     limit: int = Query(40, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     marketplace: str | None = Query(None),
     max_price: float | None = Query(None, gt=0),
     condition: str | None = Query(None),
@@ -191,17 +219,16 @@ async def pool_search(
 
     async with get_async_session() as session:
         base = select(Listing).where(Listing.last_seen_at >= cutoff)
-        if marketplace:
-            base = base.where(Listing.marketplace == marketplace)
+        base = _csv_filter(base, Listing.marketplace, marketplace)
         if max_price is not None:
             base = base.where(Listing.price <= max_price)
-        if condition:
-            base = base.where(Listing.condition == condition)
+        base = _csv_filter(base, Listing.condition, condition)
 
         if embedding:
             stmt = (
                 base.where(Listing.embedding.is_not(None))
                 .order_by(Listing.embedding.cosine_distance(embedding))
+                .offset(offset)
                 .limit(limit)
             )
             listings = list((await session.execute(stmt)).scalars().all())
@@ -215,6 +242,7 @@ async def pool_search(
         stmt = (
             base.where(Listing.title.ilike(f"%{q}%"))
             .order_by(Listing.last_seen_at.desc())
+            .offset(offset)
             .limit(limit)
         )
         listings = list((await session.execute(stmt)).scalars().all())

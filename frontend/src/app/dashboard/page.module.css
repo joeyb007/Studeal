@@ -29,7 +29,7 @@
 .upgradedDismiss:hover { opacity: 1; }
 
 .main {
-  max-width: 680px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 0 24px 80px;
   position: relative;
@@ -207,7 +207,7 @@
 .searchWrap {
   position: relative;
   width: 100%;
-  max-width: 600px;
+  max-width: none;
   transition: transform 0.2s ease, filter 0.2s ease;
 }
 
@@ -653,3 +653,283 @@
   text-transform: uppercase;
   color: var(--accent);
 }
+
+/* Today's drops: the feed made visible, funneling into the catalog. */
+
+.dropsSection {
+  margin-top: 40px;
+  text-align: left;
+}
+
+.dropsHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dropsLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  opacity: 0.8;
+}
+
+.catalogCta {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.catalogCta:hover { opacity: 1; }
+
+.dropsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+/* Unified Daily Drops: hero + filters + full pool grid */
+
+.heroUnified {
+  /* width:100%: .main is an align-items:center flex column, and without an
+     explicit width this block shrink-wraps to its longest TEXT line — which
+     silently caps the search bar at sentence width. */
+  width: 100%;
+  text-align: center;
+  padding: 44px 0 22px;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.filterBar {
+  /* Centered cluster inside the hero band: the controls belong to the
+     search bar above, not to the page edges. */
+  width: 100%;
+  max-width: 880px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px auto 26px;
+}
+
+.pillRow,
+.filterRight {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filterPill {
+  padding: 6px 13px;
+  border-radius: 16px;
+  border: 1px solid rgba(168, 188, 232, 0.14);
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.filterPill:hover { border-color: rgba(168, 188, 232, 0.3); color: var(--text-primary); }
+
+.filterPillActive {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: rgba(168, 188, 232, 0.08);
+}
+
+.priceInput {
+  width: 96px;
+  padding: 8px 10px 8px 26px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 188, 232, 0.14);
+  background: var(--bg-card);
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+}
+
+.priceInput:focus { border-color: var(--accent); }
+
+.poolGrid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+
+.loadMore {
+  display: block;
+  margin: 26px auto 0;
+  padding: 10px 26px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 188, 232, 0.16);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.loadMore:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.loadMore:disabled { opacity: 0.5; cursor: wait; }
+
+.poolEmpty {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.poolEmptyTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+
+.poolEmptySub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* Compact selector row replacing the pill walls */
+
+.selectWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 8px 30px 8px 13px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 188, 232, 0.15);
+  background: var(--bg-card);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.select:hover, .select:focus { border-color: var(--accent); }
+
+.selectChevron {
+  position: absolute;
+  right: 11px;
+  pointer-events: none;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  font-size: 10px;
+}
+
+.priceWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pricePrefix {
+  position: absolute;
+  left: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.filterCount {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.suggestions {
+  max-height: 140px;
+  transition: max-height 0.3s ease, opacity 0.25s ease, margin 0.3s ease;
+  overflow: hidden;
+}
+
+.suggestionsHidden {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+
+.statNum {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: inline-block;
+  min-width: 3ch;
+  text-align: right;
+}
+
+/* Price stepper: native spinners hidden, ours match the theme. */
+
+.priceInput::-webkit-outer-spin-button,
+.priceInput::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.priceInput {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.priceWrap .priceInput { padding-right: 30px; }
+
+.stepper {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stepBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 13px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
+}
+
+.stepBtn:hover {
+  opacity: 1;
+  color: var(--accent);
+  background: rgba(168, 188, 232, 0.08);
+}
+
+.stepBtn:active { transform: scale(0.9); }

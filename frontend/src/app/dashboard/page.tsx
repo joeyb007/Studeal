@@ -296,29 +296,6 @@ function DashboardPageInner() {
             value={maxPrice}
             onChange={e => setMaxPrice(e.target.value)}
           />
-          <div className={styles.stepper}>
-            <button
-              type="button"
-              className={styles.stepBtn}
-              aria-label="Increase max price"
-              onClick={() => setMaxPrice(prev => String((parseFloat(prev) || 0) + 25))}
-            >
-              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="m18 15-6-6-6 6"/></svg>
-            </button>
-            <button
-              type="button"
-              className={styles.stepBtn}
-              aria-label="Decrease max price"
-              onClick={() =>
-                setMaxPrice(prev => {
-                  const next = (parseFloat(prev) || 0) - 25;
-                  return next > 0 ? String(next) : "";
-                })
-              }
-            >
-              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-          </div>
         </div>
         <span className={styles.filterCount}>
           {searchLoading

@@ -73,10 +73,17 @@ input {
 }
 
 button:focus-visible,
-a:focus-visible,
-input:focus-visible {
+a:focus-visible {
   outline: 2px solid var(--link);
   outline-offset: 2px;
+}
+
+/* Text fields signal focus with their accent border (component-level
+   :focus styles); Chrome treats typed inputs as always focus-visible,
+   so the ring would show on every mouse click. */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

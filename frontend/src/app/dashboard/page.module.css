@@ -885,7 +885,7 @@
   text-align: right;
 }
 
-/* Price stepper: native spinners hidden, ours match the theme. */
+/* Type-only price field: native number spinners hidden. */
 
 .priceInput::-webkit-outer-spin-button,
 .priceInput::-webkit-inner-spin-button {
@@ -897,39 +897,3 @@
   -moz-appearance: textfield;
   appearance: textfield;
 }
-
-.priceWrap .priceInput { padding-right: 30px; }
-
-.stepper {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.stepBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 13px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  opacity: 0.55;
-  cursor: pointer;
-  padding: 0;
-  transition: opacity 0.1s, background 0.1s, color 0.1s;
-}
-
-.stepBtn:hover {
-  opacity: 1;
-  color: var(--accent);
-  background: rgba(168, 188, 232, 0.08);
-}
-
-.stepBtn:active { transform: scale(0.9); }

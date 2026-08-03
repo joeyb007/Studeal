@@ -54,6 +54,16 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+.menuOut {
+  animation: menuOut 0.12s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes menuOut {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-4px); }
+}
+
 .option {
   text-align: left;
   padding: 8px 11px;

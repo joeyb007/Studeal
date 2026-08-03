@@ -11,6 +11,51 @@ export interface SelectOption {
   label: string;
 }
 
+// Shared menu state: `closing` keeps the menu mounted through its exit
+// animation instead of unmounting on the same frame it closes.
+function useMenu() {
+  const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const close = () => {
+    setOpen(false);
+    setClosing(true);
+  };
+  const toggle = () => {
+    if (open) {
+      close();
+    } else {
+      setClosing(false);
+      setOpen(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        close();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const onMenuAnimationEnd = () => {
+    if (closing) setClosing(false);
+  };
+
+  return { open, closing, rootRef, close, toggle, onMenuAnimationEnd };
+}
+
 export default function Select({
   value,
   onChange,
@@ -22,26 +67,7 @@ export default function Select({
   options: SelectOption[];
   allLabel: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const { open, closing, rootRef, close, toggle, onMenuAnimationEnd } = useMenu();
 
   const current = options.find(o => o.value === value)?.label ?? allLabel;
 
@@ -50,21 +76,25 @@ export default function Select({
       <button
         type="button"
         className={[styles.trigger, open ? styles.triggerOpen : ""].join(" ")}
-        onClick={() => setOpen(v => !v)}
+        onClick={toggle}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <span className={styles.triggerLabel}>{current}</span>
         <svg className={styles.chevron} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
       </button>
-      {open && (
-        <div className={styles.menu} role="listbox">
+      {(open || closing) && (
+        <div
+          className={[styles.menu, closing ? styles.menuOut : ""].join(" ")}
+          role="listbox"
+          onAnimationEnd={onMenuAnimationEnd}
+        >
           <button
             type="button"
             role="option"
             aria-selected={value === null}
             className={[styles.option, value === null ? styles.optionActive : ""].join(" ")}
-            onClick={() => { onChange(null); setOpen(false); }}
+            onClick={() => { onChange(null); close(); }}
           >
             {allLabel}
           </button>
@@ -75,7 +105,7 @@ export default function Select({
               role="option"
               aria-selected={value === option.value}
               className={[styles.option, value === option.value ? styles.optionActive : ""].join(" ")}
-              onClick={() => { onChange(option.value); setOpen(false); }}
+              onClick={() => { onChange(option.value); close(); }}
             >
               {option.label}
             </button>
@@ -97,26 +127,7 @@ export function MultiSelect({
   options: SelectOption[];
   allLabel: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const { open, closing, rootRef, close, toggle: toggleMenu, onMenuAnimationEnd } = useMenu();
 
   const label =
     values.length === 0
@@ -125,7 +136,7 @@ export function MultiSelect({
         ? options.find(o => o.value === values[0])?.label ?? values[0]
         : `${options.find(o => o.value === values[0])?.label ?? values[0]} +${values.length - 1}`;
 
-  const toggle = (value: string) =>
+  const toggleValue = (value: string) =>
     onChange(
       values.includes(value) ? values.filter(v => v !== value) : [...values, value],
     );
@@ -135,21 +146,26 @@ export function MultiSelect({
       <button
         type="button"
         className={[styles.trigger, open ? styles.triggerOpen : ""].join(" ")}
-        onClick={() => setOpen(v => !v)}
+        onClick={toggleMenu}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <span className={styles.triggerLabel}>{label}</span>
         <svg className={styles.chevron} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
       </button>
-      {open && (
-        <div className={styles.menu} role="listbox" aria-multiselectable>
+      {(open || closing) && (
+        <div
+          className={[styles.menu, closing ? styles.menuOut : ""].join(" ")}
+          role="listbox"
+          aria-multiselectable
+          onAnimationEnd={onMenuAnimationEnd}
+        >
           <button
             type="button"
             role="option"
             aria-selected={values.length === 0}
             className={[styles.option, values.length === 0 ? styles.optionActive : ""].join(" ")}
-            onClick={() => { onChange([]); setOpen(false); }}
+            onClick={() => { onChange([]); close(); }}
           >
             {allLabel}
           </button>
@@ -162,7 +178,7 @@ export function MultiSelect({
                 role="option"
                 aria-selected={active}
                 className={[styles.option, styles.optionCheck, active ? styles.optionActive : ""].join(" ")}
-                onClick={() => toggle(option.value)}
+                onClick={() => toggleValue(option.value)}
               >
                 <span className={[styles.checkbox, active ? styles.checkboxOn : ""].join(" ")}>
                   {active && (

@@ -63,6 +63,7 @@ interface WatchlistContext {
 }
 
 interface AgentBuilderProps {
+  closing?: boolean;
   context: WatchlistContext | null;
   messages: ChatMessage[];
   suggestions: string[];
@@ -98,6 +99,7 @@ function notesFrom(context: WatchlistContext | null): string[] {
 }
 
 export default function AgentBuilder({
+  closing = false,
   context,
   messages,
   suggestions,
@@ -151,7 +153,7 @@ export default function AgentBuilder({
   }, [isComplete]);
 
   return (
-    <div className={styles.card}>
+    <div className={[styles.card, closing ? styles.cardClosing : ""].join(" ")}>
       <div className={styles.cardHeader}>
         <span className={styles.cardLabel}>scout</span>
         <span className={styles.liveDot} />

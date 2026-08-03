@@ -363,3 +363,12 @@
   .thread { max-height: 300px; }
   .userBubble { max-width: 88%; }
 }
+
+.cardClosing {
+  animation: cardExit 0.24s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes cardExit {
+  to { opacity: 0; transform: translateY(10px) scale(0.99); }
+}

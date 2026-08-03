@@ -27,7 +27,7 @@ def _build_digest(user_email: str, matches: list[tuple[str, Listing]]) -> str:
     for watchlist_name, listing in matches:
         lines.append(
             f"• [{watchlist_name}] {listing.title}\n"
-            f"  ${listing.price:.2f} {listing.currency} — {listing.marketplace}\n"
+            f"  ${listing.price:.2f} {listing.currency} · {listing.marketplace}\n"
             f"  {listing.raw_url}\n"
         )
     lines.append("\nManage your agents at studeal.site")
@@ -96,7 +96,7 @@ async def _send_digests() -> dict:
             body = _build_digest(user.email, matches)
             await send_email(
                 to=user.email,
-                subject=f"Your Studeal digest — {len(matches)} deal{'s' if len(matches) != 1 else ''}",
+                subject=f"Your Studeal digest: {len(matches)} deal{'s' if len(matches) != 1 else ''}",
                 body=body,
             )
             sent += 1

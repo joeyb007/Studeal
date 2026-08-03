@@ -48,7 +48,7 @@ const FETCH_PAGES = [
 ];
 
 const EXTRACT_ITEMS = [
-  { title: "Aeron Size B — fully loaded", price: "$420", good: true, confidence: 94 },
+  { title: "Aeron Size B, fully loaded", price: "$420", good: true, confidence: 94 },
   { title: "Aeron, posturefit, mint", price: "$495", good: true, confidence: 88 },
   { title: "Office chair (unbranded)", price: "$85", good: false, confidence: 12 },
   { title: "Aeron, needs casters", price: "$340", good: true, confidence: 71 },

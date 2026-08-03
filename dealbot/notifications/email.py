@@ -56,7 +56,7 @@ def build_alert_email(
     lines = [f"Your agent found {n} new listing{'s' if n != 1 else ''}:\n"]
     for alert, listing in alerts:
         entry = (
-            f"• {listing.title} — ${listing.price:.2f} {listing.currency}"
+            f"• {listing.title} · ${listing.price:.2f} {listing.currency}"
             f" ({listing.marketplace})"
         )
         # The ranker's one-liner is the most persuasive part of the alert.

@@ -62,7 +62,7 @@ export default function MissionControlPage() {
                 {running.length} agent{running.length === 1 ? "" : "s"} hunting
               </>
             ) : (
-              "fleet idle — agents sweep on schedule"
+              "fleet idle. agents sweep on schedule"
             )}
           </span>
         </header>

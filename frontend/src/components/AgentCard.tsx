@@ -36,7 +36,7 @@ function prettyAction(raw: string | null): string | null {
     const parsed = JSON.parse(trimmed);
     const verb = parsed.action ?? "working";
     const detail = parsed.reason ?? parsed.text ?? parsed.url ?? parsed.id ?? null;
-    return detail ? `${verb} — ${String(detail)}` : String(verb);
+    return detail ? `${verb}: ${String(detail)}` : String(verb);
   } catch {
     return raw;
   }
@@ -243,7 +243,7 @@ export default function AgentCard({
         <span className={done ? styles.statusDone : styles.statusHunting}>
           {done
             ? derived.finished!.status === "cached"
-              ? `Checked the fleet's latest findings — ${derived.fresh ?? 0} new match${derived.fresh === 1 ? "" : "es"}, no browse needed`
+              ? `Checked the fleet's latest findings: ${derived.fresh ?? 0} new match${derived.fresh === 1 ? "" : "es"}, no browse needed`
               : `Done · ${Math.round(derived.finished!.duration)}s`
             : connected
               ? "Hunting"
@@ -264,7 +264,7 @@ export default function AgentCard({
             <span className={styles.runCompleteStats}>
               {derived.lanes.filter(l => l.done).length || "—"} lanes ·{" "}
               {hunt.persisted_count} listings · {hunt.new_listing_count} new
-              {countdown ? ` — next hunt in ${countdown}` : ""}
+              {countdown ? ` · next hunt in ${countdown}` : ""}
             </span>
           </div>
         </div>
@@ -344,7 +344,7 @@ export default function AgentCard({
                 {event.type === "explorer.turn" && prettyAction(event.action)}
                 {event.type === "extraction.submitted" && "page handed to extractor"}
                 {event.type === "explorer.error" && event.error}
-                {event.type === "alert.created" && `${event.title} — $${event.price}`}
+                {event.type === "alert.created" && `${event.title} · $${event.price}`}
                 {event.type === "hunt.persisted" && `${event.persisted_count} listings saved, ${event.new_for_watchlist} new`}
               </span>
             </li>

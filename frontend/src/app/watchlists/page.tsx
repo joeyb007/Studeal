@@ -387,7 +387,7 @@ function WatchlistCard({
             Marketplace listings
             {listingsMeta && (
               <>
-                {" — "}
+                {" · "}
                 {listingsMeta.total} candidate{listingsMeta.total !== 1 ? "s" : ""}
                 {listingsMeta.reranked ? " (reranked)" : " (unranked)"}
               </>
@@ -398,7 +398,7 @@ function WatchlistCard({
           )}
           {!loadingListings && listings !== null && listings.length === 0 && (
             <div className={styles.dealsEmpty}>
-              <p>Nothing ranked yet — Scout's first pass lands after its next hunt.</p>
+              <p>Nothing ranked yet. Scout's first pass lands after its next hunt.</p>
             </div>
           )}
           {!loadingListings && listings && listings.length > 0 && (() => {
@@ -478,10 +478,20 @@ function WatchlistsPageInner() {
   const [upgrading, setUpgrading] = useState(false);
   const [modal, setModal] = useState<{ type: "cancelled" | "error" | "abort"; message: string; title?: string } | null>(null);
   const [justCreatedId, setJustCreatedId] = useState<number | null>(null);
+  const [chatClosing, setChatClosing] = useState(false);
+
+  function closeChat() {
+    // Slide away, then unmount. Duration matches .cardClosing in the module.
+    setChatClosing(true);
+    setTimeout(() => {
+      setShowChat(false);
+      setChatClosing(false);
+    }, 240);
+  }
 
   useEffect(() => {
     if (searchParams.get("checkout_cancelled") === "1") {
-      setModal({ type: "cancelled", message: "No worries — you can upgrade anytime." });
+      setModal({ type: "cancelled", message: "No worries. You can upgrade anytime." });
       router.replace("/watchlists", { scroll: false });
     }
   }, []);
@@ -509,7 +519,7 @@ function WatchlistsPageInner() {
   const OPENERS = [
     "What are you hunting for today?",
     "What can I find you?",
-    "Alright — what are we after?",
+    "Alright, what are we after?",
     "Tell me what you need. I'll find where it's cheap.",
     "What's on the list today?",
     "Give me something to hunt.",
@@ -599,7 +609,7 @@ function WatchlistsPageInner() {
     }
     setWatchlists(prev => [...prev, data]);
     setJustCreatedId(data.id);
-    toast(`${chatName.trim()} deployed — Scout hunts on its next cycle`, "success");
+    toast(`${chatName.trim()} deployed. Scout hunts on its next cycle`, "success");
     setShowChat(false);
     setChatMessages([]);
     setChatContext(null);
@@ -648,7 +658,7 @@ function WatchlistsPageInner() {
           <h1 className={styles.heading}>My Agents</h1>
           <button
             className={styles.addBtn}
-            onClick={() => (showChat ? setShowChat(false) : openChat())}
+            onClick={() => (showChat ? closeChat() : openChat())}
           >
             {showChat ? "Cancel" : "+ Deploy new agent"}
           </button>
@@ -658,13 +668,14 @@ function WatchlistsPageInner() {
           <div className={styles.upgradeBanner}>
             <p>You&apos;ve hit your agent limit. Upgrade to Pro to run up to 5 agents, get email digests, and more.</p>
             <button className={styles.upgradeBtn} onClick={handleUpgrade} disabled={upgrading}>
-              {upgrading ? "Redirecting..." : "Upgrade to Pro — $7.99/mo"}
+              {upgrading ? "Redirecting..." : "Upgrade to Pro · $7.99/mo"}
             </button>
           </div>
         )}
 
         {showChat && (
           <AgentBuilder
+            closing={chatClosing}
             context={chatContext}
             messages={chatMessages}
             suggestions={chatSuggestions}

@@ -96,11 +96,14 @@ async def persist_offers(offers: list[Offer], hunt_id: int | None = None) -> Per
                         "title": offer.title,
                         "price": offer.price,
                         "currency": offer.currency,
-                        "image_url": offer.image_url,
                         "location": offer.location,
                         "condition": offer.condition,
                         "embedding": embedding,
                         "last_seen_at": now,
+                        # A null image on re-sight means capture didn't run or
+                        # failed, not that the listing lost its photo — keep
+                        # what we have. Non-null refreshes rotting signed URLs.
+                        **({"image_url": offer.image_url} if offer.image_url else {}),
                     },
                 )
                 .returning(Listing.id, Listing.first_seen_at)

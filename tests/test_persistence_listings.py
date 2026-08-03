@@ -110,3 +110,26 @@ async def test_second_write_updates_price_and_last_seen(db_setup):
 async def test_empty_offers_returns_zero(db_setup):
     from dealbot.persistence.listings import persist_offers
     assert (await persist_offers([])).written == 0
+
+
+@pytest.mark.asyncio
+async def test_image_url_preserved_on_null_resight(db_setup):
+    """A null image on re-sight (capture failed / pattern-less lane) must not
+    erase a stored thumbnail; a fresh non-null image overwrites (rot refresh)."""
+    from dealbot.persistence.listings import persist_offers
+    url = "https://www.kijiji.ca/v-office/aeron/7"
+    factory = db_setup
+
+    await persist_offers([_offer(url, image_url="https://media.kijiji.ca/a.webp")])
+
+    # Re-sight WITHOUT an image.
+    await persist_offers([_offer(url, image_url=None)])
+    async with factory() as session:
+        row = (await session.execute(select(Listing))).scalar_one()
+    assert row.image_url == "https://media.kijiji.ca/a.webp"
+
+    # Re-sight WITH a fresh image: overwrites.
+    await persist_offers([_offer(url, image_url="https://media.kijiji.ca/b.webp")])
+    async with factory() as session:
+        row = (await session.execute(select(Listing))).scalar_one()
+    assert row.image_url == "https://media.kijiji.ca/b.webp"

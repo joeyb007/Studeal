@@ -132,7 +132,9 @@
   border-radius: 8px;
   box-shadow: var(--shadow-pop);
   padding: 12px 15px;
-  transform: translateY(150%);
+  /* Full height + bottom offset + shadow: fully offscreen at any content
+     height. A percentage of the empty toast's own height is not enough. */
+  transform: translateY(calc(100% + 48px));
   transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.25, 1);
 }
 

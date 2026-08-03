@@ -46,6 +46,7 @@ from typing import Any, Awaitable, Callable
 from playwright.async_api import Page
 from pydantic import BaseModel, ValidationError
 
+from dealbot.agents.image_capture import ImageCaptureSpec, capture_card_images, spec_for
 from dealbot.agents.perception import PageSnapshot, snapshot_page, truncate_snapshot_text
 from dealbot.agents.tools import try_cdp_native_click
 from dealbot.agents.tracing import NullTraceWriter, TraceWriter
@@ -66,7 +67,11 @@ _SETTLE_RETRIES = 2
 _SETTLE_DELAY_S = 1.5
 
 
-async def _settled_snapshot(page: Page) -> PageSnapshot:
+async def _settled_snapshot(
+    page: Page,
+    image_spec: ImageCaptureSpec | None = None,
+    marketplace: str = "",
+) -> PageSnapshot:
     """Snapshot, retrying briefly when the page looks like an unrendered
     JS shell (seen on eBay: 399-char snapshot of a page that renders to
     137k chars ~1s later). Site-agnostic: emptiness, not domain, triggers it."""
@@ -76,6 +81,9 @@ async def _settled_snapshot(page: Page) -> PageSnapshot:
             break
         await asyncio.sleep(_SETTLE_DELAY_S)
         snap = await snapshot_page(page)
+    if image_spec is not None:
+        # Best-effort thumbnail capture; failures never fail the snapshot.
+        snap.image_map = await capture_card_images(page, image_spec, marketplace)
     return snap
 
 
@@ -291,13 +299,14 @@ class Explorer:
             )
 
         entry_domain = _registrable_domain(entry_url)
+        image_spec = spec_for(marketplace)
 
         # Degenerate-entry fallback: if the entry page is a dead shell (soft
         # block / error page), re-enter through the site root and drive the
         # site's own search UI — the mode that survives session checks. If the
         # root is dead too, the site is walled: stop before any LLM spend.
         via_search_ui = False
-        entry_snap = await _settled_snapshot(session.page)
+        entry_snap = await _settled_snapshot(session.page, image_spec, marketplace)
         if (
             _is_degenerate(entry_snap)
             and root
@@ -320,7 +329,7 @@ class Explorer:
                 return ExplorerResult(
                     urls_visited=[], turns_used=0, stop_reason="error",
                 )
-            root_snap = await _settled_snapshot(session.page)
+            root_snap = await _settled_snapshot(session.page, image_spec, marketplace)
             if _is_degenerate(root_snap):
                 self.trace.record_error(
                     orchestrator_turn=0, worker="explorer",
@@ -352,7 +361,7 @@ class Explorer:
         failed_action_streak: int = 0  # consecutive click/type failures
 
         for turn in range(self.MAX_TURNS):
-            snap = await _settled_snapshot(session.page)
+            snap = await _settled_snapshot(session.page, image_spec, marketplace)
 
             # When URL changes since last turn, submit the previous URL's
             # snapshot to the sink (final observed state of that URL).

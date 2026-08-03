@@ -138,6 +138,7 @@ class PageSnapshot:
     detected_modals: list[int] = field(default_factory=list)  # backend_node_ids
     redactions: int = 0                    # count of prompt-injection redactions applied
     captcha_detected: bool = False         # CAPTCHA / bot-challenge text on page
+    image_map: dict[str, str] = field(default_factory=dict)  # canonical href → thumbnail URL
 
 
 # CAPTCHA / anti-bot challenge text patterns. Case-insensitive substring matches

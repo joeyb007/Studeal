@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import styles from "./PoolCard.module.css";
 
 // The pool listing card, shared by Daily Drops and the Catalog. One shape,
@@ -59,8 +60,30 @@ export default function PoolCard({
     listing.condition && listing.condition !== "unknown"
       ? CONDITION_LABELS[listing.condition] ?? listing.condition
       : null;
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImage = Boolean(listing.image_url) && !imgFailed;
   return (
     <div className={styles.card} style={{ animationDelay: `${Math.min(index, 12) * 50}ms` }}>
+      <div className={styles.media}>
+        {showImage ? (
+          <img
+            src={listing.image_url as string}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className={styles.mediaImg}
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <span className={styles.mediaPlaceholder} aria-hidden>
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <circle cx="9" cy="10" r="1.6" />
+              <path d="m5.5 19 5.5-5.5 3 3 2.5-2.5 2 2" />
+            </svg>
+          </span>
+        )}
+      </div>
       <div className={styles.cardBody}>
         <div className={styles.cardTop}>
           <span className={styles.source}>

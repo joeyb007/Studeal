@@ -122,3 +122,28 @@
 }
 
 .buyBtn:hover { opacity: 1; }
+
+/* Thumbnail slot: fixed aspect so image, placeholder, and error states
+   all occupy identical space and the grid never shifts. */
+
+.media {
+  aspect-ratio: 4 / 3;
+  background: linear-gradient(150deg, rgba(168, 188, 232, 0.05), rgba(168, 188, 232, 0.02));
+  border-bottom: 1px solid rgba(168, 188, 232, 0.06);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mediaImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mediaPlaceholder {
+  color: var(--text-secondary);
+  opacity: 0.35;
+}

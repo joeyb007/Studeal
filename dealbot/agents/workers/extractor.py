@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 
 from dealbot.agents.image_capture import attach_images
 from dealbot.agents.perception import PageSnapshot, chunk_snapshot_text
+from dealbot.persistence.canonicalize import canonicalize_url
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import WatchlistContext
 
@@ -124,6 +125,7 @@ class Extractor:
                 "extractor: %d chunks over %d chars → %d unique offers",
                 len(chunks), len(snap.text), len(offers),
             )
+        offers = _ground_offers(offers, snap, marketplace)
         # Thumbnails come ONLY from the deterministic capture map; any
         # image_url the LLM emitted is overwritten (join miss → None).
         attach_images(offers, snap.image_map, marketplace)
@@ -156,14 +158,63 @@ class Extractor:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_HREF_CLIP_RE = re.compile(r'href="([^"]{120})[^"]*"')
+_HREF_CLIP_RE = re.compile(r'href="([^"]{200})[^"]*"')
 
 
 def _clip_hrefs(text: str) -> str:
     """Marketplace tracking URLs run to ~800 chars of base64 noise each; at
     SERP density they swamp the extraction prompt (observed: gpt-4o-mini
-    returning zero offers on a page it enumerates fine once clipped)."""
+    returning zero offers on a page it enumerates fine once clipped).
+
+    Threshold sits above real listing paths (~150 chars on kijiji): clipping
+    them mid-slug made the LLM invent URL completions with fabricated ad IDs
+    (observed 2026-08-03), which are dead links and unjoinable to images."""
     return _HREF_CLIP_RE.sub(lambda m: f'href="{m.group(1)}…"', text)
+
+
+def _ground_offers(
+    offers: list[Offer],
+    snap: PageSnapshot,
+    marketplace: str,
+) -> list[Offer]:
+    """Drop offers whose URL matches no anchor actually present in the
+    snapshot. An LLM completing a clipped href invents plausible listing
+    URLs; a listing that can't be grounded to the page is a dead link and
+    worthless downstream, so refusing it beats persisting it.
+
+    Skipped when the snapshot exposes no hrefs at all (unit fixtures,
+    degenerate pages): no evidence either way is not grounds to drop
+    everything.
+    """
+    grounded: set[str] = set(snap.image_map)  # keys already canonical
+    for ref in snap.element_map.values():
+        href = ref.attributes.get("href")
+        if href:
+            try:
+                grounded.add(canonicalize_url(urljoin(snap.url, href), marketplace))
+            except Exception:
+                continue
+    if not grounded:
+        return offers
+
+    kept: list[Offer] = []
+    dropped = 0
+    for offer in offers:
+        try:
+            key = canonicalize_url(offer.url, marketplace)
+        except Exception:
+            dropped += 1
+            continue
+        if key in grounded:
+            kept.append(offer)
+        else:
+            dropped += 1
+    if dropped:
+        logger.info(
+            "extractor: dropped %d/%d ungrounded offers on %s (fabricated URLs)",
+            dropped, len(offers), marketplace,
+        )
+    return kept
 
 
 _PRICE_NUM_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)")

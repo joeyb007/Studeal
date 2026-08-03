@@ -352,3 +352,50 @@ async def test_extract_drops_llm_image_url_on_join_miss():
 
     assert len(offers) == 1
     assert offers[0].image_url is None
+
+
+def test_clip_hrefs_keeps_realistic_listing_urls_intact():
+    """Kijiji listing paths run to ~150 chars; clipping them mid-slug made the
+    LLM invent URL completions (fabricated ad IDs observed 2026-08-03)."""
+    url = "https://www.kijiji.ca/v-chair-recliner/city-of-toronto/" + "a" * 80 + "/1739463548"
+    text = f'[1]<a href="{url}" /> "A"'
+    assert _clip_hrefs(text) == text
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_offer_urls_dropped():
+    """An offer whose URL matches no anchor in the snapshot is fabricated —
+    drop it. Grounded offers survive, including relative-href anchors."""
+    from dealbot.agents.perception import ElementRef
+
+    llm = _MockLLM([_offers_json([
+        {"title": "Real chair", "price": 100.0, "currency": "CAD",
+         "url": "https://www.kijiji.ca/v-chair/toronto/real-chair/1739000001"},
+        {"title": "Invented chair", "price": 120.0, "currency": "CAD",
+         "url": "https://www.kijiji.ca/v-chair/toronto/invented/1700000001"},
+    ])])
+    snap = _snap(url="https://www.kijiji.ca/b-buy-sell/office-chair/k0c10")
+    snap.element_map = {
+        1: ElementRef(
+            backend_node_id=1, role="link", name="Real chair", tag_name="a",
+            value=None, bbox=(0, 0, 100, 20), is_interactive=True,
+            attributes={"href": "/v-chair/toronto/real-chair/1739000001?ref=srp"},
+        ),
+    }
+    extractor = Extractor(llm=llm)
+    offers = await extractor.extract_from_snapshot(snap, "kijiji", _spec())
+
+    assert [o.title for o in offers] == ["Real chair"]
+
+
+@pytest.mark.asyncio
+async def test_grounding_skipped_when_snapshot_has_no_hrefs():
+    """No anchors in the snapshot (fixtures, degenerate pages) is not evidence
+    of fabrication — offers pass through."""
+    llm = _MockLLM([_offers_json([
+        {"title": "Aeron", "price": 450.0, "currency": "CAD",
+         "url": "https://kijiji.ca/l/aeron-1"},
+    ])])
+    extractor = Extractor(llm=llm)
+    offers = await extractor.extract_from_snapshot(_snap(), "kijiji", _spec())
+    assert len(offers) == 1

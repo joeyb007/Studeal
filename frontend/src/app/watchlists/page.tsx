@@ -713,7 +713,7 @@ function WatchlistsPageInner() {
             <div className={styles.skeletonCard} />
             <div className={styles.skeletonCard} style={{ animationDelay: "0.12s" }} />
           </div>
-        ) : watchlists.length === 0 ? (
+        ) : watchlists.length === 0 && !showChat ? (
           <div className={[styles.emptyHero, heroClosing ? styles.emptyHeroClosing : ""].join(" ")}>
             <span className={styles.emptyGlyph}>
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">

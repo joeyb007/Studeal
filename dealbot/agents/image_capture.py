@@ -36,8 +36,11 @@ logger = logging.getLogger(__name__)
 # src attribute is still allowed (below-fold cards report naturalWidth 0).
 _MIN_LOADED_WIDTH = 64
 
-# Cards per page worth capturing; matches extractor-scale gallery pages.
-_MAX_CARDS = 60
+# Runaway guard only. Must exceed anything extraction can see: FB infinite
+# scroll holds 100+ cards in one snapshot, and extraction reads them all —
+# a cap below that silently strips images from the overflow (measured
+# 2026-08-03: FB coverage 47.5% with a cap of 60).
+_MAX_CARDS = 300
 
 
 @dataclass(frozen=True)

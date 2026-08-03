@@ -76,9 +76,18 @@ export default function MissionControlPage() {
         )}
 
         {hunts === null ? null : running.length === 0 ? (
-          <div className={styles.empty}>
-            No hunts in flight. Your agents run on schedule — when one wakes up,
-            you&apos;ll see it working here.
+          <div className={styles.emptyHero}>
+            <span className={styles.emptyGlyph}>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M12 3 L14 12 L12 21 L10 12 Z" />
+                <path d="M3 12 L12 10 L21 12 L12 14 Z" />
+              </svg>
+            </span>
+            <span className={styles.emptyTitle}>Fleet resting</span>
+            <span className={styles.emptySub}>
+              Your agents hunt on schedule. When one wakes up, this page becomes
+              its live viewport — every site, every page, as it happens.
+            </span>
           </div>
         ) : (
           <div className={styles.cards}>

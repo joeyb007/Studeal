@@ -977,3 +977,80 @@
 }
 
 .showAllBtn:hover { color: var(--text-primary); border-color: var(--accent); }
+
+/* Empty-state hero + loading skeleton */
+
+.emptyHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 64px 24px;
+  animation: fadeIn 0.4s ease both;
+}
+
+.emptyGlyph {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(168, 188, 232, 0.25);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.emptyTitle {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.emptySub {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 380px;
+}
+
+.emptyCta {
+  margin-top: 10px;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.emptyCta:hover { opacity: 0.92; }
+.emptyCta:active { transform: scale(0.97); }
+
+.skeletonCard {
+  height: 92px;
+  border-radius: 16px;
+  border: 1px solid rgba(168, 188, 232, 0.07);
+  background: linear-gradient(
+    100deg,
+    rgba(168, 188, 232, 0.04) 40%,
+    rgba(168, 188, 232, 0.09) 50%,
+    rgba(168, 188, 232, 0.04) 60%
+  );
+  background-size: 200% 100%;
+  animation: skeletonSweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeletonSweep {
+  0% { background-position: 120% 0; }
+  100% { background-position: -80% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonCard { animation: none; }
+}

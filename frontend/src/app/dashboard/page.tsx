@@ -268,7 +268,7 @@ function DashboardPageInner() {
 
         {upgraded && (
           <div className={styles.upgradedBanner}>
-            <span>You&apos;re now a Pro member — enjoy unlimited agents and email digests.</span>
+            <span>You&apos;re now a Pro member. Enjoy unlimited agents and email digests.</span>
             <button onClick={() => setUpgraded(false)} className={styles.upgradedDismiss}>✕</button>
           </div>
         )}

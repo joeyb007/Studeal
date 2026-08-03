@@ -19,7 +19,7 @@ export default function PrivacyPage() {
 
         <section className={styles.section}>
           <h2>What we collect</h2>
-          <p>When you create an account we collect your email address and, if you sign in with Google, your Google account name and profile picture. We do not collect payment card details — payments are handled by Stripe.</p>
+          <p>When you create an account we collect your email address and, if you sign in with Google, your Google account name and profile picture. We do not collect payment card details. Payments are handled by Stripe.</p>
         </section>
 
         <section className={styles.section}>

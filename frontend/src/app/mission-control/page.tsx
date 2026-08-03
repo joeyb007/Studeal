@@ -86,7 +86,7 @@ export default function MissionControlPage() {
             <span className={styles.emptyTitle}>Fleet resting</span>
             <span className={styles.emptySub}>
               Your agents hunt on schedule. When one wakes up, this page becomes
-              its live viewport — every site, every page, as it happens.
+              its live viewport: every site, every page, as it happens.
             </span>
           </div>
         ) : (

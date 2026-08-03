@@ -84,7 +84,7 @@ function ListingRow({ listing, alert }: { listing: Listing; alert?: AlertIndex[n
             {listing.marketplace}
             {listing.location ? ` · ${listing.location}` : ""}
             {listing.condition && listing.condition !== "unknown" ? ` · ${listing.condition}` : ""}
-            {alert?.reason ? <span className={styles.reasonInline}> — {alert.reason}</span> : null}
+            {alert?.reason ? <span className={styles.reasonInline}> · {alert.reason}</span> : null}
           </span>
         </div>
       </div>
@@ -308,7 +308,7 @@ function WatchlistCard({
             <p className={styles.notesText}>
               {ctx.buyer_profile || (
                 <span className={styles.notesEmpty}>
-                  No notes yet — tell Scout who this is for and it hunts smarter.
+                  No notes yet. Tell Scout who this is for and it hunts smarter.
                 </span>
               )}
             </p>
@@ -479,6 +479,22 @@ function WatchlistsPageInner() {
   const [modal, setModal] = useState<{ type: "cancelled" | "error" | "abort"; message: string; title?: string } | null>(null);
   const [justCreatedId, setJustCreatedId] = useState<number | null>(null);
   const [chatClosing, setChatClosing] = useState(false);
+
+  const [heroClosing, setHeroClosing] = useState(false);
+
+  function openChatAnimated() {
+    // With no agents, the empty hero slides away first, then the builder
+    // slides in. Its mount animation covers the return trip on close.
+    if (!loading && watchlists.length === 0) {
+      setHeroClosing(true);
+      setTimeout(() => {
+        setHeroClosing(false);
+        openChat();
+      }, 200);
+    } else {
+      openChat();
+    }
+  }
 
   function closeChat() {
     // Slide away, then unmount. Duration matches .cardClosing in the module.
@@ -658,7 +674,7 @@ function WatchlistsPageInner() {
           <h1 className={styles.heading}>My Agents</h1>
           <button
             className={styles.addBtn}
-            onClick={() => (showChat ? closeChat() : openChat())}
+            onClick={() => (showChat ? closeChat() : openChatAnimated())}
           >
             {showChat ? "Cancel" : "+ Deploy new agent"}
           </button>
@@ -698,7 +714,7 @@ function WatchlistsPageInner() {
             <div className={styles.skeletonCard} style={{ animationDelay: "0.12s" }} />
           </div>
         ) : watchlists.length === 0 ? (
-          <div className={styles.emptyHero}>
+          <div className={[styles.emptyHero, heroClosing ? styles.emptyHeroClosing : ""].join(" ")}>
             <span className={styles.emptyGlyph}>
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
                 <path d="M12 3 L14 12 L12 21 L10 12 Z" />
@@ -707,10 +723,10 @@ function WatchlistsPageInner() {
             </span>
             <span className={styles.emptyTitle}>No agents yet</span>
             <span className={styles.emptySub}>
-              Tell Scout what you&apos;re hunting — it searches ten marketplaces
+              Tell Scout what you&apos;re hunting. It searches ten marketplaces
               around the clock and flags anything worth your money.
             </span>
-            <button className={styles.emptyCta} onClick={openChat}>
+            <button className={styles.emptyCta} onClick={openChatAnimated}>
               Deploy your first agent →
             </button>
           </div>

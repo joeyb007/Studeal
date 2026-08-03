@@ -1054,3 +1054,12 @@
 @media (prefers-reduced-motion: reduce) {
   .skeletonCard { animation: none; }
 }
+
+.emptyHeroClosing {
+  animation: heroExit 0.2s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes heroExit {
+  to { opacity: 0; transform: translateY(-10px); }
+}

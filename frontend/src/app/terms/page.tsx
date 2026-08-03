@@ -24,7 +24,7 @@ export default function TermsPage() {
 
         <section className={styles.section}>
           <h2>The service</h2>
-          <p>Studeal is a deal discovery platform. We surface deals from third-party sources and do not sell products directly. Prices and availability are determined by the retailer — we do not guarantee accuracy.</p>
+          <p>Studeal is a deal discovery platform. We surface deals from third-party sources and do not sell products directly. Prices and availability are determined by the retailer. We do not guarantee accuracy.</p>
         </section>
 
         <section className={styles.section}>

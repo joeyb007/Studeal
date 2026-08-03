@@ -124,7 +124,7 @@ export default function Home() {
           </h1>
           <p className={[styles.subline, styles.enterDone].join(" ")}
             style={{ animationDelay: "240ms" }}>
-            Describe what you want. Your agents hunt Kijiji, eBay and Craigslist around the clock — and ping you the moment a great one appears.
+            Describe what you want. Your agents hunt Kijiji, eBay and Craigslist around the clock, and ping you the moment a great one appears.
           </p>
 
           <form onSubmit={handleSearch}

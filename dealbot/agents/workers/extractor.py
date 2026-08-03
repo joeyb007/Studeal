@@ -27,6 +27,7 @@ from urllib.parse import urljoin
 
 from pydantic import BaseModel, ValidationError
 
+from dealbot.agents.image_capture import attach_images
 from dealbot.agents.perception import PageSnapshot, chunk_snapshot_text
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import WatchlistContext
@@ -123,6 +124,9 @@ class Extractor:
                 "extractor: %d chunks over %d chars → %d unique offers",
                 len(chunks), len(snap.text), len(offers),
             )
+        # Thumbnails come ONLY from the deterministic capture map; any
+        # image_url the LLM emitted is overwritten (join miss → None).
+        attach_images(offers, snap.image_map, marketplace)
         return offers
 
     async def _extract_chunk(

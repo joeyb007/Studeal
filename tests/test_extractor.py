@@ -315,3 +315,40 @@ async def test_small_snapshot_still_single_call():
         snap, "mock", WatchlistContext(product_query="aeron"),
     )
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_joins_snapshot_image_map():
+    """Captured thumbnail wins over the LLM-emitted image_url; join is by
+    canonical URL (tracking params stripped)."""
+    llm = _MockLLM([_offers_json([
+        {"title": "Aeron chair", "price": 500.0, "currency": "CAD",
+         "url": "https://www.ebay.ca/itm/123?hash=x",
+         "image_url": "https://hallucinated.example/x.jpg"},
+    ])])
+    snap = _snap(url="https://www.ebay.ca/sch/i.html?_nkw=aeron")
+    snap.image_map = {
+        "https://www.ebay.ca/itm/123": "https://i.ebayimg.com/images/g/a/s-l500.webp",
+    }
+    extractor = Extractor(llm=llm)
+    offers = await extractor.extract_from_snapshot(snap, "ebay", _spec())
+
+    assert len(offers) == 1
+    assert offers[0].image_url == "https://i.ebayimg.com/images/g/a/s-l500.webp"
+
+
+@pytest.mark.asyncio
+async def test_extract_drops_llm_image_url_on_join_miss():
+    """Empty image_map: the hallucinated LLM value is cleared, not kept."""
+    llm = _MockLLM([_offers_json([
+        {"title": "Aeron chair", "price": 500.0, "currency": "CAD",
+         "url": "https://www.ebay.ca/itm/123",
+         "image_url": "https://hallucinated.example/x.jpg"},
+    ])])
+    extractor = Extractor(llm=llm)
+    offers = await extractor.extract_from_snapshot(
+        _snap(url="https://www.ebay.ca/sch/i.html?_nkw=aeron"), "ebay", _spec(),
+    )
+
+    assert len(offers) == 1
+    assert offers[0].image_url is None

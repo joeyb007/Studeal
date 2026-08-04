@@ -111,3 +111,18 @@ async def test_generate_survives_llm_failure(db, monkeypatch):
     async with factory() as session:
         row = await session.get(Watchlist, wl_id)
     assert row.playbook is None
+
+
+def test_task_delegates_to_generator(monkeypatch):
+    from dealbot.worker import tasks as t
+
+    called: list[int] = []
+
+    async def _fake(wl_id: int) -> bool:
+        called.append(wl_id)
+        return True
+
+    monkeypatch.setattr("dealbot.agents.playbook.generate_playbook", _fake)
+    result = t.generate_playbook_task.run(41)
+    assert result == {"ok": True}
+    assert called == [41]

@@ -283,6 +283,21 @@ def _maybe_recompute_rankings(watchlist_id: int) -> None:
         logger.warning("rankings recompute enqueue failed for wl %d", watchlist_id)
 
 
+@app.task(name="dealbot.worker.tasks.generate_playbook_task")
+def generate_playbook_task(watchlist_id: int) -> dict:
+    from dealbot.agents.playbook import generate_playbook
+
+    return {"ok": asyncio.run(generate_playbook(watchlist_id))}
+
+
+def _maybe_generate_playbook(watchlist_id: int) -> None:
+    """Fire-and-forget; a dead broker must not fail the calling request."""
+    try:
+        generate_playbook_task.delay(watchlist_id)
+    except Exception:
+        logger.warning("playbook enqueue failed for wl %d", watchlist_id)
+
+
 def _maybe_dispatch_alerts(hunt_id: int) -> None:
     """Seam for tests; production chains alert dispatch off every fruitful hunt.
     A broker blip here must not fail the (already successful, already paid-for)

@@ -161,10 +161,11 @@ async def create_watchlist(
         await session.refresh(watchlist)
         wl_id = watchlist.id
 
-    # Dispatch the research agent for this watchlist (background via Celery)
+    # Dispatch the research agent + Scout's playbook (background via Celery)
     try:
-        from dealbot.worker.tasks import research_for_agent
+        from dealbot.worker.tasks import generate_playbook_task, research_for_agent
         research_for_agent.delay(wl_id)
+        generate_playbook_task.delay(wl_id)
     except Exception:
         pass  # worker not running in dev — fail silently
 
@@ -304,11 +305,13 @@ async def patch_watchlist(
         await session.commit()
         await session.refresh(watchlist)
 
-    # The vector moved — re-rank in the background. Broker-down is tolerable:
-    # the read path's staleness backstop will catch it later.
+    # The vector moved — re-rank and refresh the playbook in the background.
+    # Broker-down is tolerable: the read path's staleness backstop will catch
+    # the rankings later, and the playbook just stays on its previous text.
     try:
-        from dealbot.worker.tasks import recompute_rankings_task
+        from dealbot.worker.tasks import generate_playbook_task, recompute_rankings_task
         recompute_rankings_task.delay(watchlist_id)
+        generate_playbook_task.delay(watchlist_id)
     except Exception:
         pass
 

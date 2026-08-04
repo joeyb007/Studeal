@@ -346,3 +346,25 @@ class InspectionWatch(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InspectionMessage(Base):
+    """Persisted send-to-Scout conversation turn. A friend remembers what
+    you talked about: reopening a listing rehydrates the whole thread."""
+
+    __tablename__ = "inspection_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(12), nullable=False)  # user | assistant
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )

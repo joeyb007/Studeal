@@ -21,10 +21,19 @@ from pydantic import BaseModel
 
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+
 from dealbot.agents.playbook import sanitize
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import InspectionWatch, Listing, User, Watchlist
+from dealbot.db.models import (
+    InspectionMessage,
+    InspectionWatch,
+    Listing,
+    ListingInspection,
+    User,
+    Watchlist,
+)
 from dealbot.llm.base import LLMClient
 from dealbot.schemas import ChatMessage, WatchlistContext
 
@@ -164,8 +173,9 @@ Cover, in flowing prose (no headings, no lists):
 - The opener: one short ready-to-send message to the seller making that offer,
   in quotes.
 
-80-140 words. Second person, warm, direct. Never use em dashes. No greeting,
-no sign-off."""
+80-140 words. Second person, warm, direct. Plain text only: no markdown, no
+asterisks, no bold, no headings. Never use em dashes. No greeting, no
+sign-off."""
 
 
 class VerdictRequest(BaseModel):
@@ -311,12 +321,120 @@ async def inspection_chat(
         *history,
     ]
     llm = _chat_llm()
+    failed = False
     try:
         response = await llm.complete(messages)
         reply = sanitize((response.content or "").strip())
     except Exception:
         logger.exception("inspection chat failed for listing %d", listing_id)
-        reply = "I hit a snag answering that one. Give it another try in a moment."
+        reply = ""
     if not reply:
+        failed = True
         reply = "I hit a snag answering that one. Give it another try in a moment."
+
+    # A friend remembers the conversation: persist the exchange (but never a
+    # snag apology — retries should not litter the thread). Best-effort.
+    if not failed and history and history[-1]["role"] == "user":
+        try:
+            async with get_async_session() as session:
+                session.add(InspectionMessage(
+                    user_id=current_user.id, listing_id=listing_id,
+                    role="user", content=history[-1]["content"],
+                ))
+                session.add(InspectionMessage(
+                    user_id=current_user.id, listing_id=listing_id,
+                    role="assistant", content=reply,
+                ))
+                await session.commit()
+        except Exception:
+            logger.warning("inspection message persist failed (listing %d)",
+                           listing_id, exc_info=True)
     return InspectionChatResponse(reply=reply)
+
+
+class ThreadMessage(BaseModel):
+    role: str
+    content: str
+    created_at: str
+
+
+class ThreadResponse(BaseModel):
+    messages: list[ThreadMessage]
+
+
+@router.get("/{listing_id}/messages", response_model=ThreadResponse)
+async def read_thread(
+    listing_id: int,
+    current_user: User = Depends(get_current_user),
+) -> ThreadResponse:
+    async with get_async_session() as session:
+        rows = (await session.execute(
+            select(InspectionMessage)
+            .where(InspectionMessage.user_id == current_user.id)
+            .where(InspectionMessage.listing_id == listing_id)
+            .order_by(InspectionMessage.id)
+        )).scalars().all()
+    return ThreadResponse(messages=[
+        ThreadMessage(role=m.role, content=m.content, created_at=m.created_at.isoformat())
+        for m in rows
+    ])
+
+
+class InspectedItem(BaseModel):
+    listing_id: int
+    title: str
+    price: float
+    currency: str
+    marketplace: str
+    url: str
+    image_url: str | None
+    sold: bool
+    price_dropped: bool
+    price_at_inspection: float
+    last_message: str | None
+    inspected_at: str
+
+
+class InspectedResponse(BaseModel):
+    items: list[InspectedItem]
+
+
+@router.get("/inspected", response_model=InspectedResponse)
+async def inspected_listings(
+    current_user: User = Depends(get_current_user),
+) -> InspectedResponse:
+    """Everything this user has sent to Scout, newest first: the revisit
+    surface. Watches double as the send-to-Scout record."""
+    async with get_async_session() as session:
+        rows = (await session.execute(
+            select(InspectionWatch, Listing)
+            .join(Listing, Listing.id == InspectionWatch.listing_id)
+            .where(InspectionWatch.user_id == current_user.id)
+            .order_by(InspectionWatch.created_at.desc())
+            .limit(100)
+        )).all()
+
+        items: list[InspectedItem] = []
+        for watch, listing in rows:
+            last = (await session.execute(
+                select(InspectionMessage.content)
+                .where(InspectionMessage.user_id == current_user.id)
+                .where(InspectionMessage.listing_id == listing.id)
+                .order_by(InspectionMessage.id.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            items.append(InspectedItem(
+                listing_id=listing.id,
+                title=listing.title,
+                price=listing.price,
+                currency=listing.currency,
+                marketplace=listing.marketplace,
+                url=listing.raw_url,
+                image_url=listing.image_url,
+                sold=listing.sold_at is not None,
+                price_dropped=listing.price < watch.price_at_inspection,
+                price_at_inspection=watch.price_at_inspection,
+                last_message=(last[:140] if last else None),
+                inspected_at=watch.created_at.isoformat(),
+            ))
+    return InspectedResponse(items=items)

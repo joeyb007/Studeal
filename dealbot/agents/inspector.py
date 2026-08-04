@@ -157,6 +157,8 @@ plus its extracted text. Give your honest expert read.
 
 Output JSON with exactly these keys (all strings plain language, second person):
 {
+  "headline": str,            // one scannable sentence, under 90 chars: your take at a glance
+  "condition_grade": "good"|"fair"|"worn"|"unknown",  // overall, from the photos
   "identification": str,      // what this actually is: model, generation, variant, confidence
   "condition": str,           // condition read, referencing what you see ("photo 2, left armrest")
   "red_flags": [str],         // real concerns only; [] if none
@@ -190,9 +192,27 @@ def _sanitize_obj(value: Any) -> Any:
 
 
 _REPORT_KEYS = {
-    "identification", "condition", "red_flags", "cant_tell",
-    "seller_questions", "legitimacy", "market_position", "summary",
+    "headline", "condition_grade", "identification", "condition", "red_flags",
+    "cant_tell", "seller_questions", "legitimacy", "market_position", "summary",
 }
+
+# Within this fraction of the comp median, a price reads as "fair".
+_FAIR_BAND_FRACTION = 0.12
+
+
+def price_read(price: float, comps: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Deterministic price-vs-market read for the overview card. The model
+    writes prose about the market; this badge is arithmetic, not opinion."""
+    band = price_band([c["price"] for c in comps])
+    if band is None:
+        return None
+    _, median, _ = band
+    delta = price - median
+    if abs(delta) <= _FAIR_BAND_FRACTION * median:
+        return {"level": "fair", "text": "fair for the market"}
+    if delta > 0:
+        return {"level": "over", "text": f"about ${delta:.0f} over the going rate"}
+    return {"level": "under", "text": f"about ${-delta:.0f} under the going rate"}
 
 
 async def _generate_report(
@@ -229,8 +249,10 @@ async def _generate_report(
         logger.warning("inspector: report missing keys for listing %d", listing.id)
         return None
     report = _sanitize_obj(report)
-    # Deterministic attachments: the comp strip is ours, not the model's.
+    # Deterministic attachments: the comp strip and price badge are ours,
+    # not the model's.
     report["comps"] = comps[:_COMP_STRIP]
+    report["price_read"] = price_read(listing.price, comps)
     return report
 
 

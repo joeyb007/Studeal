@@ -333,3 +333,15 @@ async def test_auto_inspect_skips_free_owners(wdb, monkeypatch):
     monkeypatch.setattr("dealbot.agents.inspector.get_or_create_inspection", _boom)
     assert await wi.auto_inspect_top_matches(hunt_id) == 0
     assert called == []
+
+
+def test_price_read_is_deterministic():
+    from dealbot.agents.inspector import price_read
+
+    comps = [{"price": p} for p in (80.0, 90.0, 100.0, 110.0, 120.0)]
+    assert price_read(100.0, comps) == {"level": "fair", "text": "fair for the market"}
+    over = price_read(160.0, comps)
+    assert over["level"] == "over" and "over the going rate" in over["text"]
+    under = price_read(50.0, comps)
+    assert under["level"] == "under"
+    assert price_read(100.0, comps[:3]) is None  # no band below 5 comps

@@ -166,6 +166,7 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
     if new_ids:
         _maybe_dispatch_alerts(hunt_id)
     _maybe_recompute_rankings(watchlist_id)
+    _maybe_post_hunt_inspections(hunt_id, watchlist_id)
 
     logger.info(
         "research_for_agent: wl=%d hunt=%d offers=%d persisted=%d new=%d",
@@ -221,6 +222,7 @@ async def _serve_from_pool(watchlist_id: int, candidates: list) -> dict:
     if new_ids:
         _maybe_dispatch_alerts(hunt_id)
     _maybe_recompute_rankings(watchlist_id)
+    _maybe_post_hunt_inspections(hunt_id, watchlist_id)
 
     logger.info(
         "research_for_agent: wl=%d hunt=%d CACHED linked=%d new=%d",
@@ -288,6 +290,34 @@ def generate_playbook_task(watchlist_id: int) -> dict:
     from dealbot.agents.playbook import generate_playbook
 
     return {"ok": asyncio.run(generate_playbook(watchlist_id))}
+
+
+@app.task(name="dealbot.worker.tasks.check_price_drops_task")
+def check_price_drops_task() -> dict:
+    """After a hunt refreshed pool prices: email users whose inspected
+    listings dropped below their price-at-inspection. One email per watch."""
+    from dealbot.worker.inspections import check_price_drops
+
+    return {"notified": asyncio.run(check_price_drops())}
+
+
+@app.task(name="dealbot.worker.tasks.auto_inspect_task")
+def auto_inspect_task(hunt_id: int, top_n: int = 2) -> dict:
+    """Pro perk: pre-inspect the hunt's top new matches so alert emails and
+    match rows arrive with Scout's report already cached."""
+    from dealbot.worker.inspections import auto_inspect_top_matches
+
+    return {"inspected": asyncio.run(auto_inspect_top_matches(hunt_id, top_n))}
+
+
+def _maybe_post_hunt_inspections(hunt_id: int, watchlist_id: int) -> None:
+    """Fire-and-forget: price-drop sweep always; auto-inspect only for Pro
+    owners (checked inside the task to keep this seam broker-cheap)."""
+    try:
+        check_price_drops_task.delay()
+        auto_inspect_task.delay(hunt_id)
+    except Exception:
+        logger.warning("post-hunt inspection enqueue failed for hunt %d", hunt_id)
 
 
 def _maybe_generate_playbook(watchlist_id: int) -> None:

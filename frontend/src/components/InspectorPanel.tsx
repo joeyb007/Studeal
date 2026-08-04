@@ -13,6 +13,8 @@ export interface InspectListing {
   price: number;
   currency: string;
   marketplace: string;
+  url: string;
+  image_url?: string | null;
 }
 
 // "Send it to Scout": the inspection thread. Scout takes a look at the real
@@ -27,6 +29,8 @@ interface Comp {
 }
 
 interface Report {
+  headline?: string;
+  condition_grade?: string;
   identification: string;
   condition: string;
   red_flags: string[];
@@ -36,6 +40,7 @@ interface Report {
   market_position: string;
   summary: string;
   comps: Comp[];
+  price_read?: { level: string; text: string } | null;
 }
 
 interface Inspection {
@@ -66,7 +71,19 @@ export default function InspectorPanel({
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [draft, setDraft] = useState("");
   const [replying, setReplying] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+  const [stage, setStage] = useState(0);
   const threadRef = useRef<HTMLDivElement>(null);
+
+  // Staged progress while Scout works. The phases happen in this order for
+  // real (navigate, screenshot/read, report against comps); timing is
+  // client-approximated. Cached hits resolve before stage 1 ever shows.
+  useEffect(() => {
+    if (inspection || failed || capped) return;
+    const t1 = setTimeout(() => setStage(1), 6_000);
+    const t2 = setTimeout(() => setStage(2), 15_000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [inspection, failed, capped]);
 
   const inspect = useCallback(async () => {
     setFailed(false);
@@ -111,6 +128,27 @@ export default function InspectorPanel({
   useEffect(() => {
     inspect();
   }, [inspect]);
+
+  // Rehydrate the persisted thread: a friend remembers the conversation.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/listings/${listing.id}/messages`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.messages) && data.messages.length > 0) {
+          setMessages(data.messages.map((m: { role: string; content: string }) => ({
+            role: m.role === "user" ? "user" : "assistant",
+            content: m.content,
+          })));
+        }
+      } catch {
+        /* history is a bonus; the live thread still works without it */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [listing.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -169,11 +207,43 @@ export default function InspectorPanel({
         </div>
 
         <div className={styles.thread} ref={threadRef}>
+          <div className={styles.userMsg}>
+            <div className={styles.sentCard}>
+              {listing.image_url && (
+                <img
+                  src={listing.image_url}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className={styles.sentThumb}
+                />
+              )}
+              <div className={styles.sentBody}>
+                <span className={styles.sentTitle}>{listing.title}</span>
+                <span className={styles.sentMeta}>
+                  ${listing.price.toFixed(2)} {listing.currency} ·{" "}
+                  {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace}
+                </span>
+              </div>
+            </div>
+            <p className={styles.sentCaption}>hey Scout, take a look at this one?</p>
+          </div>
+
           {!inspection && !failed && !capped && (
-            <div className={styles.working}>
-              <span className={styles.workingDot} />
-              Scout is taking a look at this one. Opening the listing, reading
-              the photos. Give it a few seconds.
+            <div className={styles.scoutRow}>
+              <ScoutAvatar />
+              <div className={styles.working}>
+                {STAGES.slice(0, stage + 1).map((label, i) => (
+                  <span key={label} className={styles.stageLine}>
+                    {i < stage ? (
+                      <span className={styles.stageDone}>✓</span>
+                    ) : (
+                      <span className={styles.workingDot} />
+                    )}
+                    {label}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 
@@ -184,13 +254,18 @@ export default function InspectorPanel({
           )}
 
           {failed && (
+            <div className={styles.scoutRow}>
+            <ScoutAvatar />
             <div className={styles.scoutMsg}>
               <p>Could not get a good look just now. The site may be slow.</p>
               <button className={styles.retry} onClick={inspect}>Try again</button>
             </div>
+            </div>
           )}
 
           {inspection?.status === "error" && (
+            <div className={styles.scoutRow}>
+            <ScoutAvatar />
             <div className={styles.scoutMsg}>
               <p>
                 I could not get a clean look at this one just now. It happens,
@@ -198,9 +273,12 @@ export default function InspectorPanel({
               </p>
               <button className={styles.retry} onClick={inspect}>Try again</button>
             </div>
+            </div>
           )}
 
           {inspection?.status === "listing_gone" && (
+            <div className={styles.scoutRow}>
+            <ScoutAvatar />
             <div className={styles.scoutMsg}>
               <p>
                 That one is gone. The page says it is no longer available, so
@@ -213,65 +291,114 @@ export default function InspectorPanel({
                 </>
               )}
             </div>
+            </div>
           )}
 
           {report && (
+            <div className={styles.scoutRow}>
+            <ScoutAvatar />
             <div className={styles.scoutMsg}>
-              <ReportSection label="What it is" text={report.identification} />
-              <ReportSection label="Condition" text={report.condition} />
-              {report.red_flags.length > 0 && (
-                <div className={styles.section}>
-                  <span className={styles.sectionLabel}>Red flags</span>
-                  <ul className={styles.list}>
-                    {report.red_flags.map((f, i) => <li key={i}>{f}</li>)}
-                  </ul>
-                </div>
+              {report.headline ? (
+                <>
+                  <div className={styles.overview}>
+                    {listing.image_url && (
+                      <img
+                        src={listing.image_url}
+                        alt=""
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className={styles.overviewThumb}
+                      />
+                    )}
+                    <div className={styles.overviewBody}>
+                      <p className={styles.overviewHeadline}>{report.headline}</p>
+                      <div className={styles.badges}>
+                        {report.price_read && (
+                          <span className={[styles.badge, badgeTone(report.price_read.level)].join(" ")}>
+                            {report.price_read.text}
+                          </span>
+                        )}
+                        {report.condition_grade && report.condition_grade !== "unknown" && (
+                          <span className={[styles.badge, badgeTone(report.condition_grade)].join(" ")}>
+                            condition: {report.condition_grade}
+                          </span>
+                        )}
+                        <span className={[styles.badge, badgeTone(report.legitimacy.level)].join(" ")}>
+                          {report.legitimacy.level === "fine"
+                            ? "looks legit"
+                            : report.legitimacy.level === "likely_scam"
+                              ? "likely scam"
+                              : "caution"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.notesToggle}
+                    onClick={() => setShowNotes(v => !v)}
+                  >
+                    {showNotes ? "Hide Scout's full notes" : "Scout's full notes"}
+                  </button>
+                  {showNotes && <FullNotes report={report} />}
+                </>
+              ) : (
+                <FullNotes report={report} />
               )}
-              <ReportSection label="What I can't tell from here" text={report.cant_tell} />
-              {report.seller_questions.length > 0 && (
-                <div className={styles.section}>
-                  <span className={styles.sectionLabel}>Ask the seller</span>
-                  <ul className={styles.list}>
-                    {report.seller_questions.map((q, i) => <li key={i}>{q}</li>)}
-                  </ul>
-                </div>
-              )}
-              {report.legitimacy.level !== "fine" && (
-                <div className={[styles.section, styles.legit].join(" ")}>
-                  <span className={styles.sectionLabel}>
-                    {report.legitimacy.level === "likely_scam" ? "Likely scam" : "Caution"}
-                  </span>
-                  <p className={styles.sectionText}>{report.legitimacy.reason}</p>
-                </div>
-              )}
-              <ReportSection label="Price check" text={report.market_position} />
-              {report.comps.length > 0 && <CompStrip comps={report.comps} />}
-              <ReportSection label="Bottom line" text={report.summary} />
+            </div>
             </div>
           )}
 
           {verdict && (
+            <div className={styles.scoutRow}>
+            <ScoutAvatar />
             <div className={styles.scoutMsg}>
               <div className={styles.section}>
                 <span className={styles.sectionLabel}>Scout&apos;s take for you</span>
                 <p className={styles.sectionText}>{verdict}</p>
               </div>
             </div>
+            </div>
           )}
 
-          {messages.map((m, i) => (
-            <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsg}>
-              <p className={styles.sectionText}>{m.content}</p>
-            </div>
-          ))}
+          {messages.map((m, i) =>
+            m.role === "user" ? (
+              <div key={i} className={styles.userMsg}>
+                <p className={styles.sectionText}>{m.content}</p>
+              </div>
+            ) : (
+              <div key={i} className={styles.scoutRow}>
+                <ScoutAvatar />
+                <div className={styles.scoutMsg}>
+                  <p className={styles.sectionText}>{m.content}</p>
+                </div>
+              </div>
+            ),
+          )}
 
           {replying && (
-            <div className={styles.working}>
-              <span className={styles.workingDot} />
-              Scout is thinking…
+            <div className={styles.scoutRow}>
+              <ScoutAvatar />
+              <div className={styles.working}>
+                <span className={styles.stageLine}>
+                  <span className={styles.workingDot} />
+                  Scout is thinking…
+                </span>
+              </div>
             </div>
           )}
         </div>
+
+        {inspection?.status === "ok" && (
+          <a
+            href={listing.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.buyCta}
+          >
+            Open on {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace} →
+          </a>
+        )}
 
         <div className={styles.composer}>
           <input
@@ -297,6 +424,63 @@ export default function InspectorPanel({
       </div>
     </div>,
     document.body,
+  );
+}
+
+const STAGES = [
+  "Opening the listing…",
+  "Reading the photos…",
+  "Checking it against the market…",
+];
+
+function ScoutAvatar() {
+  return (
+    <span className={styles.avatar} aria-hidden>
+      <img src="/logo.svg" alt="" className={styles.avatarImg} />
+    </span>
+  );
+}
+
+function badgeTone(level: string): string {
+  if (["fair", "under", "good", "fine"].includes(level)) return styles.badgeGood;
+  if (["over", "worn", "likely_scam"].includes(level)) return styles.badgeBad;
+  return styles.badgeWarn;
+}
+
+function FullNotes({ report }: { report: Report }) {
+  return (
+    <>
+      <ReportSection label="What it is" text={report.identification} />
+      <ReportSection label="Condition" text={report.condition} />
+      {report.red_flags.length > 0 && (
+        <div className={styles.section}>
+          <span className={styles.sectionLabel}>Red flags</span>
+          <ul className={styles.list}>
+            {report.red_flags.map((f, i) => <li key={i}>{f}</li>)}
+          </ul>
+        </div>
+      )}
+      <ReportSection label="What I can't tell from here" text={report.cant_tell} />
+      {report.seller_questions.length > 0 && (
+        <div className={styles.section}>
+          <span className={styles.sectionLabel}>Ask the seller</span>
+          <ul className={styles.list}>
+            {report.seller_questions.map((q, i) => <li key={i}>{q}</li>)}
+          </ul>
+        </div>
+      )}
+      {report.legitimacy.level !== "fine" && (
+        <div className={[styles.section, styles.legit].join(" ")}>
+          <span className={styles.sectionLabel}>
+            {report.legitimacy.level === "likely_scam" ? "Likely scam" : "Caution"}
+          </span>
+          <p className={styles.sectionText}>{report.legitimacy.reason}</p>
+        </div>
+      )}
+      <ReportSection label="Price check" text={report.market_position} />
+      {report.comps.length > 0 && <CompStrip comps={report.comps} />}
+      <ReportSection label="Bottom line" text={report.summary} />
+    </>
   );
 }
 

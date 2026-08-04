@@ -7,7 +7,7 @@ import Nav from "./Nav";
 // page-transition template) so it never re-animates or remounts on
 // navigation — which also keeps its unread-badge poll alive across pages.
 // Marketing/auth routes stay nav-free.
-const APP_PREFIXES = ["/dashboard", "/watchlists", "/mission-control", "/catalog"];
+const APP_PREFIXES = ["/dashboard", "/watchlists", "/mission-control", "/catalog", "/scout"];
 
 export default function NavGate() {
   const pathname = usePathname();

@@ -126,3 +126,25 @@ def test_task_delegates_to_generator(monkeypatch):
     result = t.generate_playbook_task.run(41)
     assert result == {"ok": True}
     assert called == [41]
+
+
+@pytest.mark.asyncio
+async def test_playbook_round_trips_through_api(authed_client, db_factory):
+    async with db_factory() as session:
+        user = User(email="test@example.com", hashed_password="x")
+        user.id = 1
+        session.add(user)
+        await session.flush()
+        wl = Watchlist(
+            user_id=1, name="Desk chairs",
+            context='{"product_query": "ergonomic office chair"}',
+            playbook="What to check\nCheck the tilt.",
+        )
+        session.add(wl)
+        await session.commit()
+
+    resp = authed_client.get("/watchlists")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["playbook"] == "What to check\nCheck the tilt."

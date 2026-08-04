@@ -83,6 +83,8 @@ class WatchlistResponse(BaseModel):
     min_score: int
     expires_at: Optional[str]
     context: Optional[dict] = None
+    playbook: Optional[str] = None
+    playbook_updated_at: Optional[str] = None
 
 
 class WatchlistDealResponse(BaseModel):
@@ -175,6 +177,11 @@ async def create_watchlist(
         min_score=watchlist.min_score,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
         context=json.loads(watchlist.context) if watchlist.context else None,
+        playbook=watchlist.playbook,
+        playbook_updated_at=(
+            watchlist.playbook_updated_at.isoformat()
+            if watchlist.playbook_updated_at else None
+        ),
     )
 
 
@@ -262,6 +269,11 @@ async def renew_watchlist(
         name=watchlist.name,
         min_score=watchlist.min_score,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
+        playbook=watchlist.playbook,
+        playbook_updated_at=(
+            watchlist.playbook_updated_at.isoformat()
+            if watchlist.playbook_updated_at else None
+        ),
     )
 
 
@@ -321,6 +333,11 @@ async def patch_watchlist(
         min_score=watchlist.min_score,
         expires_at=watchlist.expires_at.isoformat() if watchlist.expires_at else None,
         context=json.loads(watchlist.context) if watchlist.context else None,
+        playbook=watchlist.playbook,
+        playbook_updated_at=(
+            watchlist.playbook_updated_at.isoformat()
+            if watchlist.playbook_updated_at else None
+        ),
     )
 
 
@@ -518,6 +535,11 @@ async def list_watchlists(
                 min_score=wl.min_score,
                 expires_at=wl.expires_at.isoformat() if wl.expires_at else None,
                 context=json.loads(wl.context) if wl.context else None,
+                playbook=wl.playbook,
+                playbook_updated_at=(
+                    wl.playbook_updated_at.isoformat()
+                    if wl.playbook_updated_at else None
+                ),
             ))
 
         await session.commit()

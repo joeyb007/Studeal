@@ -3,173 +3,152 @@
 </p>
 
 <h1 align="center">Studeal</h1>
-<p align="center"><em>AI deal-hunting agents for Canadian students</em></p>
+<p align="center"><em>A fleet of browser-driving AI agents that hunt secondhand marketplaces so you never overpay.</em></p>
 
 <p align="center">
-  <a href="#architecture">Architecture</a> ·
-  <a href="#pipeline">Pipeline</a> ·
+  <a href="#how-a-hunt-works">How a hunt works</a> ·
+  <a href="#the-shared-pool--recommender">Pool & recommender</a> ·
+  <a href="#product-surfaces">Product</a> ·
+  <a href="#evaluation">Evaluation</a> ·
   <a href="#stack">Stack</a> ·
-  <a href="#running-locally">Running Locally</a>
+  <a href="#running-locally">Running locally</a>
 </p>
 
 ---
 
 ## What it does
 
-Students overpay for tech because deal alerts are passive — you have to know what to search, remember to check, and catch the window before it closes.
+Finding a good used deal means searching five marketplaces, in the right phrasings, every day, and knowing enough about the product to judge what you see. Almost nobody does that, so most people overpay or miss the good listings entirely.
 
-Studeal inverts this. Users describe what they want in natural language. A conversational agent (Dexter) extracts their intent and deploys a persistent background worker that continuously scans the web, scores every deal it finds, and alerts the user the moment something matches their criteria.
+Studeal does it for you. You describe what you want in plain language to Scout, a conversational agent that builds a rich buyer profile (budget, brands, condition, what the thing is actually for). Scout deploys a persistent hunting agent that sweeps Kijiji, Facebook Marketplace, eBay, Craigslist, and a set of refurb retailers on a schedule, driving real browser sessions the way a person would: navigating, searching, scrolling, paginating. Every listing it sees lands in a shared pool; a recommender ranks the pool against your profile and emails you the matches worth your money, each with a one-line reason.
 
-The result: a force of AI agents working in the background, surfacing deals users would have otherwise missed.
+There are no per-site scrapers and no site adapters. The same agent code navigates every marketplace, which is what the evaluation section is about.
 
----
-
-## Architecture
+## How a hunt works
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Next.js Frontend                  │
-│   Daily Drops (semantic search) · My Agents (chat)  │
-└───────────────────┬─────────────────────────────────┘
-                    │ REST
-┌───────────────────▼─────────────────────────────────┐
-│                   FastAPI Backend                    │
-│         Auth · Watchlists · Deals · Billing          │
-└───────┬───────────────────────────┬─────────────────┘
-        │                           │
-┌───────▼───────┐         ┌─────────▼───────┐
-│  Celery Beat  │         │  Celery Workers  │
-│  (scheduler)  │         │  (parallel hunt) │
-└───────┬───────┘         └─────────┬───────┘
-        │                           │
-        └──────────┬────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────────┐
-│                  LangGraph Pipeline                  │
-│  Search → Fetch → Extract → Score → Deduplicate     │
-└──────┬──────────────────────────────────┬───────────┘
-       │                                  │
-┌──────▼──────┐                  ┌────────▼────────┐
-│ Brave Search│                  │   OpenAI API    │
-│  + Sources  │                  │  (extraction,   │
-│  (RSS, RSS) │                  │   scoring, NL)  │
-└─────────────┘                  └─────────────────┘
-       │
-┌──────▼──────────────────────────────────────────────┐
-│              PostgreSQL + pgvector                   │
-│   Deals · Users · Agents · Embeddings (1536-dim)    │
-└─────────────────────────────────────────────────────┘
+                        Watchlist (buyer profile)
+                                  │
+                       Marketplace router (LLM)
+                 picks (query, marketplace) lanes
+                                  │
+        ┌───────────────┬─────────┴───────┬───────────────┐
+   lane: kijiji    lane: facebook    lane: kijiji     lane: ebay      ... up to 6
+   "aeron chair"   "aeron chair"     "ergonomic       concurrent, each with its
+        │               │             office chair"   own browser session
+        ▼               ▼                  │
+   Explorer agent (Claude Sonnet) drives the page via CDP
+   perception snapshots: AX tree + DOMSnapshot fused into a
+   compact element tree the LLM can read and act on
+        │
+        ▼
+   Every settled page snapshot is sunk to an extractor pool
+   (Claude Haiku) that emits structured offers concurrently,
+   while a deterministic sidecar captures listing thumbnails
+   from the same DOM (no LLM touches an image URL)
+        │
+        ▼
+   Offers are grounded against the page (fabricated URLs
+   dropped), deduplicated by canonical URL, embedded
+   (Titan V2), and upserted into the shared listings pool
+        │
+        ▼
+   Ranker (LLM listwise) scores pool candidates against the
+   buyer profile · results cached · matches alerted by email
 ```
 
----
+Design choices that matter:
 
-## Pipeline
+- **Perception, not parsing.** Pages are captured through Chrome DevTools Protocol as a fused accessibility-tree + DOM snapshot, filtered to visible and interactive elements. The explorer reads the same compact tree it acts on, so navigation generalizes across sites with zero per-site code.
+- **Extraction is off the navigation loop.** The explorer never extracts listings. Snapshots stream to a concurrent extractor pool, so a slow extraction never stalls navigation, and large pages are chunked into overlapping views for recall (single-window truncation was measured missing most of a 137k-char page).
+- **Parallel lanes.** Each (query, marketplace) pair is its own lane with its own browser session, fanned out under a concurrency cap. Lane state persists to the database, so the live view survives a page refresh.
+- **Trust boundaries around the LLM.** Extracted offers must ground to an anchor actually present in the snapshot (an LLM completing a clipped href will invent plausible listing URLs; those are dropped, not persisted). Thumbnails are associated to listings by deterministic DOM containment plus a per-marketplace CDN whitelist, so an attribution error can only ever be a missing image, never a wrong one.
 
-Each keyword triggers a full agent pipeline:
+## The shared pool & recommender
 
-**1. Search** — Brave Search API queries multiple phrasings of the keyword in parallel, with Canadian locale preference.
+Every hunt feeds one cumulative listings pool, and recommendation is content-based retrieval over it: watchlist intent embeddings against listing embeddings (pgvector cosine), re-ranked by a listwise LLM pass with the buyer profile in context.
 
-**2. Fetch & Extract** — LangGraph nodes scrape result pages via Browserbase, extracting structured deal objects (title, listed price, sale price, condition, source URL) using an LLM.
+- **Sufficiency gate.** Before browsing, a hunt checks whether the pool already holds enough fresh, novel, similar listings for this watchlist. If yes, it serves from the pool ("cached" hunt, near-zero cost); if not, it hunts live. The gate fails toward hunting, and Pro users always hunt live.
+- **Ranking cache.** The LLM ranker runs event-driven (hunt completion, profile edits) with a stale-while-revalidate backstop, so the read path is pure SQL at ~50ms instead of a 3-8s LLM call.
+- **Lifecycle.** Listings unseen for 7 days leave the read surfaces (probably sold); after 90 days they purge. Re-sighting a listing refreshes it, including its thumbnail.
 
-**3. Score** — A scorer agent evaluates each deal against market context retrieved via RAG (pgvector cosine similarity over recent deals). Score = weighted function of discount depth, price history, recency, and condition.
+## Product surfaces
 
-**4. Deduplicate** — pgvector embedding similarity eliminates near-duplicate deals before persistence. Only novel, high-signal deals are written to the database.
+- **Mission Control**: the live theater. Each running hunt renders as a grid of lane tiles (queued, connecting, live, done) with real-time viewport frames streamed from the agent's browser, collapsing into a completed-run summary with the next-sweep countdown.
+- **Daily Drops**: the catalog. Browse everything fresh in the pool with multi-select store and condition filters and a price cap, or search it in natural language (query embedding against the pool, ranked by fit).
+- **My Agents**: Scout's chat, plus each agent's dossier: the profile it hunts with (editable in place, re-ranks in the background) and its current ranked matches.
+- **Email alerts** (Resend): new matches per sweep, each with the ranker's one-line reason.
 
-**5. Alert** — Deals above a user's configured threshold trigger a push alert or are batched into a daily email digest (Resend).
+## Evaluation
 
-Community sources (RedFlagDeals RSS, Slickdeals RSS, student deal sites) are scraped in parallel with keyword hunts, tagged `student_eligible`, and fed through the same scoring pipeline.
+The repo carries an eval harness (`tests/evals/`, results in `docs/evals/results.md`) that runs scripted hunt campaigns against live marketplaces with forced targets, scoring precision per run and accounting tokens and dollars per hunt.
 
----
+Bedrock-era campaign (2026-08-02, nav: claude-sonnet-4-5, extract: claude-haiku-4-5):
 
-## Conversational Agent (Dexter)
-
-Users create agents through natural conversation rather than form fields. Dexter is a stateless LLM agent that progressively extracts `WatchlistContext` — product query, budget, condition, brands, and 3–5 search keyword variants — across multiple turns.
-
-```
-User: I want gaming laptop deals
-Dexter: Gaming laptops — love it! What's your budget?
-User: under $1200, new only
-Dexter: Got it. Deploy agent? → [Create]
-```
-
-Structured outputs (`response_format: json_object`) ensure reliable JSON extraction. The client sends full message history each turn; the server is stateless. On completion, Dexter's extracted `WatchlistContext` is embedded and persisted — the hunt begins immediately.
-
----
+- **Reliability: 5/5 runs**, zero error-stops, 219-380 unique offers per run at 176-259s and $2.2-3.1 per run. Roughly 10x the unique-offer recall of the July GPT-4o-era campaigns at ~2x the cost.
+- **Holdout (never-tuned marketplaces, single-shot): eBay Aeron 576 unique offers at 97.7% precision**; eBay headphones 330 at 88.8%.
+- **Headline: held-out mean precision 93.3% vs 72.1% on tuned sites.** The zero-adapter agent generalizes at full precision; the lower tuned-site figure is a marketplace property (FB and Kijiji pad results with related inventory, deliberately retained as pool stock and gated later by the ranker).
 
 ## Stack
 
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 15, TypeScript, CSS Modules, Auth.js |
-| Backend | FastAPI, Python 3.12, Pydantic v2, SQLAlchemy 2 |
-| Agent framework | LangGraph |
-| LLM | OpenAI GPT-4o (prod) · Ollama / Groq (dev) |
-| Vector search | pgvector, OpenAI `text-embedding-3-small` (1536-dim) |
-| Task queue | Celery + Redis |
-| Database | PostgreSQL 16 |
-| Web scraping | Browserbase (Playwright) |
-| Search | Brave Search API |
-| Payments | Stripe (subscriptions + customer portal) |
+| Backend | FastAPI, Python 3.12, Pydantic v2, SQLAlchemy 2 (async) |
+| LLMs | AWS Bedrock: Claude Sonnet 4.5 (navigation, Scout), Claude Haiku 4.5 (extraction) · swappable `LLMClient` backends (Bedrock / OpenAI / Ollama) |
+| Embeddings | Amazon Titan V2 (1024-dim), pgvector |
+| Browser automation | Playwright over CDP · Browserbase (prod) / local Chromium (dev) |
+| Queue & events | Celery + Redis · Redis pub/sub streaming live hunt events to the UI |
+| Database | PostgreSQL 16 + pgvector |
 | Email | Resend |
-| Monitoring | Sentry (with `LoggingIntegration`) |
-| Infrastructure | DigitalOcean (App Platform + Managed DB) |
+| Payments | Stripe |
 
----
+## Running locally
 
-## Key Engineering Decisions
-
-**Concurrent pipeline with bounded parallelism** — `asyncio.gather` runs keyword hunts in parallel; `asyncio.Semaphore(3)` caps concurrent Browserbase sessions to stay within rate limits without serializing the pipeline.
-
-**Swappable LLM backends** — `LLMClient` abstract base class with concrete implementations for OpenAI, Groq, Ollama, and vLLM. Switching models is a one-line env var change. Groq's `failed_generation` recovery handles Llama's native tool-call format divergence.
-
-**RAG-powered scoring** — The scorer agent retrieves semantically similar deals from pgvector before scoring. This gives it live market context ("similar items sell for $X") rather than scoring in a vacuum.
-
-**Defense-in-depth filtering** — Deal filters apply at the SQL level for efficiency and at the Python level for testability. The `min_discount_pct` filter has a graceful fallback: if strict filtering returns zero results, it relaxes the threshold and flags `filtered: false` in the response.
-
----
-
-## Running Locally
-
-**Prerequisites:** Docker, Python 3.12, Node 20+
+Prerequisites: Docker, Python 3.12, Node 20+.
 
 ```bash
-# 1. Start Postgres + Redis
+# 1. Postgres + Redis
 docker-compose up -d
 
-# 2. Backend
+# 2. Backend API
 pip install -e ".[dev]"
-cp .env.example .env          # fill in API keys
+cp .env.example .env            # fill in credentials
 alembic upgrade head
 uvicorn dealbot.api.main:app --reload --port 8001 --env-file .env
 
-# 3. Worker
+# 3. Worker (hunts run here)
 celery -A dealbot.worker.celery_app worker --loglevel=info
 
 # 4. Frontend
 cd frontend && npm install
-cp .env.local.example .env.local   # set AUTH_SECRET + API_BASE_URL
+# frontend/.env.local: set API_BASE_URL and AUTH_SECRET
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). Tests: `python -m pytest`.
 
----
-
-## Project Structure
+## Project structure
 
 ```
 dealbot/
-├── agents/          # LLM agents (orchestrator, scorer, keyword extractor, NL watchlist)
-├── api/             # FastAPI routes (auth, deals, watchlists, billing)
-├── db/              # SQLAlchemy models, migrations, RAG retrieval
-├── graph/           # LangGraph pipeline nodes and graph definition
-├── llm/             # LLMClient abstraction + OpenAI / Groq / Ollama / vLLM backends
-├── scrapers/        # Community sources (RSS feeds, student deal sites)
-└── worker/          # Celery tasks (hunt, seed, digest)
+├── agents/          # explorer (navigation), extractor pool, perception (CDP),
+│                    # marketplace router, image capture, Scout (nl_watchlist)
+├── api/             # FastAPI routes: auth, watchlists, hunts, listings feed,
+│                    # alerts, billing, live event stream
+├── db/              # SQLAlchemy models + Alembic migrations
+├── events/          # typed hunt event schema + Redis publisher
+├── llm/             # LLMClient abstraction: Bedrock / OpenAI / Ollama backends
+├── notifications/   # email (Resend)
+├── persistence/     # canonical-URL upsert into the shared pool
+├── recsys/          # sufficiency gate, ranking cache
+├── scrapers/        # browser sessions (Browserbase / local), DOM settlement
+└── worker/          # Celery tasks: hunts, ranking recompute, alerts
 frontend/
-└── src/app/         # Next.js pages (landing, dashboard, catalog, watchlists)
+└── src/app/         # Daily Drops, My Agents, Mission Control
+tests/               # unit + integration; tests/evals/ is the live-hunt harness
 ```
 
----
+## Status
 
-<p align="center">Built by <a href="https://github.com/joeyb007">Joseph Barbosa</a></p>
+Pre-launch. The fleet, pool, recommender, and product surfaces above are built and running locally; AWS deployment (Terraform) is next, landing at **studeal.site**.

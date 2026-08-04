@@ -47,6 +47,9 @@ class Listing(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+    # Set when an inspection lands on a dead page: read surfaces exclude sold
+    # rows immediately instead of waiting out the staleness window.
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Deal(Base):
@@ -97,6 +100,10 @@ class User(Base):
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     secondhand_searches_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Free-tier inspection allowance: fresh Tier A runs this calendar month.
+    # Cached-report reads never count; Pro is uncapped.
+    inspections_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inspections_month: Mapped[str | None] = mapped_column(String(7), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -291,3 +298,51 @@ class PushSubscription(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class ListingInspection(Base):
+    """Scout's cached objective look at one listing (Deal Inspector Tier A).
+
+    One row per listing, shared across users: the first inspector pays the
+    browser visit + vision call, everyone else reads. The personal verdict
+    (Tier B) is computed per watchlist on demand and never cached here.
+    """
+
+    __tablename__ = "listing_inspections"
+
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")  # ok | listing_gone
+    report: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON, sanitized
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON ListingDetail
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class InspectionWatch(Base):
+    """Price-drop watch created when a user sends a listing to Scout.
+
+    Inspecting is the strongest interest signal in the product; if the
+    listing's price later drops below what it was at inspection time, the
+    user gets one email and the row is marked notified.
+    """
+
+    __tablename__ = "inspection_watches"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    price_at_inspection: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

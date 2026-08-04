@@ -155,6 +155,7 @@ async def pool_feed(
             .outerjoin(HuntListing, HuntListing.listing_id == Listing.id)
             .outerjoin(Hunt, Hunt.id == HuntListing.hunt_id)
             .where(Listing.last_seen_at >= cutoff)
+            .where(Listing.sold_at.is_(None))
             .order_by(Listing.last_seen_at.desc())
             .limit(_DIVERSIFY_POOL_SIZE)
         )
@@ -175,6 +176,7 @@ async def pool_feed(
         total_live = (await session.execute(_counted(
             select(func.count()).select_from(Listing)
             .where(Listing.last_seen_at >= cutoff)
+            .where(Listing.sold_at.is_(None))
         ))).scalar_one()
         added_today = (await session.execute(_counted(
             select(func.count()).select_from(Listing)
@@ -218,7 +220,11 @@ async def pool_search(
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     async with get_async_session() as session:
-        base = select(Listing).where(Listing.last_seen_at >= cutoff)
+        base = (
+            select(Listing)
+            .where(Listing.last_seen_at >= cutoff)
+            .where(Listing.sold_at.is_(None))
+        )
         base = _csv_filter(base, Listing.marketplace, marketplace)
         if max_price is not None:
             base = base.where(Listing.price <= max_price)

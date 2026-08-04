@@ -42,6 +42,7 @@ async def _candidates(watchlist: Watchlist, context: WatchlistContext | None) ->
     async with get_async_session() as session:
         stmt = select(Listing)
         stmt = stmt.where(Listing.last_seen_at >= stale_cutoff())
+        stmt = stmt.where(Listing.sold_at.is_(None))
         if context is not None:
             if context.max_budget:
                 stmt = stmt.where(Listing.price <= context.max_budget * 1.2)

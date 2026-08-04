@@ -66,6 +66,7 @@ async def pool_candidates(watchlist_id: int, *, limit: int = 50) -> list[Listing
             select(Listing)
             .where(Listing.embedding.isnot(None))
             .where(Listing.last_seen_at >= stale_cutoff())
+            .where(Listing.sold_at.is_(None))
             .where(Listing.id.not_in(seen))
             .where(
                 Listing.embedding.cosine_distance(watchlist.intent_embedding)

@@ -112,6 +112,7 @@ async def _comps(watchlist: Watchlist) -> list[Listing]:
             stmt = (
                 select(Listing)
                 .where(Listing.last_seen_at >= stale_cutoff())
+                .where(Listing.sold_at.is_(None))
                 .where(Listing.embedding.isnot(None))
                 .order_by(Listing.embedding.cosine_distance(watchlist.intent_embedding))
                 .limit(_COMPS_LIMIT)

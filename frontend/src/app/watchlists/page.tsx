@@ -29,6 +29,8 @@ interface Watchlist {
   min_score: number;
   expires_at: string | null;
   context: WatchlistContext | null;
+  playbook: string | null;
+  playbook_updated_at: string | null;
 }
 
 interface Listing {
@@ -377,6 +379,20 @@ function WatchlistCard({
                 </span>
               )}
             </div>
+          </div>
+
+          <div className={styles.playbookBlock}>
+            <div className={styles.playbookHeader}>
+              <span className={styles.playbookLabel}>scout&apos;s playbook</span>
+            </div>
+            {watchlist.playbook ? (
+              <p className={styles.playbookText}>{watchlist.playbook}</p>
+            ) : (
+              <p className={styles.playbookPending}>
+                Scout is putting your playbook together. It lands after the
+                first look at the market, usually within a minute.
+              </p>
+            )}
           </div>
         </div>
       )}

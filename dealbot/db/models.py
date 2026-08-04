@@ -127,6 +127,12 @@ class Watchlist(Base):
     hunting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     hunt_frequency_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_hunt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Scout's category playbook (Layer 1 of the Deal Inspector): generated on
+    # creation and profile edits, alongside the ranking recompute.
+    playbook: Mapped[str | None] = mapped_column(Text, nullable=True)
+    playbook_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     user: Mapped[User] = relationship("User", back_populates="watchlists")
     hunt_queries: Mapped[list[HuntQuery]] = relationship(

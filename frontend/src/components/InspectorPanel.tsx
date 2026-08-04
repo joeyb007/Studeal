@@ -232,17 +232,9 @@ export default function InspectorPanel({
           {!inspection && !failed && !capped && (
             <div className={styles.scoutRow}>
               <ScoutAvatar />
-              <div className={styles.working}>
-                {STAGES.slice(0, stage + 1).map((label, i) => (
-                  <span key={label} className={styles.stageLine}>
-                    {i < stage ? (
-                      <span className={styles.stageDone}>✓</span>
-                    ) : (
-                      <span className={styles.workingDot} />
-                    )}
-                    {label}
-                  </span>
-                ))}
+              <div className={styles.workingWrap}>
+                <span className={styles.workingText}>{STAGES[stage]}</span>
+                <TypingBubble />
               </div>
             </div>
           )}
@@ -379,12 +371,7 @@ export default function InspectorPanel({
           {replying && (
             <div className={styles.scoutRow}>
               <ScoutAvatar />
-              <div className={styles.working}>
-                <span className={styles.stageLine}>
-                  <span className={styles.workingDot} />
-                  Scout is thinking…
-                </span>
-              </div>
+              <TypingBubble />
             </div>
           )}
         </div>
@@ -433,10 +420,23 @@ const STAGES = [
   "Checking it against the market…",
 ];
 
+function TypingBubble() {
+  return (
+    <div className={styles.typingBubble} aria-hidden>
+      <span className={styles.typingDot} />
+      <span className={styles.typingDot} />
+      <span className={styles.typingDot} />
+    </div>
+  );
+}
+
 function ScoutAvatar() {
   return (
     <span className={styles.avatar} aria-hidden>
-      <img src="/logo.svg" alt="" className={styles.avatarImg} />
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+        <path d="M12 3 L14 12 L12 21 L10 12 Z" />
+        <path d="M3 12 L12 10 L21 12 L12 14 Z" />
+      </svg>
     </span>
   );
 }

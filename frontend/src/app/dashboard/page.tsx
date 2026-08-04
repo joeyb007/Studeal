@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import InspectorPanel from "@/components/InspectorPanel";
 import PoolCard, { MARKETPLACE_LABELS, PoolListing } from "@/components/PoolCard";
 import { MultiSelect } from "@/components/Select";
 import styles from "./page.module.css";
@@ -76,6 +77,7 @@ function DashboardPageInner() {
   const [marketplaces, setMarketplaces] = useState<string[]>([]);
   const [conditions, setConditions] = useState<string[]>([]);
   const [maxPrice, setMaxPrice] = useState("");
+  const [inspecting, setInspecting] = useState<PoolListing | null>(null);
   const [offset, setOffset] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -329,7 +331,12 @@ function DashboardPageInner() {
         <>
           <div className={styles.poolGrid} style={searchLoading ? { opacity: 0.55 } : undefined}>
             {displayed.map((listing, i) => (
-              <PoolCard key={`${listing.id}-${i}`} listing={listing} index={i % PAGE_SIZE} />
+              <PoolCard
+                key={`${listing.id}-${i}`}
+                listing={listing}
+                index={i % PAGE_SIZE}
+                onInspect={() => setInspecting(listing)}
+              />
             ))}
           </div>
           {canLoadMore && (
@@ -346,6 +353,10 @@ function DashboardPageInner() {
             </button>
           )}
         </>
+      )}
+
+      {inspecting && (
+        <InspectorPanel listing={inspecting} onClose={() => setInspecting(null)} />
       )}
     </main>
   );

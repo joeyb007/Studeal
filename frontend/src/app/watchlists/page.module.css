@@ -1105,3 +1105,19 @@
   color: var(--text-secondary);
   opacity: 0.6;
 }
+
+.dealScoutBtn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  opacity: 0.75;
+  white-space: nowrap;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.dealScoutBtn:hover { opacity: 1; color: var(--accent); }

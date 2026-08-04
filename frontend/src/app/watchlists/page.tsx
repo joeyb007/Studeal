@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AgentBuilder from "@/components/AgentBuilder";
+import InspectorPanel from "@/components/InspectorPanel";
 import { toast } from "@/components/Toast";
 import styles from "./page.module.css";
 
@@ -67,7 +68,15 @@ function pct(listed: number, sale: number) {
   return Math.round(((listed - sale) / listed) * 100);
 }
 
-function ListingRow({ listing, alert }: { listing: Listing; alert?: AlertIndex[number] }) {
+function ListingRow({
+  listing,
+  alert,
+  onInspect,
+}: {
+  listing: Listing;
+  alert?: AlertIndex[number];
+  onInspect: () => void;
+}) {
   const score = alert?.score ?? (listing.relevance_score > 0 ? listing.relevance_score : null);
   const isNew = alert !== undefined &&
     Date.now() - new Date(alert.created_at).getTime() < 48 * 3600 * 1000;
@@ -94,6 +103,9 @@ function ListingRow({ listing, alert }: { listing: Listing; alert?: AlertIndex[n
         <span className={styles.dealPrice}>
           ${listing.price.toFixed(2)} {listing.currency}
         </span>
+        <button type="button" className={styles.dealScoutBtn} onClick={onInspect}>
+          Send to Scout
+        </button>
         <a
           href={listing.url}
           target="_blank"
@@ -126,6 +138,7 @@ function WatchlistCard({
   // v14 marketplace listings + hunt trigger
   const [listings, setListings] = useState<Listing[] | null>(null);
   const [showAllListings, setShowAllListings] = useState(false);
+  const [inspecting, setInspecting] = useState<Listing | null>(null);
   const [listingsMeta, setListingsMeta] = useState<{ total: number; reranked: boolean } | null>(null);
   const [loadingListings, setLoadingListings] = useState(false);
 
@@ -430,7 +443,11 @@ function WatchlistCard({
                     {i === weakStart && weakStart > 0 && (
                       <div className={styles.weakDivider}>weaker matches</div>
                     )}
-                    <ListingRow listing={l} alert={alertIndex[l.id]} />
+                    <ListingRow
+                      listing={l}
+                      alert={alertIndex[l.id]}
+                      onInspect={() => setInspecting(l)}
+                    />
                   </div>
                 ))}
                 {listings.length > 20 && (
@@ -447,6 +464,14 @@ function WatchlistCard({
             );
           })()}
         </div>
+      )}
+
+      {inspecting && (
+        <InspectorPanel
+          listing={inspecting}
+          watchlistId={watchlist.id}
+          onClose={() => setInspecting(null)}
+        />
       )}
     </div>
   );

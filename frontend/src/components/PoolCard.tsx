@@ -52,9 +52,11 @@ export function timeAgo(iso: string): string {
 export default function PoolCard({
   listing,
   index = 0,
+  onInspect,
 }: {
   listing: PoolListing;
   index?: number;
+  onInspect?: () => void;
 }) {
   const conditionLabel =
     listing.condition && listing.condition !== "unknown"
@@ -112,9 +114,16 @@ export default function PoolCard({
             </span>
           )}
         </div>
-        <a href={listing.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
-          View →
-        </a>
+        <div className={styles.actions}>
+          {onInspect && (
+            <button type="button" className={styles.scoutBtn} onClick={onInspect}>
+              Send to Scout
+            </button>
+          )}
+          <a href={listing.url} target="_blank" rel="noopener noreferrer" className={styles.buyBtn}>
+            View →
+          </a>
+        </div>
       </div>
     </div>
   );

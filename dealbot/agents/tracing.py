@@ -458,6 +458,11 @@ class PublishingTraceWriter(TraceWriter):
             query=self._query, marketplace=self._marketplace,
             turn=orchestrator_turn, image_data_url=data_url,
         ))
+        # Latest-frame persistence: page loads seed from this instead of
+        # showing "connecting" until the next live frame happens to arrive.
+        self._publisher.store_lane_frame_nowait(
+            self._hunt_id, self._marketplace, self._query, data_url,
+        )
 
     def record_error(
         self,

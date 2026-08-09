@@ -79,6 +79,7 @@ export default function AgentCard({
     status: string;
     pages: number;
     done_reason: string | null;
+    frame: string | null;
   }
   const [seedLanes, setSeedLanes] = useState<SeedLane[]>([]);
   useEffect(() => {
@@ -128,6 +129,9 @@ export default function AgentCard({
       const l = lane(seed.marketplace, seed.query);
       l.queued = seed.status === "queued";
       l.pages = seed.pages;
+      // Persisted latest frame: the tile shows the agent's last look
+      // immediately on page load; live frames overwrite as they arrive.
+      if (seed.frame && !l.done) l.shot = seed.frame;
       if (seed.status === "done" || seed.status === "error") {
         l.done = true;
         l.doneReason = seed.done_reason;
@@ -296,7 +300,7 @@ export default function AgentCard({
                   </div>
                 ) : l.shot ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={l.shot} alt={`${l.marketplace} viewport`} className={styles.laneShot} />
+                  <img key={l.shot} src={l.shot} alt={`${l.marketplace} viewport`} className={styles.laneShot} />
                 ) : l.queued && !l.action ? (
                   <div className={styles.laneQueued}>queued</div>
                 ) : (

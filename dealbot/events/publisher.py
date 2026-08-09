@@ -57,6 +57,32 @@ class RedisEventPublisher:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    async def store_lane_frame(
+        self, hunt_id: int, marketplace: str, query: str, data_url: str,
+    ) -> None:
+        """Persist the lane's latest viewport frame (30 min TTL) so Mission
+        Control can seed tiles instantly on page load instead of waiting for
+        the next live frame. Never raises."""
+        try:
+            await self._get_client().setex(
+                f"lane_frame:{hunt_id}:{marketplace}:{query}", 1800, data_url,
+            )
+        except Exception as exc:
+            logger.warning("RedisEventPublisher: frame store failed: %s", exc)
+
+    def store_lane_frame_nowait(
+        self, hunt_id: int, marketplace: str, query: str, data_url: str,
+    ) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(
+            self.store_lane_frame(hunt_id, marketplace, query, data_url)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.aclose()

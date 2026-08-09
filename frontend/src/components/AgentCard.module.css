@@ -269,6 +269,27 @@
   height: 100%;
   object-fit: cover;
   object-position: top;
+  /* Browsing drift: frames arrive every 10-30s (one per nav turn), so a
+     slow pan/zoom between updates keeps the viewport feeling alive instead
+     of freeze-framed. New frames fade in over the drift. */
+  animation: laneDrift 18s ease-in-out infinite alternate,
+             laneFrameIn 0.6s ease;
+  will-change: transform;
+}
+
+@keyframes laneDrift {
+  0%   { transform: scale(1.02) translateY(-1%); }
+  45%  { transform: scale(1.09) translateY(-4%); }
+  100% { transform: scale(1.04) translateY(2%); }
+}
+
+@keyframes laneFrameIn {
+  from { opacity: 0.35; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .laneShot { animation: none; }
 }
 
 .laneWaiting {

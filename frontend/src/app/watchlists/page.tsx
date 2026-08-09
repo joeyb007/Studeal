@@ -59,6 +59,25 @@ interface ListingsResponse {
 export type AlertIndex = Record<number, { reason: string | null; score: number; created_at: string }>;
 
 
+// Scout's playbook arrives as prose under four fixed headings; parse it into
+// labeled sections (stray markdown bold stripped). Null → render raw fallback.
+const PLAYBOOK_HEADINGS = ["What to check", "The going rate", "How to haggle", "Your walk-away"];
+
+function parsePlaybook(text: string): { heading: string; body: string }[] | null {
+  const clean = text.replace(/\*\*/g, "");
+  const found = PLAYBOOK_HEADINGS.map(h => ({ h, i: clean.indexOf(h) }));
+  if (found.some(f => f.i === -1)) return null;
+  for (let k = 1; k < found.length; k++) {
+    if (found[k].i < found[k - 1].i) return null;
+  }
+  return found.map((f, k) => ({
+    heading: f.h,
+    body: clean
+      .slice(f.i + f.h.length, k + 1 < found.length ? found[k + 1].i : clean.length)
+      .trim(),
+  }));
+}
+
 function daysUntil(isoString: string): number {
   const ms = new Date(isoString).getTime() - Date.now();
   return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
@@ -130,7 +149,6 @@ function WatchlistCard({
   token: string | undefined;
   alertIndex: AlertIndex;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [ctx, setCtx] = useState<WatchlistContext | null>(watchlist.context);
   const [patching, setPatching] = useState(false);
@@ -224,12 +242,12 @@ function WatchlistCard({
   }
 
 
-  function toggle() {
-    if (!expanded) {
-      loadListings();
-    }
-    setExpanded(v => !v);
-  }
+  // Matches are the card's payload: load once on mount, always visible.
+  // (The old expand caret gated this; "Show all N" handles density now.)
+  useEffect(() => {
+    loadListings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -246,10 +264,7 @@ function WatchlistCard({
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
-        <button className={styles.cardToggle} onClick={toggle}>
-          <span className={styles.cardName}>{watchlist.name}</span>
-          <span className={styles.toggleChevron}>{expanded ? "▲" : "▼"}</span>
-        </button>
+        <span className={styles.cardName}>{watchlist.name}</span>
         <div className={styles.cardActions}>
           {days !== null && (
             <span className={styles.expiry}>
@@ -399,18 +414,29 @@ function WatchlistCard({
               <span className={styles.playbookLabel}>scout&apos;s playbook</span>
             </div>
             {watchlist.playbook ? (
-              <p className={styles.playbookText}>{watchlist.playbook}</p>
+              (() => {
+                const sections = parsePlaybook(watchlist.playbook);
+                return sections ? (
+                  <div className={styles.playbookSections}>
+                    {sections.map(s => (
+                      <div key={s.heading} className={styles.playbookSection}>
+                        <span className={styles.playbookSectionLabel}>{s.heading}</span>
+                        <p className={styles.playbookBody}>{s.body}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.playbookText}>{watchlist.playbook.replace(/\*\*/g, "")}</p>
+                );
+              })()
             ) : (
-              <p className={styles.playbookPending}>
-                Scout is putting your playbook together. It lands after the
-                first look at the market, usually within a minute.
-              </p>
+              <p className={styles.playbookPending}>Scout is writing your playbook…</p>
             )}
           </div>
         </div>
       )}
 
-      {expanded && (
+      {(
         <div className={styles.dealsSection}>
           <p className={styles.dealCount}>
             Marketplace listings

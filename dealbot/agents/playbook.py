@@ -78,7 +78,9 @@ Rules:
 - "How to haggle": norms for the marketplaces listed (local classifieds expect
   offers; fixed-price retail mostly does not), typical discount depth.
 - "Your walk-away": concrete numbers from their budget and the band.
-- 180-260 words total. Never use em dashes. No greetings, no sign-off."""
+- 180-260 words total. Plain text only: no markdown, no asterisks, no bold.
+  Each heading on its own line, exactly as written above.
+- Never use em dashes. No greetings, no sign-off."""
 
 
 def _render_grounding(context: WatchlistContext, comps: list[Listing]) -> str:
@@ -139,7 +141,7 @@ async def generate_playbook(watchlist_id: int) -> bool:
             {"role": "system", "content": PLAYBOOK_SYSTEM},
             {"role": "user", "content": grounding},
         ])
-        text = sanitize((response.content or "").strip())
+        text = sanitize((response.content or "").strip()).replace("**", "")
         if not text:
             return False
 

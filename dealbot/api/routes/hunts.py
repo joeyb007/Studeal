@@ -90,6 +90,26 @@ class HuntLaneResponse(BaseModel):
     status: str
     pages: int
     done_reason: str | None
+    frame: str | None = None          # latest viewport frame (data URL)
+
+
+async def _lane_frames(hunt_id: int, lanes: list[HuntLane]) -> dict[tuple[str, str], str]:
+    """Latest persisted frame per lane from Redis; {} on any failure."""
+    import os
+
+    import redis.asyncio as aioredis
+
+    try:
+        client = aioredis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        keys = [f"lane_frame:{hunt_id}:{l.marketplace}:{l.query}" for l in lanes]
+        values = await client.mget(keys)
+        await client.aclose()
+        return {
+            (l.marketplace, l.query): v.decode() if isinstance(v, bytes) else v
+            for l, v in zip(lanes, values) if v
+        }
+    except Exception:
+        return {}
 
 
 @router.get("/{hunt_id}/lanes", response_model=list[HuntLaneResponse])
@@ -109,10 +129,12 @@ async def list_hunt_lanes(
                    Watchlist.user_id == current_user.id)
             .order_by(HuntLane.marketplace, HuntLane.query)
         )).scalars().all()
+    frames = await _lane_frames(hunt_id, list(rows))
     return [
         HuntLaneResponse(
             query=lane.query, marketplace=lane.marketplace,
             status=lane.status, pages=lane.pages, done_reason=lane.done_reason,
+            frame=frames.get((lane.marketplace, lane.query)),
         )
         for lane in rows
     ]

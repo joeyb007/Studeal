@@ -1121,3 +1121,31 @@
 }
 
 .dealScoutBtn:hover { opacity: 1; color: var(--accent); }
+
+.playbookSections {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.playbookSection {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.playbookSectionLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.playbookBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}

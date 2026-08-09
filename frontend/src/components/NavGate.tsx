@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import Nav from "./Nav";
+import SessionSentinel from "./SessionSentinel";
 
 // App chrome is stable: Nav mounts once here (root layout, OUTSIDE the
 // page-transition template) so it never re-animates or remounts on
@@ -12,5 +13,11 @@ const APP_PREFIXES = ["/dashboard", "/watchlists", "/mission-control", "/catalog
 export default function NavGate() {
   const pathname = usePathname();
   const inApp = APP_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-  return inApp ? <Nav /> : null;
+  if (!inApp) return null;
+  return (
+    <>
+      <Nav />
+      <SessionSentinel />
+    </>
+  );
 }

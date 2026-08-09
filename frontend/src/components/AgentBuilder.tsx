@@ -156,7 +156,6 @@ export default function AgentBuilder({
     <div className={[styles.card, closing ? styles.cardClosing : ""].join(" ")}>
       <div className={styles.cardHeader}>
         <span className={styles.cardLabel}>scout</span>
-        <span className={styles.liveDot} />
       </div>
 
       <div className={styles.thread} ref={threadRef}>

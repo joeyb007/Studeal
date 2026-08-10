@@ -50,10 +50,21 @@ interface Inspection {
   cached: boolean;
 }
 
+interface Rundown {
+  deal: string;
+  verified: { check: string; evidence: string | null }[];
+  at_pickup: string[];
+  walk_if: string[];
+  safety: string;
+}
+
 interface ChatMsg {
   role: "user" | "assistant" | "sys";
   content: string;
   images?: string[];               // media keys
+  sendNext?: string;               // ready-to-send seller message riding this reply
+  kind?: "closer" | "rundown";
+  rundown?: Rundown;
 }
 
 interface PendingImage {
@@ -92,6 +103,8 @@ export default function InspectorPanel({
   const [replying, setReplying] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [rundownBusy, setRundownBusy] = useState(false);
+  const [rundownDone, setRundownDone] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showNotes, setShowNotes] = useState(false);
   const [stage, setStage] = useState(0);
@@ -173,6 +186,26 @@ export default function InspectorPanel({
     })();
     return () => { cancelled = true; };
   }, [watchlistId, inspection?.status, listing.id]);
+
+  const fetchRundown = async () => {
+    if (!watchlistId || rundownBusy) return;
+    setRundownBusy(true);
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/rundown`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ watchlist_id: watchlistId }),
+      });
+      if (!res.ok) return;
+      const data: Rundown = await res.json();
+      setMessages(m => [...m, { role: "assistant", content: "", kind: "rundown", rundown: data }]);
+      setRundownDone(true);
+    } catch {
+      /* the chip stays; they can tap again */
+    } finally {
+      setRundownBusy(false);
+    }
+  };
 
   const toggleCheck = async (index: number, status: "open" | "satisfied") => {
     try {
@@ -289,10 +322,15 @@ export default function InspectorPanel({
         }),
       });
       const data = await res.json();
-      setMessages([...next, {
+      const additions: ChatMsg[] = [{
         role: "assistant",
         content: res.ok ? data.reply : "I hit a snag answering that one. Give it another try in a moment.",
-      }]);
+        sendNext: res.ok && data.send_next ? data.send_next : undefined,
+      }];
+      if (res.ok && data.closer) {
+        additions.push({ role: "assistant", content: data.closer, kind: "closer" });
+      }
+      setMessages([...next, ...additions]);
       if (res.ok && data.checklist) applyChecklist(data.checklist);
     } catch {
       setMessages([...next, {
@@ -471,6 +509,13 @@ export default function InspectorPanel({
                     ))}
                   </div>
                 )}
+                {report.seller_questions.length > 0
+                  && checklist?.items.some(i => i.status === "open" && i.verify_via === "ask_seller") && (
+                  <div className={styles.sendNext}>
+                    <span className={styles.sendNextMsg}>&quot;{report.seller_questions[0]}&quot;</span>
+                    <CopyBtn text={report.seller_questions[0]} />
+                  </div>
+                )}
                 {checklist?.tailoring && !checklist.tailoring.answer && (
                   <div className={styles.tailoring}>
                     <p className={styles.tailoringQ}>{checklist.tailoring.question}</p>
@@ -519,11 +564,33 @@ export default function InspectorPanel({
                 {messages[i - 1]?.role !== "assistant" && (
                   <div className={styles.who}><ScoutAvatar small /> scout</div>
                 )}
-                <div className={[styles.scoutBubble, messages[i - 1]?.role !== "assistant" ? styles.scoutBubbleFirst : ""].join(" ")}>
-                  <p className={styles.sectionText}>{m.content}</p>
-                </div>
+                {m.kind === "rundown" && m.rundown ? (
+                  <RundownCard rundown={m.rundown} first={messages[i - 1]?.role !== "assistant"} />
+                ) : (
+                  <div className={[
+                    styles.scoutBubble,
+                    messages[i - 1]?.role !== "assistant" ? styles.scoutBubbleFirst : "",
+                    m.kind === "closer" ? styles.closer : "",
+                  ].join(" ")}>
+                    <p className={styles.sectionText}>{m.content}</p>
+                    {m.sendNext && (
+                      <div className={styles.sendNext}>
+                        <span className={styles.sendNextMsg}>&quot;{m.sendNext}&quot;</span>
+                        <CopyBtn text={m.sendNext} />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ),
+          )}
+
+          {checklist?.ready && watchlistId && !rundownDone && inspection?.status === "ok" && (
+            <div className={styles.rundownOffer}>
+              <button type="button" className={styles.qchip} disabled={rundownBusy} onClick={fetchRundown}>
+                {rundownBusy ? "putting it together…" : "get the pickup rundown"}
+              </button>
+            </div>
           )}
 
           {replying && (
@@ -634,6 +701,90 @@ function ScoutAvatar({ small = false }: { small?: boolean }) {
         <path d="M3 12 L12 10 L21 12 L12 14 Z" />
       </svg>
     </span>
+  );
+}
+
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={styles.copyBtn}
+      onClick={() => {
+        navigator.clipboard?.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+function rundownText(r: Rundown): string {
+  const lines = [`PICKUP RUNDOWN · ${r.deal}`];
+  if (r.verified.length) {
+    lines.push("Verified:");
+    for (const v of r.verified) lines.push(`  ✓ ${v.check}${v.evidence ? ` (${v.evidence})` : ""}`);
+  }
+  if (r.at_pickup.length) {
+    lines.push("Check at pickup:");
+    for (const t of r.at_pickup) lines.push(`  ! ${t}`);
+  }
+  if (r.walk_if.length) {
+    lines.push("Walk if:");
+    for (const t of r.walk_if) lines.push(`  ✕ ${t}`);
+  }
+  lines.push(r.safety);
+  return lines.join("\n");
+}
+
+function RundownCard({ rundown, first }: { rundown: Rundown; first: boolean }) {
+  return (
+    <div className={[styles.scoutBubble, first ? styles.scoutBubbleFirst : "", styles.rundownCard].join(" ")}>
+      <div className={styles.rundownHead}>
+        <span className={styles.rundownLabel}>pickup rundown</span>
+        <CopyBtn text={rundownText(rundown)} />
+      </div>
+      <p className={styles.rundownDeal}>{rundown.deal}</p>
+      {rundown.verified.length > 0 && (
+        <>
+          <span className={styles.rundownSection} style={{ color: "var(--success)" }}>verified</span>
+          {rundown.verified.map((v, i) => (
+            <div key={i} className={styles.rundownRow}>
+              <span className={[styles.tick, styles.tickOn].join(" ")}>✓</span>
+              <span className={styles.rundownRowText}>
+                {v.check}
+                {v.evidence && <i className={styles.rundownEvidence}> · {v.evidence}</i>}
+              </span>
+            </div>
+          ))}
+        </>
+      )}
+      {rundown.at_pickup.length > 0 && (
+        <>
+          <span className={styles.rundownSection} style={{ color: "var(--amber)" }}>check at pickup</span>
+          {rundown.at_pickup.map((t, i) => (
+            <div key={i} className={styles.rundownRow}>
+              <span className={[styles.tick, styles.tickWarn].join(" ")}>!</span>
+              <span className={styles.rundownRowText}>{t}</span>
+            </div>
+          ))}
+        </>
+      )}
+      {rundown.walk_if.length > 0 && (
+        <>
+          <span className={styles.rundownSection} style={{ color: "var(--danger)" }}>walk if</span>
+          {rundown.walk_if.map((t, i) => (
+            <div key={i} className={styles.rundownRow}>
+              <span className={[styles.tick, styles.tickFlag].join(" ")}>✕</span>
+              <span className={styles.rundownRowText}>{t}</span>
+            </div>
+          ))}
+        </>
+      )}
+      <p className={styles.rundownSafety}>{rundown.safety}</p>
+    </div>
   );
 }
 

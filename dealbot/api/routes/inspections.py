@@ -289,6 +289,8 @@ class InspectionChatRequest(BaseModel):
 class InspectionChatResponse(BaseModel):
     reply: str
     checklist: dict | None = None      # updated ready-to-buy state, when one exists
+    send_next: str | None = None       # ready-to-send seller message, when the moment calls
+    closer: str | None = None          # the finish-line call, fired once when ready flips
 
 
 @router.post("/{listing_id}/inspect", response_model=InspectionResponse)
@@ -562,6 +564,13 @@ class ChecklistResponse(BaseModel):
     tailoring: dict | None = None      # {question, chips, answer} when Scout asked
 
 
+def _items_ready(items: list) -> bool:
+    return (
+        len(items) > 0
+        and all(i.get("status") == "satisfied" for i in items)
+    )
+
+
 def _checklist_response(row: InspectionChecklist) -> ChecklistResponse:
     items = [ChecklistItem(**item) for item in row.items]
     # Ready means NOTHING in the way: every check satisfied, none flagged.
@@ -764,21 +773,27 @@ async def inspection_verdict(
 
 CHAT_SYSTEM = """You are Scout, the user's expert friend who already took a close
 look at ONE marketplace listing for them. The inspection notes below are what you
-saw. The user is now chatting with you about it.
+saw. The user is chatting with you about it, often WHILE talking to the seller
+in another window. You are the other conversation: the wingman.
 
-Rules:
-- Ground every claim in the inspection notes, the listing facts, or the market
-  numbers provided. If they ask something the inspection cannot answer, say so
-  plainly and either point at the seller question that would settle it or offer
-  a fresh look ("want me to take another look?").
-- You cannot take new actions from this chat (no revisiting the page, no
-  messaging the seller). Be upfront when asked; hand them exactly what to send
-  instead.
-- If buyer context is provided, tailor advice to it; otherwise keep advice
-  general and say numbers depend on their budget.
-- Short, direct, warm. Plain language. Plain text only: no markdown, no
-  asterisks, no bold, no numbered headings. Never use em dashes. No stock
-  closers."""
+Output JSON: {"reply": str, "send_next": str|null}
+- reply: your conversational answer. Ground every claim in the inspection
+  notes, the listing facts, or the market numbers provided. If they ask
+  something the inspection cannot answer, say so plainly and point at what
+  would settle it.
+- send_next: a short ready-to-send message TO THE SELLER, only when the moment
+  calls for one: an unanswered ask-the-seller check being discussed, or a
+  price move. Casual buyer's voice, under 200 chars. null on most turns.
+- Negotiation: when the buyer reports a seller price, coach the counter using
+  ONLY the market numbers provided (open, fair range, walk-away). Under the
+  fair range is a deal worth taking; past the walk-away means walk. Never
+  invent numbers.
+- You cannot take actions yourself (no revisiting the page, no messaging the
+  seller directly). Hand them exactly what to send instead.
+- If buyer context is provided, tailor advice to it.
+- Short, direct, warm. Plain language. Plain text inside the strings: no
+  markdown, no asterisks, no bold. Never use em dashes. No stock closers.
+  JSON only."""
 
 
 def _grounding(listing: Listing, inspection: dict, playbook: str | None,
@@ -968,9 +983,19 @@ async def inspection_chat(
         }
     llm = _chat_llm()
     failed = False
+    send_next = None
     try:
-        response = await llm.complete(messages)
-        reply = sanitize((response.content or "").strip()).replace("**", "")
+        response = await llm.complete(messages, response_format={"type": "json_object"})
+        raw = (response.content or "").strip()
+        try:
+            parsed = json.loads(raw)
+            reply = sanitize(str(parsed.get("reply", "")).strip()).replace("**", "")
+            next_msg = parsed.get("send_next")
+            if isinstance(next_msg, str) and next_msg.strip():
+                send_next = sanitize(next_msg.strip())[:220]
+        except (json.JSONDecodeError, TypeError):
+            # Model ignored the schema: the raw text is still a usable reply.
+            reply = sanitize(raw).replace("**", "")
     except Exception:
         logger.exception("inspection chat failed for listing %d", listing_id)
         reply = ""
@@ -1002,6 +1027,7 @@ async def inspection_chat(
 
     # The conversation is evidence: let it settle open checks. Best-effort.
     checklist_payload = None
+    closer = None
     if not failed and watchlist is not None:
         try:
             async with get_async_session() as session:
@@ -1009,6 +1035,7 @@ async def inspection_chat(
                     InspectionChecklist, (current_user.id, listing_id)
                 )
             if row is not None and any(i.get("status") == "open" for i in row.items):
+                was_ready = _items_ready(row.items)
                 evidence = (
                     f"The buyer said: {history[-1]['content']}\n"
                     + (f"(The buyer attached {len(image_parts)} screenshot(s); "
@@ -1025,10 +1052,174 @@ async def inspection_chat(
                         fresh.updated_at = datetime.now(timezone.utc)
                         await session.commit()
                         checklist_payload = _checklist_response(fresh).model_dump()
+                # The finish line: everything just checked out. Deterministic
+                # numbers; posted once, persisted like any Scout message.
+                if not was_ready and _items_ready(items):
+                    negotiation = (market or {}).get("negotiation") if market else None
+                    if negotiation:
+                        closer = (
+                            f"Ready to buy. Everything on the list checked out. "
+                            f"Offer ${negotiation['open']}; anywhere under "
+                            f"${negotiation['fair_high']} is a fair deal, and walk "
+                            f"past ${negotiation['walk']}."
+                        )
+                    else:
+                        closer = "Ready to buy. Everything on the list checked out."
+                    try:
+                        async with get_async_session() as session:
+                            session.add(InspectionMessage(
+                                user_id=current_user.id, listing_id=listing_id,
+                                role="assistant", content=closer,
+                            ))
+                            await session.commit()
+                    except Exception:
+                        logger.warning("closer persist failed (listing %d)", listing_id)
         except Exception:
             logger.warning("chat checklist update failed (listing %d)",
                            listing_id, exc_info=True)
-    return InspectionChatResponse(reply=reply, checklist=checklist_payload)
+    return InspectionChatResponse(
+        reply=reply, checklist=checklist_payload, send_next=send_next, closer=closer,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The pickup rundown (send-to-scout v2, stage 4)
+# ---------------------------------------------------------------------------
+
+MEETUP_SAFETY = ("Meet somewhere public and test before you pay. Cash or "
+                 "e-transfer in person; never send a deposit to hold an item.")
+
+RUNDOWN_SYSTEM = """You are Scout. The buyer is about to go pick up a secondhand
+item. Turn their remaining checks into concrete test instructions, and their
+flagged concerns into red lines.
+
+Output JSON: {"at_pickup": [str], "walk_if": [str]}
+- at_pickup: ONE imperative per open check, with the concrete HOW for this
+  category ("play a bass-heavy track; listen for stutter in each ear").
+  Under 90 chars each.
+- walk_if: red lines from the flagged concerns only; nothing invented.
+  Under 90 chars each.
+- Never use em dashes. JSON only."""
+
+
+class RundownRequest(BaseModel):
+    watchlist_id: int
+
+
+class RundownVerified(BaseModel):
+    check: str
+    evidence: str | None = None
+
+
+class RundownResponse(BaseModel):
+    deal: str
+    verified: list[RundownVerified]
+    at_pickup: list[str]
+    walk_if: list[str]
+    safety: str
+
+
+def _rundown_text(r: "RundownResponse") -> str:
+    lines = [f"PICKUP RUNDOWN · {r.deal}"]
+    if r.verified:
+        lines.append("Verified:")
+        lines += [f"  ✓ {v.check}" + (f" ({v.evidence})" if v.evidence else "") for v in r.verified]
+    if r.at_pickup:
+        lines.append("Check at pickup:")
+        lines += [f"  ! {t}" for t in r.at_pickup]
+    if r.walk_if:
+        lines.append("Walk if:")
+        lines += [f"  ✕ {t}" for t in r.walk_if]
+    lines.append(r.safety)
+    return "\n".join(lines)
+
+
+@router.post("/{listing_id}/rundown", response_model=RundownResponse)
+async def pickup_rundown(
+    listing_id: int,
+    body: RundownRequest,
+    current_user: User = Depends(get_current_user),
+) -> RundownResponse:
+    """The keepable parking-lot card. Checks and numbers assemble
+    deterministically; the LLM only writes the how-to-test imperatives."""
+    async with get_async_session() as session:
+        listing = await session.get(Listing, listing_id)
+        watchlist = await session.get(Watchlist, body.watchlist_id)
+        row = await session.get(InspectionChecklist, (current_user.id, listing_id))
+    if listing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+    if watchlist is None or watchlist.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    if row is None or not row.items:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No checklist to run down yet.")
+
+    context = (
+        WatchlistContext.model_validate_json(watchlist.context)
+        if watchlist.context else None
+    )
+    market = await _watchlist_market(watchlist, context)
+    negotiation = (market or {}).get("negotiation") if market else None
+    typical = (market or {}).get("typical") if market else None
+
+    deal = f"{listing.title[:60]} · ${listing.price:.0f}"
+    if typical:
+        delta = round(typical - listing.price)
+        if delta > 0:
+            deal += f" · ${delta} under typical"
+        elif delta < 0:
+            deal += f" · ${-delta} over typical"
+
+    verified = [
+        RundownVerified(check=i["check"], evidence=i.get("evidence"))
+        for i in row.items if i.get("status") == "satisfied"
+    ]
+    open_checks = [i["check"] for i in row.items if i.get("status") == "open"]
+    flagged = [i["check"] for i in row.items if i.get("status") == "flagged"]
+
+    at_pickup = list(open_checks)
+    walk_if = list(flagged)
+    if open_checks or flagged:
+        try:
+            response = await _chat_llm().complete(
+                [
+                    {"role": "system", "content": RUNDOWN_SYSTEM},
+                    {"role": "user", "content": json.dumps({
+                        "category": context.product_query if context else listing.title,
+                        "open_checks": open_checks,
+                        "flagged": flagged,
+                    })},
+                ],
+                response_format={"type": "json_object"},
+            )
+            parsed = json.loads(response.content or "{}")
+            polished = [sanitize(str(t).strip())[:110] for t in (parsed.get("at_pickup") or []) if isinstance(t, str) and t.strip()]
+            if polished:
+                at_pickup = polished[:6]
+            red = [sanitize(str(t).strip())[:110] for t in (parsed.get("walk_if") or []) if isinstance(t, str) and t.strip()]
+            if red or not flagged:
+                walk_if = red[:4]
+        except Exception:
+            logger.warning("rundown polish failed for listing %d", listing_id, exc_info=True)
+
+    if negotiation:
+        walk_if.append(f"He moves the price past ${negotiation['walk']}")
+
+    rundown = RundownResponse(
+        deal=deal, verified=verified, at_pickup=at_pickup,
+        walk_if=walk_if, safety=MEETUP_SAFETY,
+    )
+
+    # The thread keeps the card: reopening the listing lands on it.
+    try:
+        async with get_async_session() as session:
+            session.add(InspectionMessage(
+                user_id=current_user.id, listing_id=listing_id,
+                role="assistant", content=_rundown_text(rundown),
+            ))
+            await session.commit()
+    except Exception:
+        logger.warning("rundown persist failed (listing %d)", listing_id)
+    return rundown
 
 
 class ThreadMessage(BaseModel):

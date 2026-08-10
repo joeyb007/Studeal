@@ -464,10 +464,15 @@ async def list_watchlist_listings(
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.",
                 )
+            # The cache is filtered at recompute time, but listings age and
+            # sell BETWEEN recomputes: the read re-checks liveness so a gone
+            # listing never lingers in someone's top picks.
             return list((await session.execute(
                 select(WatchlistRanking, Listing)
                 .join(Listing, Listing.id == WatchlistRanking.listing_id)
                 .where(WatchlistRanking.watchlist_id == watchlist_id)
+                .where(Listing.last_seen_at >= stale_cutoff())
+                .where(Listing.sold_at.is_(None))
                 .order_by(WatchlistRanking.position)
             )).all())
 

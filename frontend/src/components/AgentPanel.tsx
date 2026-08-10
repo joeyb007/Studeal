@@ -761,6 +761,23 @@ function NegotiationView({
         ? <SayLine lead="Your numbers for this market. " dim="Then what to know." />
         : <SayLine lead="How I'd play this category. " dim="Numbers land once the market fills in." />}
 
+      {neg && scale && (
+        <div className={styles.negChart}>
+          <div className={styles.negScale}>
+            <div className={styles.negZoneOpen} style={{ left: 0, width: pos(neg.open) }} />
+            <div className={styles.negZoneFair} style={{ left: pos(neg.fair_low), width: `calc(${pos(neg.fair_high)} - ${pos(neg.fair_low)})` }} />
+            <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
+            <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
+            <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
+          </div>
+          <div className={styles.negScaleLabels}>
+            <span>${Math.round(scale.lo)}</span>
+            <span>fair ${neg.fair_low}–{neg.fair_high}</span>
+            <span>${Math.round(scale.hi)}</span>
+          </div>
+        </div>
+      )}
+
       <div className={styles.negGrid}>
       {neg && (
         <div className={styles.negFig}>
@@ -822,6 +839,9 @@ function NegotiationView({
         </div>
       )}
 
+      </div>
+      </div>
+
       {messages.map((m, i) => (
         <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsgRow}>
           {m.role === "assistant" && <span className={[styles.avatar, styles.avatarActive].join(" ")}><ScoutGlyph /></span>}
@@ -857,25 +877,7 @@ function NegotiationView({
         />
         <button className={styles.cta} onClick={ask} disabled={asking || !draft.trim()}>Ask</button>
       </div>
-      </div>
-      </div>
 
-      {neg && scale && (
-        <div className={styles.negChart}>
-          <div className={styles.negScale}>
-            <div className={styles.negZoneOpen} style={{ left: 0, width: pos(neg.open) }} />
-            <div className={styles.negZoneFair} style={{ left: pos(neg.fair_low), width: `calc(${pos(neg.fair_high)} - ${pos(neg.fair_low)})` }} />
-            <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
-            <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
-            <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
-          </div>
-          <div className={styles.negScaleLabels}>
-            <span>${Math.round(scale.lo)}</span>
-            <span>fair ${neg.fair_low}–{neg.fair_high}</span>
-            <span>${Math.round(scale.hi)}</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

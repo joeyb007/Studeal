@@ -55,6 +55,11 @@ interface ChatMsg {
   content: string;
 }
 
+interface Checklist {
+  items: { check: string; status: "open" | "satisfied" | "flagged"; evidence: string | null }[];
+  ready: boolean;
+}
+
 export default function InspectorPanel({
   listing,
   watchlistId,
@@ -68,6 +73,7 @@ export default function InspectorPanel({
   const [failed, setFailed] = useState(false);
   const [capped, setCapped] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<string | null>(null);
+  const [checklist, setChecklist] = useState<Checklist | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [draft, setDraft] = useState("");
   const [replying, setReplying] = useState(false);
@@ -103,12 +109,19 @@ export default function InspectorPanel({
     }
   }, [listing.id]);
 
-  // Tier B: with a watchlist in context, fetch Scout's personal take once the
-  // report is in. Cheap text call; failure just means no second message.
+  // With a watchlist in context: seed the ready-to-buy checklist first (the
+  // verdict reads its state), then fetch Scout's personal take. Both are
+  // bonuses, never blockers.
   useEffect(() => {
     if (!watchlistId || inspection?.status !== "ok") return;
     let cancelled = false;
     (async () => {
+      try {
+        const cl = await fetch(`/api/listings/${listing.id}/checklist?watchlist_id=${watchlistId}`);
+        if (cl.ok && !cancelled) setChecklist(await cl.json());
+      } catch {
+        /* checklist is a bonus */
+      }
       try {
         const res = await fetch(`/api/listings/${listing.id}/verdict`, {
           method: "POST",
@@ -124,6 +137,19 @@ export default function InspectorPanel({
     })();
     return () => { cancelled = true; };
   }, [watchlistId, inspection?.status, listing.id]);
+
+  const toggleCheck = async (index: number, status: "open" | "satisfied") => {
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/checklist`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index, status }),
+      });
+      if (res.ok) setChecklist(await res.json());
+    } catch {
+      /* leave state as-is */
+    }
+  };
 
   useEffect(() => {
     inspect();
@@ -180,6 +206,7 @@ export default function InspectorPanel({
         role: "assistant",
         content: res.ok ? data.reply : "I hit a snag answering that one. Give it another try in a moment.",
       }]);
+      if (res.ok && data.checklist) setChecklist(data.checklist);
     } catch {
       setMessages([...next, {
         role: "assistant",
@@ -337,6 +364,51 @@ export default function InspectorPanel({
               ) : (
                 <FullNotes report={report} />
               )}
+            </div>
+            </div>
+          )}
+
+          {checklist && checklist.items.length > 0 && (
+            <div className={styles.scoutRow}>
+            <ScoutAvatar />
+            <div className={styles.scoutMsg}>
+              <div className={styles.section}>
+                <span className={styles.sectionLabel}>
+                  Ready to buy?{" "}
+                  {checklist.ready ? (
+                    <span className={[styles.badge, styles.badgeGood].join(" ")}>ready</span>
+                  ) : (
+                    <span className={[styles.badge, styles.badgeWarn].join(" ")}>
+                      {checklist.items.filter(i => i.status === "satisfied").length} of {checklist.items.length} checked
+                    </span>
+                  )}
+                </span>
+                <div className={styles.checklist}>
+                  {checklist.items.map((item, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className={styles.checkRow}
+                      title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
+                      onClick={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
+                    >
+                      <span className={[
+                        styles.checkIcon,
+                        item.status === "satisfied" ? styles.checkDone
+                          : item.status === "flagged" ? styles.checkFlag : "",
+                      ].join(" ")}>
+                        {item.status === "satisfied" ? "✓" : item.status === "flagged" ? "!" : "○"}
+                      </span>
+                      <span className={styles.checkBody}>
+                        <span className={item.status === "satisfied" ? styles.checkTextDone : styles.checkText}>
+                          {item.check}
+                        </span>
+                        {item.evidence && <span className={styles.checkEvidence}>{item.evidence}</span>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
             </div>
           )}

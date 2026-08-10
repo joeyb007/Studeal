@@ -27,6 +27,7 @@ from dealbot.agents.playbook import sanitize
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
 from dealbot.db.models import (
+    InspectionChecklist,
     InspectionMessage,
     InspectionWatch,
     Listing,
@@ -220,6 +221,7 @@ class InspectionChatRequest(BaseModel):
 
 class InspectionChatResponse(BaseModel):
     reply: str
+    checklist: dict | None = None      # updated ready-to-buy state, when one exists
 
 
 @router.post("/{listing_id}/inspect", response_model=InspectionResponse)
@@ -267,11 +269,190 @@ async def read_inspection(
     return InspectionResponse(**cached)
 
 
+# ---------------------------------------------------------------------------
+# Ready-to-buy checklist (copilot spec 2026-08-10, phase C)
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_CHECKLIST_MAX = 5
+
+
+def checklist_from_playbook(playbook: str | None) -> list[dict]:
+    """Discrete checks from the playbook's 'What to check' section: each
+    sentence is one thing a buyer verifies before paying."""
+    if not playbook:
+        return []
+    start = playbook.find("What to check")
+    if start == -1:
+        return []
+    rest = playbook[start + len("What to check"):]
+    end = rest.find("The going rate")
+    section = (rest[:end] if end != -1 else rest).strip()
+    sentences = _re.findall(r"[^.!?\n]+[.!?]", section)
+    checks = [t.strip() for t in sentences if len(t.strip()) > 12]
+    return [{"check": c, "status": "open", "evidence": None} for c in checks[:_CHECKLIST_MAX]]
+
+
+CHECKLIST_ASSESS_SYSTEM = """You are Scout. A buyer has a pre-purchase checklist for
+one secondhand listing. New evidence just arrived. Decide which OPEN checks the
+evidence clearly settles.
+
+Output JSON: {"updates": [{"index": int, "status": "satisfied"|"flagged", "evidence": str}]}
+- "satisfied": the evidence positively shows that check passes for THIS listing.
+- "flagged": the evidence shows the check FAILS: a visible defect, a seller
+  admission, a known problem confirmed.
+- Evidence that is missing, unclear, or "cannot be verified from here" settles
+  NOTHING: leave those checks open. Unverifiable is open, never flagged.
+- Only checks the evidence CLEARLY settles. An empty updates list is a normal
+  answer, and the most common one.
+- "evidence" under 90 chars, plain language, naming the source ("photos show
+  clean cups", "seller says battery at 91%").
+- Never use em dashes. JSON only."""
+
+
+async def _assess_checklist(items: list[dict], evidence: str) -> list[dict]:
+    """One cheap JSON call: which open checks does this evidence settle?
+    Returns updated items; the original list on any failure."""
+    open_idx = [i for i, item in enumerate(items) if item.get("status") == "open"]
+    if not open_idx or not evidence.strip():
+        return items
+    payload = {
+        "checklist": [{"index": i, "check": items[i]["check"]} for i in open_idx],
+        "evidence": evidence[:4000],
+    }
+    try:
+        response = await _chat_llm().complete(
+            [
+                {"role": "system", "content": CHECKLIST_ASSESS_SYSTEM},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        parsed = json.loads(response.content or "{}")
+        for update in parsed.get("updates") or []:
+            index = update.get("index")
+            status_val = update.get("status")
+            if index in open_idx and status_val in ("satisfied", "flagged"):
+                items[index] = {
+                    "check": items[index]["check"],
+                    "status": status_val,
+                    "evidence": sanitize(str(update.get("evidence") or "").strip())[:120] or None,
+                }
+    except Exception:
+        logger.warning("checklist assess failed", exc_info=True)
+    return items
+
+
+class ChecklistItem(BaseModel):
+    check: str
+    status: str                    # open | satisfied | flagged
+    evidence: str | None = None
+
+
+class ChecklistResponse(BaseModel):
+    items: list[ChecklistItem]
+    ready: bool
+    watchlist_id: int | None = None
+
+
+def _checklist_response(row: InspectionChecklist) -> ChecklistResponse:
+    items = [ChecklistItem(**item) for item in row.items]
+    ready = len(items) > 0 and all(i.status == "satisfied" for i in items)
+    return ChecklistResponse(items=items, ready=ready, watchlist_id=row.watchlist_id)
+
+
+async def _get_or_seed_checklist(
+    user_id: int, listing_id: int, watchlist_id: int,
+) -> InspectionChecklist | None:
+    """Existing row, or seed one from the agent's playbook and immediately
+    assess it against the cached inspection report. None when the playbook
+    has no checks to offer."""
+    from dealbot.agents.inspector import get_cached_inspection
+
+    async with get_async_session() as session:
+        row = await session.get(InspectionChecklist, (user_id, listing_id))
+        if row is not None:
+            return row
+        watchlist = await session.get(Watchlist, watchlist_id)
+        if watchlist is None or watchlist.user_id != user_id:
+            return None
+        items = checklist_from_playbook(watchlist.playbook)
+    if not items:
+        return None
+
+    inspection = await get_cached_inspection(listing_id)
+    if inspection and inspection.get("report"):
+        items = await _assess_checklist(
+            items, "Scout's inspection notes: " + json.dumps(inspection["report"]),
+        )
+
+    async with get_async_session() as session:
+        row = await session.get(InspectionChecklist, (user_id, listing_id))
+        if row is None:
+            row = InspectionChecklist(
+                user_id=user_id, listing_id=listing_id,
+                watchlist_id=watchlist_id, items=items,
+            )
+            session.add(row)
+            await session.commit()
+        return row
+
+
+@router.get("/{listing_id}/checklist", response_model=ChecklistResponse)
+async def read_checklist(
+    listing_id: int,
+    watchlist_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+) -> ChecklistResponse:
+    row = await _get_or_seed_checklist(current_user.id, listing_id, watchlist_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No checklist for this listing yet; the agent's playbook has no checks.",
+        )
+    return _checklist_response(row)
+
+
+class ChecklistToggle(BaseModel):
+    index: int
+    status: str                    # open | satisfied
+
+
+@router.patch("/{listing_id}/checklist", response_model=ChecklistResponse)
+async def toggle_checklist(
+    listing_id: int,
+    body: ChecklistToggle,
+    current_user: User = Depends(get_current_user),
+) -> ChecklistResponse:
+    """Manual tick: the buyer knows things Scout can't see."""
+    if body.status not in ("open", "satisfied"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Bad status.")
+    async with get_async_session() as session:
+        row = await session.get(InspectionChecklist, (current_user.id, listing_id))
+        if row is None or not (0 <= body.index < len(row.items)):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such check.")
+        items = list(row.items)
+        items[body.index] = {
+            "check": items[body.index]["check"],
+            "status": body.status,
+            "evidence": "you checked this one off yourself" if body.status == "satisfied" else None,
+        }
+        row.items = items
+        row.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        return _checklist_response(row)
+
+
 VERDICT_SYSTEM = """You are Scout, the user's expert friend. You already inspected
 this listing (your notes below). Now give YOUR TAKE FOR THIS SPECIFIC BUYER,
 using their profile, budget, and your category playbook.
 
 Cover, in flowing prose (no headings, no lists):
+- If a ready-to-buy checklist is provided, OPEN with the readiness call: all
+  checks satisfied means start with "Ready to buy." Anything open or flagged
+  means start with "Not yet" and name in a few words what's still unverified
+  or failed. No checklist provided: skip this, open with fit.
 - Fit: does this listing suit what they actually need? Be honest if not.
 - The number: what they should offer, and their walk-away, using ONLY the
   prices provided (asking price, market band, their budget).
@@ -322,6 +503,12 @@ async def inspection_verdict(
     )
     market = await _watchlist_market(watchlist, context)
     grounding = _grounding(listing, inspection, watchlist.playbook, context, market)
+    async with get_async_session() as session:
+        checklist_row = await session.get(
+            InspectionChecklist, (current_user.id, listing_id)
+        )
+    if checklist_row is not None and checklist_row.items:
+        grounding += "\n\nReady-to-buy checklist state: " + json.dumps(checklist_row.items)
     llm = _chat_llm()
     try:
         response = await llm.complete([
@@ -354,7 +541,9 @@ Rules:
   instead.
 - If buyer context is provided, tailor advice to it; otherwise keep advice
   general and say numbers depend on their budget.
-- Short, direct, warm. Plain language. Never use em dashes. No stock closers."""
+- Short, direct, warm. Plain language. Plain text only: no markdown, no
+  asterisks, no bold, no numbered headings. Never use em dashes. No stock
+  closers."""
 
 
 def _grounding(listing: Listing, inspection: dict, playbook: str | None,
@@ -440,7 +629,7 @@ async def inspection_chat(
     failed = False
     try:
         response = await llm.complete(messages)
-        reply = sanitize((response.content or "").strip())
+        reply = sanitize((response.content or "").strip()).replace("**", "")
     except Exception:
         logger.exception("inspection chat failed for listing %d", listing_id)
         reply = ""
@@ -465,7 +654,34 @@ async def inspection_chat(
         except Exception:
             logger.warning("inspection message persist failed (listing %d)",
                            listing_id, exc_info=True)
-    return InspectionChatResponse(reply=reply)
+
+    # The conversation is evidence: let it settle open checks. Best-effort.
+    checklist_payload = None
+    if not failed and watchlist is not None:
+        try:
+            async with get_async_session() as session:
+                row = await session.get(
+                    InspectionChecklist, (current_user.id, listing_id)
+                )
+            if row is not None and any(i.get("status") == "open" for i in row.items):
+                evidence = (
+                    f"The buyer said: {history[-1]['content']}\n"
+                    f"Scout replied: {reply}"
+                )
+                items = await _assess_checklist(list(row.items), evidence)
+                async with get_async_session() as session:
+                    fresh = await session.get(
+                        InspectionChecklist, (current_user.id, listing_id)
+                    )
+                    if fresh is not None:
+                        fresh.items = items
+                        fresh.updated_at = datetime.now(timezone.utc)
+                        await session.commit()
+                        checklist_payload = _checklist_response(fresh).model_dump()
+        except Exception:
+            logger.warning("chat checklist update failed (listing %d)",
+                           listing_id, exc_info=True)
+    return InspectionChatResponse(reply=reply, checklist=checklist_payload)
 
 
 class ThreadMessage(BaseModel):

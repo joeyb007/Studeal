@@ -360,6 +360,34 @@ class InspectionWatch(Base):
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class InspectionChecklist(Base):
+    """Ready-to-buy checklist for one user on one listing (copilot spec
+    2026-08-10, phase C): checks seeded from the grounding agent's playbook,
+    evidence accumulated from the inspection report and the chat. The verdict
+    reads this to open with "ready" or "not yet"."""
+
+    __tablename__ = "inspection_checklists"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    watchlist_id: Mapped[int | None] = mapped_column(
+        ForeignKey("watchlists.id", ondelete="SET NULL"), nullable=True
+    )
+    # [{"check": str, "status": "open"|"satisfied"|"flagged", "evidence": str|None}]
+    items: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class InspectionMessage(Base):
     """Persisted send-to-Scout conversation turn. A friend remembers what
     you talked about: reopening a listing rehydrates the whole thread."""

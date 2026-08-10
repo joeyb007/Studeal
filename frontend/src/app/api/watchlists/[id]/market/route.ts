@@ -5,13 +5,13 @@ const API_BASE = process.env.API_BASE_URL ?? "http://localhost:8001";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ watchlistId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
   if (!session?.accessToken) {
     return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
   }
-  const { watchlistId } = await params;
+  const { id: watchlistId } = await params;
   try {
     const res = await fetch(`${API_BASE}/watchlists/${watchlistId}/market`, {
       headers: { Authorization: `Bearer ${session.accessToken}` },

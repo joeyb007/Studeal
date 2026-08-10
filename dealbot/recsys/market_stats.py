@@ -29,6 +29,13 @@ from dealbot.schemas import WatchlistContext
 
 MIN_COMPS = 5
 WEAK_SCORE = 0.4          # matches at/above this are "curated"
+UNDER_MARKET_FRACTION = 0.6   # below this share of median reads as too-good-to-be-true
+# Honest-disclosure carve-out: a cheap listing that says why is not a trust
+# signal, it is a parts listing.
+_HONEST_CHEAP_TOKENS = (
+    "parts", "broken", "repair", "cracked", "as is", "as-is", "faulty",
+    "not working", "damaged", "spares", "defect",
+)
 FAIR_FRACTION = 0.12      # ± around median reads as "fair"
 HISTOGRAM_BUCKETS = 8
 _NEIGHBOR_LIMIT = 60
@@ -193,6 +200,21 @@ def _age_hours(dt: datetime) -> float:
     return max(0.0, (now - dt).total_seconds() / 3600.0)
 
 
+def under_market(price: float, prices: list[float], title: str) -> dict[str, Any] | None:
+    """Deterministic too-good-to-be-true read. None unless the price sits far
+    below a trustworthy median AND the title does not honestly explain it."""
+    band = price_band(prices)
+    if band is None:
+        return None
+    median = band[1]
+    if median <= 0 or price >= UNDER_MARKET_FRACTION * median:
+        return None
+    lowered = title.lower()
+    if any(token in lowered for token in _HONEST_CHEAP_TOKENS):
+        return None
+    return {"pct": round(100 * (1 - price / median))}
+
+
 def compute_market(
     comps: list[Listing],
     context: WatchlistContext | None,
@@ -217,7 +239,11 @@ def compute_market(
         "newest_find_hours": round(newest, 1) if newest is not None else None,
         "histogram": histogram(prices),
         "pick_prices": [
-            {"id": c.id, "price": c.price, "over_ceiling": bool(ceiling and c.price > ceiling)}
+            {
+                "id": c.id, "price": c.price,
+                "over_ceiling": bool(ceiling and c.price > ceiling),
+                "under_market": under_market(c.price, prices, c.title),
+            }
             for c in comps if c.id in picks
         ],
         "structure": {

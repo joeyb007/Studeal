@@ -372,6 +372,8 @@ class ListingResponse(BaseModel):
     relevance_score: float
     reason: Optional[str] = None                # one-line "why this listing"
     headline: Optional[str] = None              # Scout's cached read, one line (✦)
+    flags: Optional[dict] = None                # objective inspection flags (trust spec)
+    repost_suspect: bool = False
     first_seen_at: str
     last_seen_at: str
 
@@ -493,8 +495,9 @@ async def list_watchlist_listings(
         except Exception:
             pass  # broker down — stale keeps serving; next read retries
 
-    # ✦ teasers: cached Tier A read headlines for whatever's already inspected.
+    # ✦ teasers + trust flags: cached Tier A output for whatever's inspected.
     headlines: dict[int, str] = {}
+    flags_by_id: dict[int, dict] = {}
     if rows:
         from dealbot.db.models import ListingInspection
 
@@ -505,6 +508,8 @@ async def list_watchlist_listings(
                 .where(ListingInspection.status == "ok")
             )).scalars().all()
         for row in cached:
+            if row.flags:
+                flags_by_id[row.listing_id] = row.flags
             try:
                 headline = json.loads(row.report or "{}").get("headline")
                 if headline:
@@ -522,6 +527,8 @@ async def list_watchlist_listings(
                 condition=listing.condition,
                 relevance_score=ranking.score, reason=ranking.reason,
                 headline=headlines.get(listing.id),
+                flags=flags_by_id.get(listing.id),
+                repost_suspect=listing.repost_suspect,
                 first_seen_at=listing.first_seen_at.isoformat(),
                 last_seen_at=listing.last_seen_at.isoformat(),
             )

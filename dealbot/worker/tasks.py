@@ -273,8 +273,20 @@ def _maybe_governor():
 @app.task(name="dealbot.worker.tasks.recompute_rankings_task")
 def recompute_rankings_task(watchlist_id: int) -> dict:
     from dealbot.recsys.rank_cache import recompute_rankings
+    from dealbot.worker.inspections import enforce_quality_bar
 
-    return {"written": asyncio.run(recompute_rankings(watchlist_id))}
+    async def _run() -> dict:
+        written = await recompute_rankings(watchlist_id)
+        # Recomputes rewrite positions from the ranker, erasing any earlier
+        # quality demotions — re-apply the owner's bar over cached flags.
+        try:
+            demoted = await enforce_quality_bar(watchlist_id)
+        except Exception:
+            logger.exception("quality-bar pass failed for wl %d", watchlist_id)
+            demoted = 0
+        return {"written": written, "demoted": demoted}
+
+    return asyncio.run(_run())
 
 
 def _maybe_recompute_rankings(watchlist_id: int) -> None:

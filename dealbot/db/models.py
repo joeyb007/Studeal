@@ -51,6 +51,11 @@ class Listing(Base):
     # Set when an inspection lands on a dead page: read surfaces exclude sold
     # rows immediately instead of waiting out the staleness window.
     sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Trust signal (spec 2026-08-10): same title elsewhere at a different
+    # location or materially different price. Badge-only; never hides a row.
+    repost_suspect: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class Deal(Base):

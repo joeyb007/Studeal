@@ -45,6 +45,13 @@ export interface RankedListing {
   relevance_score: number;
   reason: string | null;
   headline: string | null;
+  flags: {
+    photos_real?: boolean | null;
+    condition_grade?: string | null;
+    legit_level?: string | null;
+    legit_reason?: string | null;
+  } | null;
+  repost_suspect: boolean;
   first_seen_at: string;
   last_seen_at: string;
 }
@@ -57,7 +64,7 @@ interface Market {
   ceiling: number | null;
   newest_find_hours: number | null;
   histogram: { lo: number; hi: number; count: number }[];
-  pick_prices: { id: number; price: number; over_ceiling: boolean }[];
+  pick_prices: { id: number; price: number; over_ceiling: boolean; under_market: { pct: number } | null }[];
   structure: { kind: string; rows: { label: string; avg_price: number; count: number }[] };
   heat: { level: string; label: string; why: string };
   negotiation: { open: number; fair_low: number; fair_high: number; walk: number; median: number } | null;
@@ -152,6 +159,37 @@ function TypedReply({ text }: { text: string }) {
       {!done && <span className={styles.cursor}>▍</span>}
     </p>
   );
+}
+
+// Trust badges (spec 2026-08-10): deterministic signals + cached vision
+// flags, each with its reason on hover. Badge-only; nothing here hides rows.
+function trustChips(
+  l: RankedListing,
+  under: { pct: number } | null | undefined,
+): { text: string; tone: "chipWarn" | "chipPlain"; title?: string }[] {
+  const chips: { text: string; tone: "chipWarn" | "chipPlain"; title?: string }[] = [];
+  if (under) {
+    chips.push({
+      text: `${under.pct}% under market`,
+      tone: "chipWarn",
+      title: "Way below the going rate for this category. Classic bait pattern; verify carefully before paying.",
+    });
+  }
+  if (l.repost_suspect) {
+    chips.push({
+      text: "possible repost",
+      tone: "chipWarn",
+      title: "The same title appears elsewhere at a different price or location. Photos may be reused.",
+    });
+  }
+  if (l.flags?.photos_real === false) {
+    chips.push({ text: "stock photos", tone: "chipPlain", title: "No photos of the actual item, only stock images." });
+  }
+  const level = l.flags?.legit_level;
+  if (level === "caution" || level === "likely_scam") {
+    chips.push({ text: "caution", tone: "chipWarn", title: l.flags?.legit_reason ?? undefined });
+  }
+  return chips;
 }
 
 function priceChip(price: number, median: number | null): { tone: string; text: string } | null {
@@ -274,17 +312,17 @@ export default function AgentPanel({
   }, [loadListings]);
 
   useEffect(() => {
-    if (tab !== "market" || market) return;
+    if (market) return;
     (async () => {
       try {
         const res = await fetch(`/api/watchlists/${agent.id}/market`, { headers: authHeaders });
         if (res.ok) setMarket(await res.json());
       } catch {
-        /* tab shows its loading line until a retry */
+        /* market tab shows its loading line until a retry */
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, market, agent.id]);
+  }, [market, agent.id]);
 
   const loadSweep = useCallback(async () => {
     if (sweep) return;
@@ -313,6 +351,7 @@ export default function AgentPanel({
   const minis = picks.slice(1);
   const rest = ranked.slice(5);
   const median = market?.negotiation?.median ?? market?.typical ?? null;
+  const underFor = (id: number) => market?.pick_prices.find(p => p.id === id)?.under_market;
 
   const isNew = (id: number) =>
     alertIndex[id] !== undefined &&
@@ -432,6 +471,9 @@ export default function AgentPanel({
                       const chip = priceChip(hero.price, median);
                       return chip ? <span className={[styles.chip, styles[chip.tone]].join(" ")}>{chip.text}</span> : null;
                     })()}
+                    {trustChips(hero, underFor(hero.id)).map(c => (
+                      <span key={c.text} className={[styles.chip, styles[c.tone]].join(" ")} title={c.title}>{c.text}</span>
+                    ))}
                   </div>
                   {(hero.headline || hero.reason) && (
                     <p className={styles.heroWhy}>✦ {hero.headline ?? hero.reason}</p>
@@ -455,6 +497,16 @@ export default function AgentPanel({
                       )}
                       <div className={styles.miniBody}>
                         <span className={styles.miniTitle}>{l.title}</span>
+                        {(() => {
+                          const chips = trustChips(l, underFor(l.id));
+                          return chips.length > 0 ? (
+                            <span className={styles.miniMeta}>
+                              {chips.map(c => (
+                                <span key={c.text} className={[styles.chip, styles[c.tone], styles.chipTight].join(" ")} title={c.title}>{c.text}</span>
+                              ))}
+                            </span>
+                          ) : null;
+                        })()}
                         {(l.headline || l.reason) && (
                           <span className={styles.miniTeaser}>{l.headline ?? l.reason}</span>
                         )}

@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from dealbot.agents.workers.extractor import Offer
@@ -48,6 +48,45 @@ async def _embeddings_for(offers: list[Offer]) -> list[list[float]]:
 def _as_utc(dt: datetime) -> datetime:
     """Drivers without tz support (sqlite) return stored UTC datetimes naive."""
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+# Repost heuristic (trust spec 2026-08-10): an identical long title from a
+# DIFFERENT location or at a materially different price suggests reused
+# photos/text. Same-seller crossposts (same city, same price) never flag.
+_REPOST_MIN_TITLE_LEN = 20
+_REPOST_PRICE_LOW = 0.8
+_REPOST_PRICE_HIGH = 1.25
+
+
+async def _flag_reposts(session, listing_ids: list[int]) -> int:
+    """Mark repost_suspect on globally-new listings whose title already exists
+    elsewhere under repost conditions. Best-effort; returns flagged count."""
+    if not listing_ids:
+        return 0
+    rows = (await session.execute(
+        select(Listing).where(Listing.id.in_(listing_ids))
+    )).scalars().all()
+    flagged = 0
+    for listing in rows:
+        title = listing.title.strip()
+        if len(title) < _REPOST_MIN_TITLE_LEN:
+            continue
+        dup = (await session.execute(
+            select(Listing.id)
+            .where(Listing.id != listing.id)
+            .where(func.lower(Listing.title) == title.lower())
+            .where(Listing.sold_at.is_(None))
+            .where(or_(
+                func.coalesce(Listing.location, "") != (listing.location or ""),
+                Listing.price < listing.price * _REPOST_PRICE_LOW,
+                Listing.price > listing.price * _REPOST_PRICE_HIGH,
+            ))
+            .limit(1)
+        )).scalar_one_or_none()
+        if dup is not None:
+            listing.repost_suspect = True
+            flagged += 1
+    return flagged
 
 
 @dataclass
@@ -123,6 +162,13 @@ async def persist_offers(offers: list[Offer], hunt_id: int | None = None) -> Per
                 # original first_seen_at — that difference is the novelty test.
                 if _as_utc(row.first_seen_at) == now:
                     result.new_global_ids.append(row.id)
+
+        try:
+            flagged = await _flag_reposts(session, result.new_global_ids)
+            if flagged:
+                logger.info("persist_offers: flagged %d repost suspects", flagged)
+        except Exception:
+            logger.warning("persist_offers: repost flagging failed", exc_info=True)
 
         if hunt_id is not None and result.listing_ids:
             link_stmt = (

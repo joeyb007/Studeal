@@ -23,3 +23,4 @@ tests/evals/_fb_state.json
 
 # Agent run traces — page snapshots + full LLM prompts; local only
 traces/
+/media/

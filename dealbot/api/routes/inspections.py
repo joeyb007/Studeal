@@ -16,7 +16,7 @@ import json
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
 from datetime import datetime, timezone
@@ -217,6 +217,7 @@ class InspectionResponse(BaseModel):
 class InspectionChatRequest(BaseModel):
     messages: list[ChatMessage]
     watchlist_id: int | None = None
+    image_keys: list[str] = []         # screenshots attached to the LAST user message
 
 
 class InspectionChatResponse(BaseModel):
@@ -578,6 +579,60 @@ def _grounding(listing: Listing, inspection: dict, playbook: str | None,
     return "\n\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Screenshots in the chat (copilot spec 2026-08-10, phase B)
+# ---------------------------------------------------------------------------
+
+_IMAGES_PER_MESSAGE_MAX = 4
+
+
+class ImageUploadResponse(BaseModel):
+    key: str
+
+
+@router.post("/{listing_id}/images", response_model=ImageUploadResponse)
+async def upload_chat_image(
+    listing_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+) -> ImageUploadResponse:
+    """Stage one screenshot for this listing's chat. Storage only; the vision
+    spend happens (and is metered) when the message carrying it is sent."""
+    from dealbot.media import MAX_IMAGE_BYTES, save_image
+
+    async with get_async_session() as session:
+        listing = await session.get(Listing, listing_id)
+    if listing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
+
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    try:
+        key = await save_image(data, file.content_type or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return ImageUploadResponse(key=key)
+
+
+async def _image_parts(keys: list[str]) -> list[dict]:
+    """Media keys → LLM image parts (data URLs). Missing keys are skipped:
+    a lost screenshot degrades the message, never fails the chat."""
+    import base64
+
+    from dealbot.media import content_type_for, load_image
+
+    parts: list[dict] = []
+    for key in keys[:_IMAGES_PER_MESSAGE_MAX]:
+        data = await load_image(key)
+        if data is None:
+            continue
+        b64 = base64.b64encode(data).decode("ascii")
+        parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{content_type_for(key)};base64,{b64}"},
+        })
+    return parts
+
+
 @router.post("/{listing_id}/chat", response_model=InspectionChatResponse)
 async def inspection_chat(
     listing_id: int,
@@ -620,11 +675,33 @@ async def inspection_chat(
     if not history:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty chat.")
 
+    # Screenshots make this turn a vision call: it shares the fresh-look
+    # monthly allowance (Pro uncapped). Storage was free; pixels are not.
+    image_keys = [k for k in (body.image_keys or [])[:_IMAGES_PER_MESSAGE_MAX] if isinstance(k, str)]
+    image_parts: list[dict] = []
+    if image_keys and history[-1]["role"] == "user":
+        if not await _check_allowance(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Screenshot reads share your monthly fresh-look allowance, "
+                       "and it is used up. Upgrade to Pro for unlimited looks.",
+            )
+        image_parts = await _image_parts(image_keys)
+
     messages = [
         {"role": "system", "content": CHAT_SYSTEM},
         {"role": "system", "content": _grounding(listing, inspection, playbook, context, market)},
         *history,
     ]
+    if image_parts:
+        messages[-1] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": history[-1]["content"]
+                    or "Here are screenshots I want you to look at."},
+                *image_parts,
+            ],
+        }
     llm = _chat_llm()
     failed = False
     try:
@@ -637,6 +714,9 @@ async def inspection_chat(
         failed = True
         reply = "I hit a snag answering that one. Give it another try in a moment."
 
+    if not failed and image_parts:
+        await _count_inspection(current_user.id)
+
     # A friend remembers the conversation: persist the exchange (but never a
     # snag apology — retries should not litter the thread). Best-effort.
     if not failed and history and history[-1]["role"] == "user":
@@ -645,6 +725,7 @@ async def inspection_chat(
                 session.add(InspectionMessage(
                     user_id=current_user.id, listing_id=listing_id,
                     role="user", content=history[-1]["content"],
+                    images=image_keys or None,
                 ))
                 session.add(InspectionMessage(
                     user_id=current_user.id, listing_id=listing_id,
@@ -666,7 +747,9 @@ async def inspection_chat(
             if row is not None and any(i.get("status") == "open" for i in row.items):
                 evidence = (
                     f"The buyer said: {history[-1]['content']}\n"
-                    f"Scout replied: {reply}"
+                    + (f"(The buyer attached {len(image_parts)} screenshot(s); "
+                       f"Scout's reply below reflects what they show.)\n" if image_parts else "")
+                    + f"Scout replied: {reply}"
                 )
                 items = await _assess_checklist(list(row.items), evidence)
                 async with get_async_session() as session:
@@ -688,6 +771,7 @@ class ThreadMessage(BaseModel):
     role: str
     content: str
     created_at: str
+    images: list[str] = []
 
 
 class ThreadResponse(BaseModel):
@@ -707,7 +791,11 @@ async def read_thread(
             .order_by(InspectionMessage.id)
         )).scalars().all()
     return ThreadResponse(messages=[
-        ThreadMessage(role=m.role, content=m.content, created_at=m.created_at.isoformat())
+        ThreadMessage(
+            role=m.role, content=m.content,
+            created_at=m.created_at.isoformat(),
+            images=list(m.images) if m.images else [],
+        )
         for m in rows
     ])
 

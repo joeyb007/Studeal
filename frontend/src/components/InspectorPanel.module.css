@@ -502,3 +502,37 @@
   text-decoration: line-through; text-decoration-color: rgba(111, 191, 143, 0.5);
 }
 .checkEvidence { font-size: 11px; color: var(--text-secondary); font-style: italic; }
+
+/* screenshot attachments */
+.attachBtn {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid rgba(168, 188, 232, 0.16);
+  color: var(--text-faint); cursor: pointer; font-family: inherit;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.attachBtn:hover:not(:disabled) { color: var(--accent); border-color: rgba(168, 188, 232, 0.4); }
+.attachBtn:disabled { opacity: 0.4; cursor: default; }
+.pendingStrip {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px 0;
+}
+.pendingWrap { position: relative; }
+.pendingThumb {
+  width: 52px; height: 42px; object-fit: cover; border-radius: 7px;
+  border: 1px solid rgba(168, 188, 232, 0.25);
+}
+.pendingRemove {
+  position: absolute; top: -6px; right: -6px; width: 17px; height: 17px;
+  border-radius: 50%; border: none; cursor: pointer; font-size: 9px;
+  background: var(--bg-inset); color: var(--text-secondary);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(47, 46, 43, 0.9);
+}
+.pendingRemove:hover { color: var(--text-primary); }
+.pendingNote { font-size: 11px; color: var(--text-faint); }
+.msgImages { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.msgImage {
+  max-width: 130px; max-height: 100px; border-radius: 8px; object-fit: cover;
+  border: 1px solid rgba(168, 188, 232, 0.18);
+}

@@ -403,6 +403,10 @@ class InspectionMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(12), nullable=False)  # user | assistant
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Media keys for screenshots the buyer attached to this turn.
+    images: Mapped[list | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

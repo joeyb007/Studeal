@@ -19,6 +19,7 @@ from dealbot.api.routes.auth import router as auth_router
 from dealbot.api.routes.billing import router as billing_router
 from dealbot.api.routes.inspections import router as inspections_router
 from dealbot.api.routes.market import router as market_router
+from dealbot.api.routes.media import router as media_router
 from dealbot.api.routes.deals import router as deals_router
 from dealbot.api.routes.hunts import router as hunts_router
 from dealbot.api.routes.listings_feed import router as listings_feed_router
@@ -74,6 +75,7 @@ app.include_router(hunts_router)
 app.include_router(inspections_router)
 app.include_router(listings_feed_router)
 app.include_router(market_router)
+app.include_router(media_router)
 app.include_router(push_router)
 app.include_router(stream_router)
 app.include_router(watchlists_router)

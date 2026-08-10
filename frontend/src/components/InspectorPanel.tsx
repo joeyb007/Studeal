@@ -53,6 +53,12 @@ interface Inspection {
 interface ChatMsg {
   role: "user" | "assistant";
   content: string;
+  images?: string[];               // media keys
+}
+
+interface PendingImage {
+  key: string;
+  previewUrl: string;
 }
 
 interface Checklist {
@@ -77,6 +83,9 @@ export default function InspectorPanel({
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [draft, setDraft] = useState("");
   const [replying, setReplying] = useState(false);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showNotes, setShowNotes] = useState(false);
   const [stage, setStage] = useState(0);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -164,9 +173,10 @@ export default function InspectorPanel({
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled && Array.isArray(data.messages) && data.messages.length > 0) {
-          setMessages(data.messages.map((m: { role: string; content: string }) => ({
+          setMessages(data.messages.map((m: { role: string; content: string; images?: string[] }) => ({
             role: m.role === "user" ? "user" : "assistant",
             content: m.content,
+            images: m.images ?? [],
           })));
         }
       } catch {
@@ -188,18 +198,57 @@ export default function InspectorPanel({
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, inspection, replying, verdict]);
 
+  const attachFiles = async (files: FileList | null) => {
+    if (!files || uploading) return;
+    const room = 4 - pendingImages.length;
+    const picked = Array.from(files).slice(0, Math.max(0, room));
+    if (picked.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of picked) {
+        if (file.size > 5 * 1024 * 1024) continue;
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch(`/api/listings/${listing.id}/images`, {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        setPendingImages(prev =>
+          prev.length < 4
+            ? [...prev, { key: data.key, previewUrl: URL.createObjectURL(file) }]
+            : prev,
+        );
+      }
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const send = async () => {
     const text = draft.trim();
-    if (!text || replying || inspection?.status !== "ok") return;
-    const next: ChatMsg[] = [...messages, { role: "user", content: text }];
+    if ((!text && pendingImages.length === 0) || replying || inspection?.status !== "ok") return;
+    const imageKeys = pendingImages.map(p => p.key);
+    const next: ChatMsg[] = [...messages, {
+      role: "user",
+      content: text || "Here are some screenshots, take a look?",
+      images: imageKeys,
+    }];
     setMessages(next);
     setDraft("");
+    setPendingImages([]);
     setReplying(true);
     try {
       const res = await fetch(`/api/listings/${listing.id}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, watchlist_id: watchlistId ?? null }),
+        body: JSON.stringify({
+          messages: next.map(({ role, content }) => ({ role, content })),
+          watchlist_id: watchlistId ?? null,
+          image_keys: imageKeys,
+        }),
       });
       const data = await res.json();
       setMessages([...next, {
@@ -428,6 +477,14 @@ export default function InspectorPanel({
           {messages.map((m, i) =>
             m.role === "user" ? (
               <div key={i} className={styles.userMsg}>
+                {m.images && m.images.length > 0 && (
+                  <div className={styles.msgImages}>
+                    {m.images.map(k => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={k} src={`/api/media/${k}`} alt="" className={styles.msgImage} loading="lazy" />
+                    ))}
+                  </div>
+                )}
                 <p className={styles.sectionText}>{m.content}</p>
               </div>
             ) : (
@@ -459,7 +516,45 @@ export default function InspectorPanel({
           </a>
         )}
 
+        {pendingImages.length > 0 && (
+          <div className={styles.pendingStrip}>
+            {pendingImages.map(p => (
+              <span key={p.key} className={styles.pendingWrap}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.previewUrl} alt="" className={styles.pendingThumb} />
+                <button
+                  type="button"
+                  className={styles.pendingRemove}
+                  aria-label="Remove screenshot"
+                  onClick={() => setPendingImages(prev => prev.filter(x => x.key !== p.key))}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {uploading && <span className={styles.pendingNote}>uploading…</span>}
+          </div>
+        )}
+
         <div className={styles.composer}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            hidden
+            onChange={e => attachFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            className={styles.attachBtn}
+            title="Attach screenshots (seller photos, chat screenshots)"
+            aria-label="Attach screenshots"
+            disabled={inspection?.status !== "ok" || replying || uploading || pendingImages.length >= 4}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m5.5 19 5.5-5.5 3 3 2.5-2.5 2 2" /></svg>
+          </button>
           <input
             className={styles.input}
             placeholder={
@@ -475,7 +570,7 @@ export default function InspectorPanel({
           <button
             className={styles.send}
             onClick={send}
-            disabled={inspection?.status !== "ok" || replying || !draft.trim()}
+            disabled={inspection?.status !== "ok" || replying || (!draft.trim() && pendingImages.length === 0)}
           >
             Send
           </button>

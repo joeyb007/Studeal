@@ -40,13 +40,48 @@ export default function ScoutPage() {
   const [linkDraft, setLinkDraft] = useState("");
   const [resolving, setResolving] = useState(false);
   const [resolved, setResolved] = useState<ResolveResult | "nomatch" | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [fetchNote, setFetchNote] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState<{ listing: InspectListing; watchlistId?: number } | null>(null);
+
+  const fetchLink = async () => {
+    const url = linkDraft.trim();
+    if (!url || fetching) return;
+    setFetching(true);
+    setFetchNote(null);
+    try {
+      const res = await fetch("/api/listings/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (res.status === 403) {
+        const data = await res.json();
+        setFetchNote(data.detail ?? "Out of fresh looks this month.");
+        return;
+      }
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      if (data.status === "fetched" && data.listing) {
+        setResolved({ listing: data.listing, watchlist: data.watchlist ?? null });
+      } else if (data.status === "unsupported") {
+        setFetchNote("Scout can only grab listings from Kijiji, eBay, and Facebook Marketplace right now.");
+      } else {
+        setFetchNote("Couldn't get a clean grab of that page. The site may be slow or blocking; worth trying again in a minute.");
+      }
+    } catch {
+      setFetchNote("Couldn't get a clean grab of that page. The site may be slow or blocking; worth trying again in a minute.");
+    } finally {
+      setFetching(false);
+    }
+  };
 
   const checkLink = async () => {
     const url = linkDraft.trim();
     if (!url || resolving) return;
     setResolving(true);
     setResolved(null);
+    setFetchNote(null);
     try {
       const res = await fetch("/api/listings/resolve", {
         method: "POST",
@@ -110,10 +145,15 @@ export default function ScoutPage() {
       </div>
 
       {resolved === "nomatch" && (
-        <p className={styles.checkMiss}>
-          Scout hasn&apos;t seen that one in its pool yet. Fetching straight from a
-          link is coming soon; for now paste links to listings your agents have found.
-        </p>
+        <div className={styles.checkMissRow}>
+          <span className={styles.checkMiss}>
+            Scout hasn&apos;t seen this one before.
+          </span>
+          <button className={styles.fetchBtn} onClick={fetchLink} disabled={fetching}>
+            {fetching ? "Scout is grabbing it…" : "Send Scout to grab it · ~20s"}
+          </button>
+          {fetchNote && <span className={styles.checkMiss}>{fetchNote}</span>}
+        </div>
       )}
 
       {resolved !== null && resolved !== "nomatch" && resolved.listing && (

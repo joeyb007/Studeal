@@ -205,3 +205,16 @@
   background: none; color: var(--text-secondary); cursor: pointer; font-family: inherit;
   border: 1px solid rgba(47, 46, 43, 0.9);
 }
+
+.checkMissRow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: -6px 0 16px;
+}
+.checkMissRow .checkMiss { margin: 0; }
+.fetchBtn {
+  font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px;
+  background: var(--accent-soft); color: var(--accent); border: none;
+  cursor: pointer; font-family: inherit; transition: background 0.15s ease;
+}
+.fetchBtn:hover:not(:disabled) { background: rgba(168, 188, 232, 0.18); }
+.fetchBtn:disabled { opacity: 0.6; cursor: default; }

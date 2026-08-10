@@ -205,6 +205,71 @@ async def resolve_listing(
     )
 
 
+class FetchRequest(BaseModel):
+    url: str
+
+
+class FetchResponse(BaseModel):
+    status: str                        # fetched | failed | unsupported
+    listing: ResolveListing | None = None
+    watchlist: ResolveWatchlist | None = None
+
+
+@router.post("/fetch", response_model=FetchResponse)
+async def fetch_listing_by_url(
+    body: FetchRequest,
+    current_user: User = Depends(get_current_user),
+) -> FetchResponse:
+    """Phase D: Scout goes and grabs a listing it has never seen. One browser
+    visit + one cheap extraction call; gated on (but not counted against) the
+    fresh-look allowance — the inspection that follows pays the vision bill."""
+    from dealbot.agents.fetch_listing import FETCHABLE_MARKETPLACES, fetch_and_persist
+    from dealbot.recsys.gate import GATE_SIMILARITY_TAU
+
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty URL.")
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    marketplace = _marketplace_for_url(url)
+    if marketplace not in FETCHABLE_MARKETPLACES:
+        return FetchResponse(status="unsupported")
+    if not await _check_allowance(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Fetching new listings shares your monthly fresh-look allowance, "
+                   "and it is used up. Upgrade to Pro for unlimited looks.",
+        )
+
+    listing = await fetch_and_persist(url, marketplace)
+    if listing is None:
+        return FetchResponse(status="failed")
+
+    watchlist = None
+    if listing.embedding is not None:
+        async with get_async_session() as session:
+            distance_cutoff = 1.0 - GATE_SIMILARITY_TAU
+            watchlist = (await session.execute(
+                select(Watchlist)
+                .where(Watchlist.user_id == current_user.id)
+                .where(Watchlist.intent_embedding.isnot(None))
+                .where(Watchlist.intent_embedding.cosine_distance(listing.embedding) < distance_cutoff)
+                .order_by(Watchlist.intent_embedding.cosine_distance(listing.embedding))
+                .limit(1)
+            )).scalars().first()
+
+    return FetchResponse(
+        status="fetched",
+        listing=ResolveListing(
+            id=listing.id, title=listing.title, price=listing.price,
+            currency=listing.currency, marketplace=listing.marketplace,
+            url=listing.raw_url, image_url=listing.image_url,
+        ),
+        watchlist=ResolveWatchlist(id=watchlist.id, name=watchlist.name)
+        if watchlist is not None else None,
+    )
+
+
 class InspectionResponse(BaseModel):
     status: str                      # ok | listing_gone | error
     report: dict | None = None

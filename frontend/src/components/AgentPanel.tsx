@@ -946,6 +946,8 @@ function MarketPlaybookView({
         </div>
       )}
 
+      {(messages.length > 0 || asking) && (
+      <div className={styles.thread}>
       {messages.map((m, i) => (
         <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsgRow}>
           {m.role === "assistant" && <span className={[styles.avatar, styles.avatarActive].join(" ")}><ScoutGlyph /></span>}
@@ -968,6 +970,8 @@ function MarketPlaybookView({
         </div>
       )}
       <div ref={threadEnd} />
+      </div>
+      )}
 
       <div className={styles.composer}>
         <span className={styles.avatar}><ScoutGlyph /></span>

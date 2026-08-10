@@ -456,6 +456,15 @@
 .copyBtn:hover { background: rgba(168, 188, 232, 0.16); }
 
 /* ask thread */
+/* The thread is self-contained: it caps out and scrolls inside itself
+   instead of stretching the card open */
+.thread {
+  margin-left: 40px; display: flex; flex-direction: column; gap: 12px;
+  max-height: 340px; overflow-y: auto;
+  padding-right: 8px; overscroll-behavior: contain;
+}
+.thread .scoutMsgRow, .thread .userMsg { margin-left: 0; flex-shrink: 0; }
+.thread .userMsg { margin-left: auto; }
 .scoutMsgRow { margin-left: 40px; display: flex; gap: 10px; align-items: flex-end; }
 .scoutMsg { max-width: 720px; }
 .scoutMsg {
@@ -664,6 +673,7 @@
 .negRight .negCards { margin-left: 0; max-width: none; }
 .negRight .copyLine { margin-left: 0; max-width: none; }
 .negRight .scoutMsgRow { margin-left: 0; max-width: none; }
+.negRight .thread, .view .thread { margin-left: 40px; }
 .negRight .composer { margin-left: 0; max-width: none; }
 
 

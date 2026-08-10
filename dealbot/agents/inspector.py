@@ -159,6 +159,7 @@ Output JSON with exactly these keys (all strings plain language, second person):
 {
   "headline": str,            // one scannable sentence, under 90 chars: your take at a glance
   "condition_grade": "good"|"fair"|"worn"|"unknown",  // overall, from the photos
+  "photos_real": true|false|null,  // true: photos show the actual item; false: stock images, renders, or catalog shots only; null: cannot tell
   "identification": str,      // what this actually is: model, generation, variant, confidence
   "condition": str,           // condition read, referencing what you see ("photo 2, left armrest")
   "red_flags": [str],         // real concerns only; [] if none
@@ -171,6 +172,8 @@ Output JSON with exactly these keys (all strings plain language, second person):
 
 Rules:
 - Only claim what the screenshots and text support. Uncertainty goes in cant_tell.
+- photos_real is false only when EVERY image looks stock (renders, catalog
+  shots, watermarks from other sites). One genuine photo of the item makes it true.
 - Legitimacy: price far below the band, stock photos, or off-platform payment asks
   raise it; normal listings are "fine".
 - Never use em dashes. No greetings. JSON only."""
@@ -192,9 +195,26 @@ def _sanitize_obj(value: Any) -> Any:
 
 
 _REPORT_KEYS = {
-    "headline", "condition_grade", "identification", "condition", "red_flags",
-    "cant_tell", "seller_questions", "legitimacy", "market_position", "summary",
+    "headline", "condition_grade", "photos_real", "identification", "condition",
+    "red_flags", "cant_tell", "seller_questions", "legitimacy", "market_position",
+    "summary",
 }
+
+
+def derive_flags(report: dict | None) -> dict | None:
+    """Objective, user-independent flags distilled from a report (spec
+    2026-08-10): what quality filtering and trust badges read downstream.
+    None without a report; individual fields None when the report can't say."""
+    if not report:
+        return None
+    legitimacy = report.get("legitimacy") or {}
+    photos_real = report.get("photos_real")
+    return {
+        "photos_real": photos_real if isinstance(photos_real, bool) else None,
+        "condition_grade": report.get("condition_grade"),
+        "legit_level": legitimacy.get("level"),
+        "legit_reason": legitimacy.get("reason"),
+    }
 
 # Within this fraction of the comp median, a price reads as "fair".
 _FAIR_BAND_FRACTION = 0.12
@@ -312,6 +332,7 @@ async def _write_cache(listing_id: int, status: str, report: dict | None, detail
         existing.status = status
         existing.report = json.dumps(report) if report is not None else None
         existing.detail = detail.model_dump_json()
+        existing.flags = derive_flags(report)
         existing.created_at = datetime.now(timezone.utc)
         await session.commit()
 

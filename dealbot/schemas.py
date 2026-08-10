@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, field_validator
 
 
 class Condition(str, Enum):
@@ -74,6 +74,19 @@ class WatchlistContext(BaseModel):
     # never asked for directly. Shapes discovery and ranking only — hard
     # constraints stay in the typed fields above.
     buyer_profile: Optional[str] = None
+    # How picky this buyer is about cosmetic condition; drives quality
+    # filtering of picks. Inferred or asked once by Scout, editable later.
+    quality_bar: Optional[str] = None  # pristine | good | wear_ok | any
+    # Specific physical requirements in the buyer's own words
+    # ("no dents on the cups", "must include original box").
+    appearance_notes: Optional[str] = None
+
+    @field_validator("quality_bar", mode="before")
+    @classmethod
+    def _known_quality_bar(cls, v: object) -> Optional[str]:
+        # The LLM fills this field; an unknown label degrades to "unset"
+        # rather than failing the whole context parse.
+        return v if v in ("pristine", "good", "wear_ok", "any") else None
 
 
 class ChatMessage(BaseModel):
@@ -98,4 +111,6 @@ class WatchlistContextPatch(BaseModel):
     condition: Optional[list[str]] = None
     brands: Optional[list[str]] = None
     buyer_profile: Optional[str] = None
+    quality_bar: Optional[str] = None
+    appearance_notes: Optional[str] = None
 

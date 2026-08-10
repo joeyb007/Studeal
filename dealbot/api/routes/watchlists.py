@@ -309,6 +309,10 @@ async def patch_watchlist(
             ctx.brands = body.brands
         if body.buyer_profile is not None:
             ctx.buyer_profile = body.buyer_profile
+        if body.quality_bar is not None:
+            ctx.quality_bar = body.quality_bar
+        if body.appearance_notes is not None:
+            ctx.appearance_notes = body.appearance_notes
 
         watchlist.context = ctx.model_dump_json()
         # Any context edit changes what the user wants; a vector describing the

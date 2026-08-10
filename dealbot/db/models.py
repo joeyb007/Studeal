@@ -5,7 +5,8 @@ from datetime import date, datetime, timezone
 from pgvector.sqlalchemy import Vector
 
 from dealbot.llm.embeddings import EMBED_DIM
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint, Column
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint, Column
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -316,6 +317,12 @@ class ListingInspection(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")  # ok | listing_gone
     report: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON, sanitized
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON ListingDetail
+    # Objective flags distilled from the report; shared across users, so
+    # nothing user-specific lives here (personal matching is rank-time work).
+    # JSONB on postgres; plain JSON keeps the sqlite test harness compiling.
+    flags: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -18,6 +18,8 @@ export interface AgentContext {
   condition?: string[];
   brands?: string[];
   buyer_profile?: string | null;
+  quality_bar?: string | null;
+  appearance_notes?: string | null;
 }
 
 export interface Agent {
@@ -1098,6 +1100,8 @@ function EditBriefModal({
   const [notes, setNotes] = useState(ctx?.buyer_profile ?? "");
   const [budget, setBudget] = useState(ctx?.max_budget != null ? String(ctx.max_budget) : "");
   const [conditions, setConditions] = useState<string[]>(ctx?.condition ?? []);
+  const [qualityBar, setQualityBar] = useState<string | null>(ctx?.quality_bar ?? null);
+  const [appearance, setAppearance] = useState(ctx?.appearance_notes ?? "");
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -1110,6 +1114,8 @@ function EditBriefModal({
         buyer_profile: notes.trim(),
         max_budget: !isNaN(parsed) && parsed > 0 ? parsed : null,
         condition: conditions,
+        quality_bar: qualityBar,
+        appearance_notes: appearance.trim(),
       }),
     });
     setSaving(false);
@@ -1143,6 +1149,32 @@ function EditBriefModal({
             </button>
           ))}
         </div>
+        <label className={styles.fieldLabel}>How picky about cosmetic condition?</label>
+        <div className={styles.pillRow}>
+          {([
+            ["pristine", "pristine only"],
+            ["good", "good shape"],
+            ["wear_ok", "wear is fine"],
+            ["any", "anything works"],
+          ] as [string, string][]).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={[styles.pill, qualityBar === key ? styles.pillOn : ""].join(" ")}
+              onClick={() => setQualityBar(qualityBar === key ? null : key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <label className={styles.fieldLabel}>Anything specific Scout should check in photos?</label>
+        <input
+          className={styles.fieldInput}
+          type="text"
+          value={appearance}
+          onChange={e => setAppearance(e.target.value)}
+          placeholder="e.g. no dents on the ear cups, original box included"
+        />
         <p className={styles.modalSub}>Saving re-aims the agent: rankings and the playbook refresh in the background.</p>
         <div className={styles.modalActions}>
           <button className={styles.ghost} onClick={onClose}>Cancel</button>

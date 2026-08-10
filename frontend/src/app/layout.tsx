@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import NavGate from "@/components/NavGate";
+import PageFade from "@/components/PageFade";
 import Toaster from "@/components/Toast";
 import Providers from "./providers";
 
@@ -21,7 +22,7 @@ export default function RootLayout({
         <Providers>
           <NavGate />
           <Toaster />
-          {children}
+          <PageFade>{children}</PageFade>
         </Providers>
       </body>
     </html>

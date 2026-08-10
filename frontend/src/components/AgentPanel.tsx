@@ -384,6 +384,8 @@ export default function AgentPanel({
                 </p>
               </div>
 
+              <div className={styles.maGrid}>
+              <div className={styles.maLeft}>
               <div className={styles.maStats}>
                 <div className={styles.maStat}><span className={styles.maNum}>{market.n_live}</span><span className={styles.maLabel}>live now</span></div>
                 {market.typical != null && (
@@ -397,6 +399,17 @@ export default function AgentPanel({
                 )}
               </div>
 
+              <div className={styles.heatRow}>
+                <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
+                  {market.heat.label}
+                </span>
+                <span className={styles.heatWhy}>{market.heat.why}</span>
+              </div>
+
+              {market.going_rate_prose && <p className={styles.prose}>{market.going_rate_prose}</p>}
+              </div>
+
+              <div className={styles.maRight}>
               {market.histogram.length > 0 && (
                 <div className={styles.histoBox}>
                   <span className={styles.monoLabel}>where the {market.n_live} live listings sit · your picks ●</span>
@@ -444,15 +457,8 @@ export default function AgentPanel({
                   })()}
                 </div>
               )}
-
-              <div className={styles.heatRow}>
-                <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
-                  {market.heat.label}
-                </span>
-                <span className={styles.heatWhy}>{market.heat.why}</span>
               </div>
-
-              {market.going_rate_prose && <p className={styles.prose}>{market.going_rate_prose}</p>}
+              </div>
             </>
           )}
         </div>
@@ -645,23 +651,17 @@ function NegotiationView({
         </p>
       </div>
 
-      {neg && scale && (
-        <div className={styles.negChart}>
-          <div className={styles.negScale}>
-            <div className={styles.negZoneOpen} style={{ left: 0, width: pos(neg.open) }} />
-            <div className={styles.negZoneFair} style={{ left: pos(neg.fair_low), width: `calc(${pos(neg.fair_high)} - ${pos(neg.fair_low)})` }} />
-            <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
-            <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
-            <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
-          </div>
-          <div className={styles.negScaleLabels}>
-            <span>${Math.round(scale.lo)}</span>
-            <span>fair ${neg.fair_low}–{neg.fair_high}</span>
-            <span>${Math.round(scale.hi)}</span>
-          </div>
+      <div className={styles.negGrid}>
+      {neg && (
+        <div className={styles.negFig}>
+          <div className={styles.figStat}><span className={styles.monoLabel}>open at</span><span className={[styles.figNum, styles.goodText].join(" ")}>${neg.open}</span></div>
+          <div className={styles.figStat}><span className={styles.monoLabel}>fair deal</span><span className={styles.figNum}>${neg.fair_low}–{neg.fair_high}</span></div>
+          <div className={styles.figStat}><span className={styles.monoLabel}>walk away</span><span className={[styles.figNum, styles.ambText].join(" ")}>${neg.walk}</span></div>
+          <p className={styles.figNote}>from the going rate and your ceiling, refreshed every sweep</p>
         </div>
       )}
 
+      <div className={styles.negRight}>
       <div className={styles.negCards}>
         {checks && (
           <div className={styles.negCard}>
@@ -740,6 +740,25 @@ function NegotiationView({
         />
         <button className={styles.cta} onClick={ask} disabled={asking || !draft.trim()}>Ask</button>
       </div>
+      </div>
+      </div>
+
+      {neg && scale && (
+        <div className={styles.negChart}>
+          <div className={styles.negScale}>
+            <div className={styles.negZoneOpen} style={{ left: 0, width: pos(neg.open) }} />
+            <div className={styles.negZoneFair} style={{ left: pos(neg.fair_low), width: `calc(${pos(neg.fair_high)} - ${pos(neg.fair_low)})` }} />
+            <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
+            <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
+            <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
+          </div>
+          <div className={styles.negScaleLabels}>
+            <span>${Math.round(scale.lo)}</span>
+            <span>fair ${neg.fair_low}–{neg.fair_high}</span>
+            <span>${Math.round(scale.hi)}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

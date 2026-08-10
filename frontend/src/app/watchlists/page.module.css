@@ -1149,3 +1149,14 @@
   line-height: 1.6;
   color: var(--text-secondary);
 }
+
+.listItemIn { animation: agentIn 0.32s ease backwards; }
+
+@keyframes agentIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listItemIn { animation: none; }
+}

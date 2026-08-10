@@ -153,3 +153,12 @@
   background: rgba(168, 188, 232, 0.08);
   color: var(--text-secondary);
 }
+
+@keyframes rowIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row { animation: none; }
+}

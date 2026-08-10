@@ -73,11 +73,12 @@ export default function ScoutPage() {
 
       {items !== null && items.length > 0 && (
         <div className={styles.list}>
-          {items.map(item => (
+          {items.map((item, i) => (
             <button
               key={item.listing_id}
               type="button"
               className={styles.row}
+              style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }}
               onClick={() => setOpen(item)}
             >
               <div className={styles.thumbWrap}>

@@ -336,8 +336,12 @@ function WatchlistsPageInner() {
           </div>
         ) : (
           <div className={styles.list}>
-            {watchlists.map(wl => (
-              <div key={wl.id} className={wl.id === justCreatedId ? styles.cardPop : undefined}>
+            {watchlists.map((wl, i) => (
+              <div
+                key={wl.id}
+                className={[styles.listItemIn, wl.id === justCreatedId ? styles.cardPop : ""].join(" ")}
+                style={{ animationDelay: `${i * 80}ms` }}
+              >
               <AgentPanel
                 agent={wl}
                 token={token}

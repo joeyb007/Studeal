@@ -89,6 +89,49 @@ function ScoutGlyph({ size = 14 }: { size?: number }) {
   );
 }
 
+// Same typing treatment Scout has in the builder chat: interval-sliced text
+// with a blinking cursor until done. lead types first, then the dim tail.
+function useTypewriter(text: string, speed = 14) {
+  const [displayed, setDisplayed] = useState("");
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    setDisplayed("");
+    setDone(false);
+    if (!text) {
+      setDone(true);
+      return;
+    }
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setDisplayed(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(interval);
+        setDone(true);
+      }
+    }, speed);
+    return () => clearInterval(interval);
+  }, [text, speed]);
+  return { displayed, done };
+}
+
+function SayLine({ lead, dim }: { lead: string; dim?: string }) {
+  const full = dim ? `${lead}${dim}` : lead;
+  const { displayed, done } = useTypewriter(full);
+  const leadShown = displayed.slice(0, lead.length);
+  const dimShown = displayed.length > lead.length ? displayed.slice(lead.length) : "";
+  return (
+    <div className={styles.say}>
+      <span className={styles.avatar}><ScoutGlyph /></span>
+      <p className={styles.sentence}>
+        {leadShown}
+        {dimShown && <span className={styles.dim}>{dimShown}</span>}
+        {!done && <span className={styles.cursor}>▍</span>}
+      </p>
+    </div>
+  );
+}
+
 function priceChip(price: number, median: number | null): { tone: string; text: string } | null {
   if (median == null) return null;
   const delta = price - median;
@@ -314,28 +357,20 @@ export default function AgentPanel({
         <div className={styles.view}>
           {listings === null && <p className={styles.loading}>Loading Scout's picks…</p>}
           {listings !== null && picks.length === 0 && (
-            <div className={styles.say}>
-              <span className={styles.avatar}><ScoutGlyph /></span>
-              <p className={styles.sentence}>
-                Nothing has cleared your bar yet.{" "}
-                <span className={styles.dim}>
-                  {agent.running_hunt_id ? "I'm out looking right now." : "My next sweep will restock this."}
-                </span>
-              </p>
-            </div>
+            <SayLine
+              lead="Nothing has cleared your bar yet. "
+              dim={agent.running_hunt_id ? "I'm out looking right now." : "My next sweep will restock this."}
+            />
           )}
 
           {hero && (
             <>
-              <div className={styles.say}>
-                <span className={styles.avatar}><ScoutGlyph /></span>
-                <p className={styles.sentence}>
-                  {picks.some(p => p.headline)
-                    ? "I already took a look at your top picks. "
-                    : "Your top picks. "}
-                  <span className={styles.dim}>This one first:</span>
-                </p>
-              </div>
+              <SayLine
+                lead={picks.some(p => p.headline)
+                  ? "I already took a look at your top picks. "
+                  : "Your top picks. "}
+                dim="This one first:"
+              />
 
               <div className={styles.hero}>
                 {hero.image_url ? (
@@ -398,16 +433,16 @@ export default function AgentPanel({
           {!market && <p className={styles.loading}>Reading the market…</p>}
           {market && (
             <>
-              <div className={styles.say}>
-                <span className={styles.avatar}><ScoutGlyph /></span>
-                <p className={styles.sentence}>
-                  {market.typical != null
-                    ? <>Here's this market right now.{market.within_budget != null && market.ceiling != null && (
-                        <span className={styles.dim}> Your ${market.ceiling.toFixed(0)} budget covers most of it.</span>
-                      )}</>
-                    : <>Still a thin market. <span className={styles.dim}>I'll know more with every sweep.</span></>}
-                </p>
-              </div>
+              {market.typical != null ? (
+                <SayLine
+                  lead="Here's this market right now."
+                  dim={market.within_budget != null && market.ceiling != null
+                    ? ` Your $${market.ceiling.toFixed(0)} budget covers most of it.`
+                    : undefined}
+                />
+              ) : (
+                <SayLine lead="Still a thin market. " dim="I'll know more with every sweep." />
+              )}
 
               <div className={styles.maGrid}>
               <div className={styles.maLeft}>
@@ -497,14 +532,9 @@ export default function AgentPanel({
       {/* ================= ALL MATCHES ================= */}
       {tab === "all" && (
         <div className={styles.view}>
-          <div className={styles.say}>
-            <span className={styles.avatar}><ScoutGlyph /></span>
-            <p className={styles.sentence}>
-              {rest.length > 0
-                ? <>{rest.length} more cleared your bar. <span className={styles.dim}>Beyond your top five:</span></>
-                : <>Everything that cleared your bar is in your top picks. <span className={styles.dim}>The deeper layers:</span></>}
-            </p>
-          </div>
+          {rest.length > 0
+            ? <SayLine lead={`${rest.length} more cleared your bar. `} dim="Beyond your top five:" />
+            : <SayLine lead="Everything that cleared your bar is in your top picks. " dim="The deeper layers:" />}
 
           {rest.length > 0 && (
             <div className={styles.miniRow}>
@@ -668,13 +698,9 @@ function NegotiationView({
 
   return (
     <div className={styles.view}>
-      <div className={styles.say}>
-        <span className={styles.avatar}><ScoutGlyph /></span>
-        <p className={styles.sentence}>
-          {neg ? <>Your numbers for this market. <span className={styles.dim}>Then what to know.</span></>
-               : <>How I'd play this category. <span className={styles.dim}>Numbers land once the market fills in.</span></>}
-        </p>
-      </div>
+      {neg
+        ? <SayLine lead="Your numbers for this market. " dim="Then what to know." />
+        : <SayLine lead="How I'd play this category. " dim="Numbers land once the market fills in." />}
 
       <div className={styles.negGrid}>
       {neg && (

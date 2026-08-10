@@ -103,9 +103,16 @@
 .loading { font-size: 12.5px; color: var(--text-faint); margin: 4px 0; }
 
 /* Scout voice */
-.say { display: flex; gap: 12px; align-items: flex-start; }
+.say { display: flex; gap: 12px; align-items: center; min-height: 28px; }
 .sentence { font-size: 14px; line-height: 1.5; max-width: 640px; margin: 0; }
 .dim { color: var(--text-secondary); }
+
+.cursor {
+  margin-left: 2px;
+  color: var(--accent);
+  animation: cursorBlink 0.9s steps(2, start) infinite;
+}
+@keyframes cursorBlink { to { visibility: hidden; } }
 
 .avatar {
   width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;

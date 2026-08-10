@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AgentCard, { HuntSummary } from "./AgentCard";
 import InspectorPanel, { InspectListing } from "./InspectorPanel";
@@ -802,6 +802,32 @@ function NegotiationView({
   } : null;
   const pos = (v: number) => scale ? `${Math.min(96, Math.max(3, ((v - scale.lo) / (scale.hi - scale.lo)) * 100))}%` : "0%";
 
+  // Beeswarm placement: same-price listings fan out from the centerline
+  // instead of stacking into vertical strings; out-of-range outliers are
+  // dropped rather than piling up on the chart's edges.
+  const placedDots = useMemo(() => {
+    if (!scale) return [];
+    const spread = [0, -1, 1, -2, 2, -3, 3];
+    const buckets = new Map<number, number>();
+    return chartItems
+      .filter(l => l.price >= scale.lo && l.price <= scale.hi)
+      .sort((a, b) => a.price - b.price || a.id - b.id)
+      .map(l => {
+        const x = ((l.price - scale.lo) / (scale.hi - scale.lo)) * 100;
+        const bucket = Math.round(x / 2.4);
+        const n = buckets.get(bucket) ?? 0;
+        buckets.set(bucket, n + 1);
+        const ring = Math.floor(n / spread.length);
+        const y = 50 + spread[n % spread.length] * 13 + ring * 5;
+        const xNudge = ((n * 7) % 3 - 1) * 0.55;
+        return {
+          ...l,
+          x: Math.min(97.5, Math.max(2.5, x + xNudge)),
+          y: Math.min(86, Math.max(14, y)),
+        };
+      });
+  }, [chartItems, scale]);
+
   return (
     <div className={styles.view}>
       {neg
@@ -816,11 +842,11 @@ function NegotiationView({
             <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
             <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
             <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
-            {chartItems.map(l => (
+            {placedDots.map(l => (
               <span
                 key={`${l.tier}-${l.id}`}
                 className={styles.chartDotWrap}
-                style={{ left: pos(l.price), top: `${18 + ((l.id * 37) % 64)}%` }}
+                style={{ left: `${l.x}%`, top: `${l.y}%` }}
               >
                 <span className={[styles.chartDot, styles[`cd_${l.tier}`]].join(" ")} />
                 <span className={styles.chartPop}>

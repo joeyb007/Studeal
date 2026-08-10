@@ -365,8 +365,8 @@ export default function AgentPanel({
 
               {minis.length > 0 && (
                 <div className={styles.miniRow}>
-                  {minis.map(l => (
-                    <div key={l.id} className={styles.mini}>
+                  {minis.map((l, i) => (
+                    <div key={l.id} className={styles.mini} style={{ animationDelay: `${140 + i * 55}ms` }}>
                       {l.image_url ? (
                         <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.miniThumb} />
                       ) : (
@@ -508,8 +508,8 @@ export default function AgentPanel({
 
           {rest.length > 0 && (
             <div className={styles.miniRow}>
-              {rest.map(l => (
-                <div key={l.id} className={styles.mini}>
+              {rest.map((l, i) => (
+                <div key={l.id} className={styles.mini} style={{ animationDelay: `${70 + Math.min(i, 12) * 45}ms` }}>
                   {l.image_url ? (
                     <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.miniThumb} />
                   ) : (

@@ -30,6 +30,10 @@ Output JSON:
 
 - available: false when the page says the listing is gone, sold, or
   unavailable, or when this is not a single listing's page at all.
+- Some sites hide the page body behind a login wall while the page METADATA
+  still fully describes the listing. When the metadata names a specific item
+  with a price, extract from the metadata and set available=true; a login
+  form in the body does not make the listing unavailable.
 - price: the asking price as a number. Genuinely absent means available=false.
 - currency: the listed currency code (CAD, USD, ...). Infer from the site's
   country only when the page shows a bare $.
@@ -46,8 +50,12 @@ def _extract_llm() -> LLMClient:
 
 
 async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None] | None:
-    """(snapshot_text, og_image_url) for a listing page; None on navigation
-    failure. Same session + referer discipline as the inspector's visit."""
+    """(extraction_text, og_image_url) for a listing page; None on navigation
+    failure. Same session + referer discipline as the inspector's visit.
+
+    Page metadata rides ahead of the body: FB serves a login wall in the body
+    while og:title/og:description still carry the listing's title, price, and
+    description, so an unauthenticated session can still extract the facts."""
     from dealbot.agents.composition import build_session_from_env
     from dealbot.agents.explorer import _settled_snapshot
 
@@ -61,10 +69,28 @@ async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None] | Non
             page = session.page
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000, **goto_kwargs)
             snap = await _settled_snapshot(page)
-            og_image = await page.evaluate(
-                "() => document.querySelector('meta[property=\"og:image\"]')?.content ?? null"
+            metas = await page.evaluate(
+                """() => {
+                    const grab = sel => document.querySelector(sel)?.content ?? null;
+                    return {
+                        title: document.title,
+                        og_title: grab('meta[property="og:title"]'),
+                        og_description: grab('meta[property="og:description"]'),
+                        og_image: grab('meta[property="og:image"]'),
+                    };
+                }"""
             )
-            return snap.text, og_image if isinstance(og_image, str) and og_image else None
+            metas = metas if isinstance(metas, dict) else {}
+            head = "\n".join(
+                f"{key}: {value}" for key, value in [
+                    ("Page title", metas.get("title")),
+                    ("og:title", metas.get("og_title")),
+                    ("og:description", metas.get("og_description")),
+                ] if isinstance(value, str) and value
+            )
+            text = (f"Page metadata:\n{head}\n\nPage body:\n" if head else "") + snap.text
+            og_image = metas.get("og_image")
+            return text, og_image if isinstance(og_image, str) and og_image else None
     except Exception as exc:
         logger.warning("fetch_listing: visit failed for %s: %s", url, exc)
         return None

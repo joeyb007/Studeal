@@ -218,9 +218,12 @@ export default function AgentPanel({
   // All-matches prefilters: pure client-side predicates over loaded rows.
   const [mpFilter, setMpFilter] = useState<string | null>(null);
   const [maxPriceFilter, setMaxPriceFilter] = useState("");
+  const [searchAll, setSearchAll] = useState("");
   const [sortAll, setSortAll] = useState<"best" | "price_asc" | "price_desc" | "newest">("best");
-  function filterSort<T extends { price: number; marketplace: string; first_seen_at?: string }>(items: T[]): T[] {
+  function filterSort<T extends { title: string; price: number; marketplace: string; first_seen_at?: string }>(items: T[]): T[] {
     let out = items;
+    const q = searchAll.trim().toLowerCase();
+    if (q) out = out.filter(l => l.title.toLowerCase().includes(q));
     if (mpFilter) out = out.filter(l => l.marketplace === mpFilter);
     const cap = parseFloat(maxPriceFilter);
     if (!Number.isNaN(cap)) out = out.filter(l => l.price <= cap);
@@ -463,6 +466,12 @@ export default function AgentPanel({
                   ))}
                 </div>
               )}
+
+              {ranked.length > picks.length && (
+                <button className={styles.showAllBtn} onClick={() => setTab("all")}>
+                  Show all {ranked.length} picks →
+                </button>
+              )}
             </>
           )}
         </div>
@@ -498,6 +507,20 @@ export default function AgentPanel({
             )).sort();
             return (
               <>
+                <div className={styles.cardSearchWrap}>
+                  <svg className={styles.cardSearchIcon} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  <input
+                    className={styles.cardSearchInput}
+                    type="text"
+                    value={searchAll}
+                    onChange={e => setSearchAll(e.target.value)}
+                    placeholder="Search these listings…"
+                  />
+                  {searchAll && (
+                    <button className={styles.cardSearchClear} onClick={() => setSearchAll("")}>✕</button>
+                  )}
+                </div>
+
                 <div className={styles.filterRow}>
                   <button
                     className={[styles.filterChip, mpFilter === null ? styles.filterChipOn : ""].join(" ")}

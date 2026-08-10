@@ -824,14 +824,13 @@ function MarketPlaybookView({
       )}
 
       {market && (
-        <div className={[
-          styles.heatBanner,
-          market.heat.level === "good" ? styles.heatGood : market.heat.level === "warn" ? styles.heatWarn : styles.heatPlain,
-        ].join(" ")}>
-          <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
+        <div className={styles.heatPop}>
+          <span
+            className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}
+            title={market.heat.why}
+          >
             {market.heat.label}
           </span>
-          <span className={styles.heatWhy}>{market.heat.why}</span>
         </div>
       )}
 

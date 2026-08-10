@@ -527,19 +527,18 @@
   align-items: stretch;
 }
 /* Tinted callout blocks: each number lives in its own soft-toned panel */
-.negFig { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.negFig { display: flex; flex-direction: column; justify-content: space-between; gap: 8px; height: 100%; }
 .figRow {
-  display: flex; flex-direction: column; justify-content: space-between;
-  gap: 6px; padding: 12px 15px; border-radius: 11px;
-  flex: 1;                      /* the three blocks share the column height */
+  display: flex; align-items: center; gap: 12px;
+  padding: 16px 17px; border-radius: 11px;
 }
 .figRowGreen { background: rgba(111, 191, 143, 0.07); border: 1px solid rgba(111, 191, 143, 0.16); }
 .figRowBlue  { background: rgba(168, 188, 232, 0.07); border: 1px solid rgba(168, 188, 232, 0.18); }
 .figRowRed   { background: rgba(222, 123, 98, 0.07);  border: 1px solid rgba(222, 123, 98, 0.18); }
-.figLabel { font-size: 11.5px; color: var(--text-secondary); font-weight: 500; }
+.figLabel { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
 .figVal {
-  align-self: flex-end; font-size: 25px; font-weight: 700;
-  font-variant-numeric: tabular-nums; letter-spacing: -0.015em; line-height: 1.1;
+  margin-left: auto; font-size: 22px; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.015em; line-height: 1;
 }
 .figValGreen { color: var(--success); }
 .figValBlue  { color: var(--accent); }

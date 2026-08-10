@@ -215,6 +215,24 @@ export default function AgentPanel({
   const [deleting, setDeleting] = useState(false);
   const [expanded, setExpanded] = useState<boolean | null>(null); // null until newCount known
 
+  // All-matches prefilters: pure client-side predicates over loaded rows.
+  const [mpFilter, setMpFilter] = useState<string | null>(null);
+  const [maxPriceFilter, setMaxPriceFilter] = useState("");
+  const [sortAll, setSortAll] = useState<"best" | "price_asc" | "price_desc" | "newest">("best");
+  function filterSort<T extends { price: number; marketplace: string; first_seen_at?: string }>(items: T[]): T[] {
+    let out = items;
+    if (mpFilter) out = out.filter(l => l.marketplace === mpFilter);
+    const cap = parseFloat(maxPriceFilter);
+    if (!Number.isNaN(cap)) out = out.filter(l => l.price <= cap);
+    if (sortAll === "price_asc") out = [...out].sort((a, b) => a.price - b.price);
+    else if (sortAll === "price_desc") out = [...out].sort((a, b) => b.price - a.price);
+    else if (sortAll === "newest") {
+      out = [...out].sort((a, b) =>
+        new Date(b.first_seen_at ?? 0).getTime() - new Date(a.first_seen_at ?? 0).getTime());
+    }
+    return out;
+  }
+
   // Sliding tab indicator: measured from the active tab button so it glides
   // (left/width transition) instead of snapping between tabs.
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -471,67 +489,119 @@ export default function AgentPanel({
             ? <SayLine lead={`${rest.length} more cleared your bar. `} dim="Beyond your top five:" />
             : <SayLine lead="Everything that cleared your bar is in your top picks. " dim="The deeper layers:" />}
 
-          {rest.length > 0 && (
-            <div className={styles.miniRow}>
-              {rest.map((l, i) => (
-                <div key={l.id} className={styles.mini} style={{ animationDelay: `${70 + Math.min(i, 12) * 45}ms` }}>
-                  {l.image_url ? (
-                    <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.miniThumb} />
-                  ) : (
-                    <span className={[styles.miniThumb, styles.thumbEmpty].join(" ")} aria-hidden><ScoutGlyph /></span>
-                  )}
-                  <div className={styles.miniBody}>
-                    <span className={styles.miniTitle}>{l.title}</span>
-                    <span className={styles.miniMeta}>
-                      {MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}
-                      {l.location ? ` · ${l.location}` : ""}
-                      {(() => {
-                        const chip = priceChip(l.price, median);
-                        return chip ? <span className={[styles.chip, styles[chip.tone], styles.chipTight].join(" ")}>{chip.text}</span> : null;
-                      })()}
-                    </span>
-                    <div className={styles.miniFoot}>
-                      <span className={styles.miniPrice}>${l.price.toFixed(0)}</span>
-                      <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
-                      <button className={styles.askBtn} onClick={() => setInspecting(l)}>Ask Scout</button>
+          {(() => {
+            const fRest = filterSort(rest);
+            const fWeak = filterSort(weak);
+            const fSweep = filterSort((sweep ?? []).filter(l => !l.matched));
+            const markets = Array.from(new Set(
+              [...rest, ...weak, ...(sweep ?? [])].map(l => l.marketplace),
+            )).sort();
+            return (
+              <>
+                <div className={styles.filterRow}>
+                  <button
+                    className={[styles.filterChip, mpFilter === null ? styles.filterChipOn : ""].join(" ")}
+                    onClick={() => setMpFilter(null)}
+                  >
+                    All
+                  </button>
+                  {markets.map(m => (
+                    <button
+                      key={m}
+                      className={[styles.filterChip, mpFilter === m ? styles.filterChipOn : ""].join(" ")}
+                      onClick={() => setMpFilter(mpFilter === m ? null : m)}
+                    >
+                      {MARKETPLACE_LABELS[m] ?? m}
+                    </button>
+                  ))}
+                  <input
+                    className={styles.filterInput}
+                    type="number"
+                    placeholder="max $"
+                    value={maxPriceFilter}
+                    onChange={e => setMaxPriceFilter(e.target.value)}
+                  />
+                  <select
+                    className={styles.filterSelect}
+                    value={sortAll}
+                    onChange={e => setSortAll(e.target.value as typeof sortAll)}
+                  >
+                    <option value="best">Best match</option>
+                    <option value="price_asc">Price: low to high</option>
+                    <option value="price_desc">Price: high to low</option>
+                    <option value="newest">Newest first</option>
+                  </select>
+                </div>
+
+                {rest.length > 0 && fRest.length === 0 && (
+                  <p className={styles.loading}>Nothing here fits those filters.</p>
+                )}
+                {fRest.length > 0 && (
+                  <div className={styles.miniRow}>
+                    {fRest.map((l, i) => (
+                      <div key={l.id} className={styles.mini} style={{ animationDelay: `${70 + Math.min(i, 12) * 45}ms` }}>
+                        {l.image_url ? (
+                          <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.miniThumb} />
+                        ) : (
+                          <span className={[styles.miniThumb, styles.thumbEmpty].join(" ")} aria-hidden><ScoutGlyph /></span>
+                        )}
+                        <div className={styles.miniBody}>
+                          <span className={styles.miniTitle}>{l.title}</span>
+                          <span className={styles.miniMeta}>
+                            {MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}
+                            {l.location ? ` · ${l.location}` : ""}
+                            {(() => {
+                              const chip = priceChip(l.price, median);
+                              return chip ? <span className={[styles.chip, styles[chip.tone], styles.chipTight].join(" ")}>{chip.text}</span> : null;
+                            })()}
+                          </span>
+                          <div className={styles.miniFoot}>
+                            <span className={styles.miniPrice}>${l.price.toFixed(0)}</span>
+                            <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                            <button className={styles.askBtn} onClick={() => setInspecting(l)}>Ask Scout</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {weak.length > 0 && (
+                  <details className={styles.layer}>
+                    <summary><span className={styles.twist}>▶</span> Weaker matches <span className={styles.tabCount}>{fWeak.length}</span> <span className={styles.layerHint}>probably not it, but Scout kept them just in case</span></summary>
+                    <div className={styles.denseList}>
+                      {fWeak.length === 0 && <p className={styles.loading}>Nothing here fits those filters.</p>}
+                      {fWeak.map(l => (
+                        <div key={l.id} className={styles.denseRow}>
+                          <span className={styles.denseTitle}>{l.title}</span>
+                          <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
+                          <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
+                          <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                  </details>
+                )}
 
-          {weak.length > 0 && (
-            <details className={styles.layer}>
-              <summary><span className={styles.twist}>▶</span> Weaker matches <span className={styles.tabCount}>{weak.length}</span> <span className={styles.layerHint}>probably not it, but Scout kept them just in case</span></summary>
-              <div className={styles.denseList}>
-                {weak.map(l => (
-                  <div key={l.id} className={styles.denseRow}>
-                    <span className={styles.denseTitle}>{l.title}</span>
-                    <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
-                    <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
-                    <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                <details className={styles.layer} onToggle={e => { if ((e.target as HTMLDetailsElement).open) loadSweep(); }}>
+                  <summary><span className={styles.twist}>▶</span> Everything from the last sweep{sweep ? <span className={styles.tabCount}> {fSweep.length}</span> : null} <span className={styles.layerHint}>every unique listing the agent reviewed, filtered or not</span></summary>
+                  <div className={styles.denseList}>
+                    {sweep === null && <p className={styles.loading}>Pulling the sweep…</p>}
+                    {sweep !== null && sweep.length === 0 && <p className={styles.loading}>No sweep on record yet.</p>}
+                    {sweep !== null && sweep.length > 0 && fSweep.length === 0 && <p className={styles.loading}>Nothing here fits those filters.</p>}
+                    {fSweep.map(l => (
+                      <div key={l.id} className={styles.denseRow}>
+                        <span className={styles.denseTitle}>{l.title}</span>
+                        <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
+                        <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
+                        <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </details>
-          )}
-
-          <details className={styles.layer} onToggle={e => { if ((e.target as HTMLDetailsElement).open) loadSweep(); }}>
-            <summary><span className={styles.twist}>▶</span> Everything from the last sweep{sweep ? <span className={styles.tabCount}> {sweep.length}</span> : null} <span className={styles.layerHint}>every unique listing the agent reviewed, filtered or not</span></summary>
-            <div className={styles.denseList}>
-              {sweep === null && <p className={styles.loading}>Pulling the sweep…</p>}
-              {sweep !== null && sweep.length === 0 && <p className={styles.loading}>No sweep on record yet.</p>}
-              {(sweep ?? []).filter(l => !l.matched).map(l => (
-                <div key={l.id} className={styles.denseRow}>
-                  <span className={styles.denseTitle}>{l.title}</span>
-                  <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
-                  <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
-                  <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
-                </div>
-              ))}
-            </div>
-          </details>
+                </details>
+              </>
+            );
+          })()}
         </div>
       )}
 

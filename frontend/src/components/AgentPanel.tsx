@@ -130,7 +130,7 @@ function SayLine({ lead, dim }: { lead: string; dim?: string }) {
   const dimShown = displayed.length > lead.length ? displayed.slice(lead.length) : "";
   return (
     <div className={styles.say}>
-      <span className={[styles.avatar, !done ? styles.avatarActive : ""].join(" ")}>
+      <span className={[styles.avatar, styles.avatarActive].join(" ")}>
         <ScoutGlyph />
       </span>
       <p className={styles.sentence}>

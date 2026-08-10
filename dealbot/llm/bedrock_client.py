@@ -67,15 +67,18 @@ def _to_converse(
             continue
 
         if role == "tool":
-            out.append({
-                "role": "user",
-                "content": [{
-                    "toolResult": {
-                        "toolUseId": message.get("tool_call_id", ""),
-                        "content": [{"text": str(content or "")}],
-                    }
-                }],
-            })
+            block = {
+                "toolResult": {
+                    "toolUseId": message.get("tool_call_id", ""),
+                    "content": [{"text": str(content or "")}],
+                }
+            }
+            # Converse wants every toolResult for an assistant turn in ONE
+            # user turn; consecutive tool messages merge into the last one.
+            if out and out[-1]["role"] == "user" and "toolResult" in out[-1]["content"][-1]:
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
             continue
 
         blocks: list[dict[str, Any]] = []

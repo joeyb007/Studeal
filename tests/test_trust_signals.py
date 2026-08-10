@@ -179,3 +179,134 @@ async def test_enforce_quality_bar_noop_without_bar(db_factory, monkeypatch):
     from dealbot.worker.inspections import enforce_quality_bar
 
     assert await enforce_quality_bar(wl_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_brief_contradiction_demotes_without_quality_bar(db_factory, monkeypatch):
+    @asynccontextmanager
+    async def _s():
+        async with db_factory() as session:
+            yield session
+
+    monkeypatch.setattr("dealbot.worker.inspections.get_async_session", _s)
+
+    async def _fake_inspect(listing_id: int):
+        return {"status": "ok"}
+    monkeypatch.setattr(
+        "dealbot.agents.inspector.get_or_create_inspection", _fake_inspect
+    )
+
+    seen_payload: dict = {}
+
+    async def _fake_brief_match(brief, items):
+        seen_payload["brief"] = brief
+        seen_payload["ids"] = [i for i, _ in items]
+        # First candidate clearly contradicts; second unknown; rest unjudged.
+        return {items[0][0]: False, items[1][0]: None} if len(items) > 1 else {}
+
+    from dealbot.worker import inspections
+    monkeypatch.setattr(inspections, "_brief_match", _fake_brief_match)
+
+    async with db_factory() as session:
+        user = User(email="brief@example.com", hashed_password="x")
+        session.add(user)
+        await session.flush()
+        wl = Watchlist(
+            user_id=user.id, name="Sectional",
+            context=json.dumps({
+                "product_query": "sectional couch",
+                "appearance_notes": "l shaped brown sectional, mild wear",
+            }),
+        )
+        session.add(wl)
+        await session.flush()
+
+        listings = [_listing(f"b-{i}") for i in range(6)]
+        session.add_all(listings)
+        await session.flush()
+        now = datetime.now(timezone.utc)
+        for pos, listing in enumerate(listings):
+            session.add(WatchlistRanking(
+                watchlist_id=wl.id, listing_id=listing.id,
+                score=0.9 - pos * 0.05, position=pos, computed_at=now,
+            ))
+        # Reports exist for picks 0 and 1; 0 will contradict the brief.
+        for i in (0, 1):
+            session.add(ListingInspection(
+                listing_id=listings[i].id, status="ok",
+                report=json.dumps({
+                    "identification": "Grey fabric reclining sofa" if i == 0 else "Brown L-shaped sectional",
+                    "condition": "clean", "summary": "fine",
+                }),
+                flags={"photos_real": True, "condition_grade": "good"},
+            ))
+        await session.commit()
+        wl_id = wl.id
+        ids = [l.id for l in listings]
+
+    from dealbot.worker.inspections import enforce_quality_bar
+
+    demoted = await enforce_quality_bar(wl_id)
+    assert demoted == 1
+    assert seen_payload["brief"] == "l shaped brown sectional, mild wear"
+    assert seen_payload["ids"] == [ids[0], ids[1]]   # only picks WITH report notes
+
+    async with db_factory() as session:
+        from sqlalchemy import select
+        rows = (await session.execute(
+            select(WatchlistRanking)
+            .where(WatchlistRanking.watchlist_id == wl_id)
+            .order_by(WatchlistRanking.position)
+        )).scalars().all()
+    ordered = [r.listing_id for r in rows]
+    # The contradicting pick sank to the back; the unknown one stayed put.
+    assert ordered == [ids[1], ids[2], ids[3], ids[4], ids[5], ids[0]]
+
+
+@pytest.mark.asyncio
+async def test_brief_llm_failure_demotes_nothing(db_factory, monkeypatch):
+    @asynccontextmanager
+    async def _s():
+        async with db_factory() as session:
+            yield session
+
+    monkeypatch.setattr("dealbot.worker.inspections.get_async_session", _s)
+
+    async def _broken(brief, items):
+        return {}
+    from dealbot.worker import inspections
+    monkeypatch.setattr(inspections, "_brief_match", _broken)
+
+    async with db_factory() as session:
+        user = User(email="brief2@example.com", hashed_password="x")
+        session.add(user)
+        await session.flush()
+        wl = Watchlist(
+            user_id=user.id, name="Sectional",
+            context=json.dumps({
+                "product_query": "sectional couch",
+                "appearance_notes": "brown sectional",
+            }),
+        )
+        session.add(wl)
+        await session.flush()
+        a, b = _listing("bl-0"), _listing("bl-1")
+        session.add_all([a, b])
+        await session.flush()
+        now = datetime.now(timezone.utc)
+        for pos, listing in enumerate([a, b]):
+            session.add(WatchlistRanking(
+                watchlist_id=wl.id, listing_id=listing.id,
+                score=0.9 - pos * 0.05, position=pos, computed_at=now,
+            ))
+        session.add(ListingInspection(
+            listing_id=a.id, status="ok",
+            report=json.dumps({"identification": "grey couch", "condition": "x", "summary": "y"}),
+            flags={"photos_real": True, "condition_grade": "good"},
+        ))
+        await session.commit()
+        wl_id = wl.id
+
+    from dealbot.worker.inspections import enforce_quality_bar
+
+    assert await enforce_quality_bar(wl_id) == 0

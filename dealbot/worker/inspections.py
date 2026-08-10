@@ -6,7 +6,9 @@ here never touches the hunt that spawned it.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -103,11 +105,80 @@ def fails_quality_bar(bar: str | None, flags: dict | None) -> bool:
     return grade in ("good", "fair", "worn") and grade not in _GRADES_ALLOWED[bar]
 
 
+# The brief match (physical-brief spec 2026-08-10, stage 3): Scout's cached
+# report text describes what the photos show; one cheap JSON call decides
+# which top picks clearly contradict the buyer's brief. Unknown never demotes.
+BRIEF_MATCH_SYSTEM = """A buyer described what their item should look like. For each
+listing you have Scout's inspection notes describing what its photos show.
+Decide per listing whether it matches the buyer's brief.
+
+Output JSON: {"matches": [{"id": int, "match": true|false|null}]}
+- false ONLY when the notes clearly contradict the brief: wrong color, wrong
+  shape or variant, wear far beyond what the brief tolerates.
+- true when the notes clearly fit the brief.
+- null when the notes do not say enough to tell. Unknown is null, never false.
+- JSON only."""
+
+
+def _brief_llm():
+    backend = os.environ.get("LLM_BACKEND", "openai")
+    if backend == "bedrock":
+        from dealbot.llm.bedrock_client import DEFAULT_NAV_MODEL, BedrockClient
+        return BedrockClient(model=os.environ.get("BEDROCK_SCOUT_MODEL", DEFAULT_NAV_MODEL))
+    from dealbot.llm.openai_client import OpenAIClient
+    return OpenAIClient()
+
+
+def _report_desc(report_json: str | None) -> str | None:
+    """The report's physical description of a listing; None without one."""
+    if not report_json:
+        return None
+    try:
+        report = json.loads(report_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    parts = [report.get(k) for k in ("identification", "condition", "summary")]
+    text = " ".join(p for p in parts if isinstance(p, str) and p)
+    return text or None
+
+
+async def _brief_match(brief: str, items: list[tuple[int, str]]) -> dict[int, bool | None]:
+    """listing_id → true/false/None against the brief. {} on any failure —
+    an unreachable model must never demote anything."""
+    if not items:
+        return {}
+    payload = {
+        "brief": brief,
+        "listings": [{"id": listing_id, "notes": notes[:600]} for listing_id, notes in items],
+    }
+    known = {listing_id for listing_id, _ in items}
+    try:
+        response = await _brief_llm().complete(
+            [
+                {"role": "system", "content": BRIEF_MATCH_SYSTEM},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        parsed = json.loads(response.content or "{}")
+        out: dict[int, bool | None] = {}
+        for entry in parsed.get("matches") or []:
+            listing_id = entry.get("id")
+            verdict = entry.get("match")
+            if listing_id in known and (verdict is True or verdict is False or verdict is None):
+                out[listing_id] = verdict
+        return out
+    except Exception:
+        logger.warning("brief match failed", exc_info=True)
+        return {}
+
+
 async def enforce_quality_bar(watchlist_id: int) -> int:
     """One bounded swap round over the curated top picks (spec 2026-08-10):
-    demote picks whose flags fail the owner's quality bar to the back of the
-    curated block, then inspect whatever newly entered the top 5 (≤5 calls).
-    Replacements are never re-demoted this round. Returns demoted count."""
+    demote picks whose flags fail the owner's quality bar OR whose inspection
+    notes contradict their physical brief, then inspect whatever newly
+    entered the top 5 (≤5 calls). Replacements are never re-demoted this
+    round. Returns demoted count."""
     from dealbot.agents.inspector import get_or_create_inspection
     from dealbot.recsys.market_stats import WEAK_SCORE
 
@@ -116,9 +187,12 @@ async def enforce_quality_bar(watchlist_id: int) -> int:
         if watchlist is None or not watchlist.context:
             return 0
         context = WatchlistContext.model_validate_json(watchlist.context)
-        if context.quality_bar not in _GRADES_ALLOWED:
-            return 0
+    bar_active = context.quality_bar in _GRADES_ALLOWED
+    brief = (context.appearance_notes or "").strip()
+    if not bar_active and not brief:
+        return 0
 
+    async with get_async_session() as session:
         curated = list((await session.execute(
             select(WatchlistRanking)
             .where(WatchlistRanking.watchlist_id == watchlist_id)
@@ -127,21 +201,45 @@ async def enforce_quality_bar(watchlist_id: int) -> int:
         )).scalars().all())
         if len(curated) <= 1:
             return 0
-
-        top = curated[:_TOP_PICKS]
-        flag_rows = (await session.execute(
+        top_ids = [r.listing_id for r in curated[:_TOP_PICKS]]
+        insp_rows = (await session.execute(
             select(ListingInspection)
-            .where(ListingInspection.listing_id.in_([r.listing_id for r in top]))
+            .where(ListingInspection.listing_id.in_(top_ids))
         )).scalars().all()
-        flags_by_id = {row.listing_id: row.flags for row in flag_rows}
+        flags_by_id = {row.listing_id: row.flags for row in insp_rows}
+        desc_by_id = {row.listing_id: _report_desc(row.report) for row in insp_rows}
 
-        failing = [r for r in top if fails_quality_bar(context.quality_bar, flags_by_id.get(r.listing_id))]
+    failing_ids: set[int] = set()
+    if bar_active:
+        failing_ids |= {
+            listing_id for listing_id in top_ids
+            if fails_quality_bar(context.quality_bar, flags_by_id.get(listing_id))
+        }
+    if brief:
+        candidates = [
+            (listing_id, desc_by_id[listing_id])
+            for listing_id in top_ids
+            if listing_id not in failing_ids and desc_by_id.get(listing_id)
+        ]
+        verdicts = await _brief_match(brief, candidates)
+        failing_ids |= {listing_id for listing_id, v in verdicts.items() if v is False}
+    if not failing_ids:
+        return 0
+
+    # The LLM call ran outside any session; re-read the rows to reorder so a
+    # concurrent recompute can't be half-overwritten with stale positions.
+    async with get_async_session() as session:
+        rows = list((await session.execute(
+            select(WatchlistRanking)
+            .where(WatchlistRanking.watchlist_id == watchlist_id)
+            .where(WatchlistRanking.score >= WEAK_SCORE)
+            .order_by(WatchlistRanking.position)
+        )).scalars().all())
+        keep = [r for r in rows if r.listing_id not in failing_ids]
+        failing = [r for r in rows if r.listing_id in failing_ids]
         if not failing:
             return 0
-
-        failing_ids = {r.listing_id for r in failing}
-        keep = [r for r in curated if r.listing_id not in failing_ids]
-        positions = sorted(r.position for r in curated)
+        positions = sorted(r.position for r in rows)
         for pos, row in zip(positions, keep + failing):
             row.position = pos
         promoted = [r.listing_id for r in keep[:_TOP_PICKS]]

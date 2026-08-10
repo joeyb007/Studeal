@@ -162,9 +162,8 @@
 .cta:hover:not(:disabled) {
   opacity: 0.95;
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(168, 188, 232, 0.25);
 }
-.cta:active:not(:disabled) { transform: translateY(0) scale(0.97); box-shadow: none; }
+.cta:active:not(:disabled) { transform: translateY(0) scale(0.97); }
 .cta:disabled { opacity: 0.45; cursor: default; }
 .ghost {
   font-size: 12.5px; font-weight: 600; color: var(--text-faint);
@@ -254,9 +253,8 @@
 .askBtn:hover {
   background: rgba(168, 188, 232, 0.18);
   transform: translateY(-1px);
-  box-shadow: 0 3px 14px rgba(168, 188, 232, 0.18);
 }
-.askBtn:active { transform: translateY(0) scale(0.96); box-shadow: none; }
+.askBtn:active { transform: translateY(0) scale(0.96); }
 
 /* market analysis */
 .maStats { margin-left: 40px; display: flex; gap: 30px; flex-wrap: wrap; }

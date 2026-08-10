@@ -809,31 +809,42 @@ function MarketPlaybookView({
 
       {showBelow && (<>
       {market && (
-        <div className={styles.maStats}>
-          <div className={styles.maStat}><span className={styles.maNum}>{market.n_live}</span><span className={styles.maLabel}>live now</span></div>
+        <div className={styles.statTiles}>
+          <div className={styles.statTile}><span className={styles.maNum}>{market.n_live}</span><span className={styles.maLabel}>live now</span></div>
           {market.typical != null && (
-            <div className={styles.maStat}><span className={styles.maNum}>${market.typical}</span><span className={styles.maLabel}>typical price</span></div>
+            <div className={styles.statTile}><span className={styles.maNum}>${market.typical}</span><span className={styles.maLabel}>typical price</span></div>
           )}
           {market.within_budget != null && (
-            <div className={styles.maStat}><span className={[styles.maNum, styles.goodText].join(" ")}>{market.within_budget} of {market.n_live}</span><span className={styles.maLabel}>within your budget</span></div>
+            <div className={styles.statTile}><span className={[styles.maNum, styles.goodText].join(" ")}>{market.within_budget} of {market.n_live}</span><span className={styles.maLabel}>within your budget</span></div>
           )}
           {market.newest_find_hours != null && (
-            <div className={styles.maStat}><span className={styles.maNum}>{market.newest_find_hours < 48 ? `${Math.max(1, Math.round(market.newest_find_hours))}h` : `${Math.round(market.newest_find_hours / 24)}d`}</span><span className={styles.maLabel}>newest find</span></div>
+            <div className={styles.statTile}><span className={styles.maNum}>{market.newest_find_hours < 48 ? `${Math.max(1, Math.round(market.newest_find_hours))}h` : `${Math.round(market.newest_find_hours / 24)}d`}</span><span className={styles.maLabel}>newest find</span></div>
           )}
-          <div className={styles.heatStat}>
-            <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
-              {market.heat.label}
-            </span>
-            <span className={styles.heatWhy}>{market.heat.why}</span>
-          </div>
+        </div>
+      )}
+
+      {market && (
+        <div className={[
+          styles.heatBanner,
+          market.heat.level === "good" ? styles.heatGood : market.heat.level === "warn" ? styles.heatWarn : styles.heatPlain,
+        ].join(" ")}>
+          <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
+            {market.heat.label}
+          </span>
+          <span className={styles.heatWhy}>{market.heat.why}</span>
         </div>
       )}
 
       {market && (market.going_rate_prose || market.structure.rows.length > 0) && (
         <div className={styles.factsBand}>
-          {market.going_rate_prose && <p className={styles.prose}>{market.going_rate_prose}</p>}
+          {market.going_rate_prose && (
+            <div className={[styles.factsBox, styles.proseBox].join(" ")}>
+              <span className={styles.monoLabel}>scout&apos;s read</span>
+              <p className={styles.prose}>{market.going_rate_prose}</p>
+            </div>
+          )}
           {market.structure.rows.length > 0 && (
-            <div className={styles.split}>
+            <div className={[styles.factsBox, styles.split].join(" ")}>
               <span className={styles.monoLabel}>
                 price structure · {market.structure.kind === "condition" ? "by condition"
                   : market.structure.kind === "marketplace" ? "by marketplace" : "spread"}

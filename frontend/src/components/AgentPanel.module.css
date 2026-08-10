@@ -53,7 +53,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .liveDot { animation: none; }
-  .view > *, .mini, .maLeft > *, .maRight > *, .negRight > *, .negFig > * { animation: none; }
+  .view > *, .mini, .negRight > *, .negFig > * { animation: none; }
   .tabIndicator { transition: none; animation: none; }
   .card, .mini, .hero, .miniThumb, .heroThumb, .askBtn, .viewBtn, .cta { transition: none; transform: none; }
   .avatarActive { animation: none; box-shadow: none; }
@@ -94,14 +94,14 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 /* Column interiors stagger too (market/negotiation grids nest their blocks) */
-.maLeft > *, .maRight > *, .negRight > *, .negFig > * {
+.negRight > *, .negFig > * {
   animation: viewIn 0.3s ease backwards;
 }
-.maLeft > *:nth-child(1), .maRight > *:nth-child(1), .negRight > *:nth-child(1), .negFig > *:nth-child(1) { animation-delay: 90ms; }
-.maLeft > *:nth-child(2), .maRight > *:nth-child(2), .negRight > *:nth-child(2), .negFig > *:nth-child(2) { animation-delay: 150ms; }
-.maLeft > *:nth-child(3), .maRight > *:nth-child(3), .negRight > *:nth-child(3), .negFig > *:nth-child(3) { animation-delay: 210ms; }
-.maLeft > *:nth-child(4), .maRight > *:nth-child(4), .negRight > *:nth-child(4), .negFig > *:nth-child(4) { animation-delay: 270ms; }
-.maLeft > *:nth-child(5), .maRight > *:nth-child(5), .negRight > *:nth-child(5), .negFig > *:nth-child(5) { animation-delay: 330ms; }
+.negRight > *:nth-child(1), .negFig > *:nth-child(1) { animation-delay: 90ms; }
+.negRight > *:nth-child(2), .negFig > *:nth-child(2) { animation-delay: 150ms; }
+.negRight > *:nth-child(3), .negFig > *:nth-child(3) { animation-delay: 210ms; }
+.negRight > *:nth-child(4), .negFig > *:nth-child(4) { animation-delay: 270ms; }
+.negRight > *:nth-child(5), .negFig > *:nth-child(5) { animation-delay: 330ms; }
 .loading { font-size: 12.5px; color: var(--text-faint); margin: 4px 0; }
 
 /* Scout voice */
@@ -257,31 +257,13 @@
 .askBtn:active { transform: translateY(0) scale(0.96); }
 
 /* market analysis */
-.maStats { margin-left: 40px; display: flex; gap: 30px; flex-wrap: wrap; }
+.maStats { margin-left: 40px; display: flex; gap: 30px; flex-wrap: wrap; align-items: center; }
 .maStat { display: flex; flex-direction: column; gap: 2px; }
 .maNum { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .maLabel { font-size: 11px; color: var(--text-secondary); }
 .goodText { color: var(--success); }
 .accText { color: var(--accent); }
 .ambText { color: var(--amber); }
-
-.histoBox { margin-left: 40px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
-.histo { display: flex; align-items: flex-end; gap: 5px; height: 84px; padding: 0 2px; }
-.hCol {
-  flex: 1; border-radius: 4px 4px 2px 2px;
-  background: rgba(168, 188, 232, 0.16);
-  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
-}
-.hCeiling { border-right: 2px solid var(--amber); border-radius: 4px 0 2px 2px; }
-.hDot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--success);
-  margin-top: -11px; border: 2px solid var(--bg-card); flex-shrink: 0;
-}
-.hDotOver { background: var(--amber); }
-.histoLabels {
-  display: flex; justify-content: space-between; font-size: 10.5px;
-  color: var(--text-faint); font-variant-numeric: tabular-nums;
-}
 
 .split { margin-left: 40px; display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
 .splitRow { display: flex; align-items: center; gap: 12px; }
@@ -290,8 +272,11 @@
 .splitFill { height: 100%; border-radius: 6px; background: rgba(168, 188, 232, 0.45); }
 .splitVal { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; width: 80px; text-align: right; }
 
-.heatRow { margin-left: 40px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.heatStat { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .heatWhy { font-size: 12px; color: var(--text-faint); }
+.factsBand { margin-left: 40px; display: flex; gap: 28px; align-items: flex-start; }
+.factsBand .prose { margin-left: 0; flex: 1; min-width: 0; max-width: none; }
+.factsBand .split { margin-left: 0; width: 340px; max-width: none; flex-shrink: 0; }
 .prose { margin: 0 0 0 40px; font-size: 13px; color: var(--text-secondary); line-height: 1.6; max-width: 640px; }
 
 /* negotiation */
@@ -569,23 +554,6 @@
 
 /* Wide layouts: figures + content share the full card width */
 
-.maGrid {
-  margin-left: 40px;
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 28px;
-  align-items: start;
-}
-.maLeft { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.maLeft .maStats { margin-left: 0; flex-direction: column; gap: 14px; }
-.maLeft .maNum { font-size: 24px; }
-.maLeft .heatRow { margin-left: 0; }
-.maLeft .prose { margin-left: 0; max-width: none; }
-.maRight { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.maRight .histoBox { margin-left: 0; max-width: none; }
-.maRight .histo { height: 120px; }
-.maRight .split { margin-left: 0; max-width: none; }
-
 .negGrid {
   margin-left: 40px;
   display: grid;
@@ -625,7 +593,7 @@
 .view { min-width: 0; }
 
 @media (max-width: 980px) {
-  .maGrid, .negGrid { grid-template-columns: 1fr; gap: 18px; }
-  .maLeft .maStats { flex-direction: row; gap: 26px; flex-wrap: wrap; }
-  .maLeft .maNum { font-size: 17px; }
+  .negGrid { grid-template-columns: 1fr; gap: 18px; }
+  .factsBand { flex-direction: column; gap: 18px; }
+  .factsBand .split { width: auto; }
 }

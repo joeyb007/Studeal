@@ -74,7 +74,7 @@ interface SweepListing {
 }
 
 type AlertIndex = Record<number, { reason: string | null; score: number; created_at: string }>;
-type Tab = "picks" | "market" | "neg" | "all";
+type Tab = "picks" | "market" | "all";
 
 const WEAK = 0.4;
 const MEETING_UP =
@@ -288,9 +288,8 @@ export default function AgentPanel({
     loadListings();
   }, [loadListings]);
 
-  // Market data powers two tabs; fetch once when either opens.
   useEffect(() => {
-    if ((tab !== "market" && tab !== "neg") || market) return;
+    if (tab !== "market" || market) return;
     (async () => {
       try {
         const res = await fetch(`/api/watchlists/${agent.id}/market`, { headers: authHeaders });
@@ -391,8 +390,7 @@ export default function AgentPanel({
       <div className={styles.tabs} role="tablist">
         {([
           ["picks", "Top picks"],
-          ["market", "Market analysis"],
-          ["neg", "Negotiation playbook"],
+          ["market", "Market playbook"],
           ["all", "All matches"],
         ] as [Tab, string][]).map(([key, label]) => (
           <button
@@ -490,106 +488,9 @@ export default function AgentPanel({
         </div>
       )}
 
-      {/* ================= MARKET ANALYSIS ================= */}
+      {/* ================= MARKET PLAYBOOK ================= */}
       {tab === "market" && (
-        <div className={styles.view}>
-          {!market && <p className={styles.loading}>Reading the market…</p>}
-          {market && (
-            <>
-              {market.typical != null ? (
-                <SayLine
-                  lead="Here's this market right now."
-                  dim={market.within_budget != null && market.ceiling != null
-                    ? ` Your $${market.ceiling.toFixed(0)} budget covers most of it.`
-                    : undefined}
-                />
-              ) : (
-                <SayLine lead="Still a thin market. " dim="I'll know more with every sweep." />
-              )}
-
-              <div className={styles.maGrid}>
-              <div className={styles.maLeft}>
-              <div className={styles.maStats}>
-                <div className={styles.maStat}><span className={styles.maNum}>{market.n_live}</span><span className={styles.maLabel}>live now</span></div>
-                {market.typical != null && (
-                  <div className={styles.maStat}><span className={styles.maNum}>${market.typical}</span><span className={styles.maLabel}>typical price</span></div>
-                )}
-                {market.within_budget != null && (
-                  <div className={styles.maStat}><span className={[styles.maNum, styles.goodText].join(" ")}>{market.within_budget} of {market.n_live}</span><span className={styles.maLabel}>within your budget</span></div>
-                )}
-                {market.newest_find_hours != null && (
-                  <div className={styles.maStat}><span className={styles.maNum}>{market.newest_find_hours < 48 ? `${Math.max(1, Math.round(market.newest_find_hours))}h` : `${Math.round(market.newest_find_hours / 24)}d`}</span><span className={styles.maLabel}>newest find</span></div>
-                )}
-              </div>
-
-              <div className={styles.heatRow}>
-                <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
-                  {market.heat.label}
-                </span>
-                <span className={styles.heatWhy}>{market.heat.why}</span>
-              </div>
-
-              {market.going_rate_prose && <p className={styles.prose}>{market.going_rate_prose}</p>}
-              </div>
-
-              <div className={styles.maRight}>
-              {market.histogram.length > 0 && (
-                <div className={styles.histoBox}>
-                  <span className={styles.monoLabel}>where the {market.n_live} live listings sit · your picks ●</span>
-                  <div className={styles.histo}>
-                    {(() => {
-                      const max = Math.max(...market.histogram.map(b => b.count), 1);
-                      return market.histogram.map((b, i) => {
-                        const dots = market.pick_prices.filter(p => p.price >= b.lo && (p.price < b.hi || i === market.histogram.length - 1));
-                        const ceilingHere = market.ceiling != null && market.ceiling >= b.lo && market.ceiling < b.hi;
-                        return (
-                          <div key={i} className={[styles.hCol, ceilingHere ? styles.hCeiling : ""].join(" ")}
-                               style={{ height: `${Math.max(8, (b.count / max) * 100)}%` }}>
-                            {dots.slice(0, 3).map(d => (
-                              <span key={d.id} className={[styles.hDot, d.over_ceiling ? styles.hDotOver : ""].join(" ")} />
-                            ))}
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                  <div className={styles.histoLabels}>
-                    <span>${Math.round(market.histogram[0].lo)}</span>
-                    {market.typical != null && <span className={styles.accText}>typical ${market.typical}</span>}
-                    {market.ceiling != null && <span className={styles.ambText}>your max ${market.ceiling.toFixed(0)}</span>}
-                    <span>${Math.round(market.histogram[market.histogram.length - 1].hi)}</span>
-                  </div>
-                </div>
-              )}
-
-              {market.structure.rows.length > 0 && (
-                <div className={styles.split}>
-                  <span className={styles.monoLabel}>
-                    price structure · {market.structure.kind === "condition" ? "by condition"
-                      : market.structure.kind === "marketplace" ? "by marketplace" : "spread"}
-                  </span>
-                  {(() => {
-                    const top = Math.max(...market.structure.rows.map(r => r.avg_price), 1);
-                    return market.structure.rows.map(r => (
-                      <div key={r.label} className={styles.splitRow}>
-                        <span className={styles.splitName}>{MARKETPLACE_LABELS[r.label] ?? r.label}</span>
-                        <div className={styles.splitBar}><div className={styles.splitFill} style={{ width: `${(r.avg_price / top) * 100}%` }} /></div>
-                        <span className={styles.splitVal}>${r.avg_price} avg</span>
-                      </div>
-                    ));
-                  })()}
-                </div>
-              )}
-              </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ================= NEGOTIATION PLAYBOOK ================= */}
-      {tab === "neg" && (
-        <NegotiationView
+        <MarketPlaybookView
           agent={agent}
           market={market}
           authHeaders={authHeaders}
@@ -712,7 +613,7 @@ export default function AgentPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Negotiation tab (own component: it carries its own ask-thread state)
+// Market playbook tab (own component: it carries its own ask-thread state)
 // ---------------------------------------------------------------------------
 
 interface ChartItem {
@@ -726,7 +627,7 @@ interface ChartItem {
   tier: "pick" | "match" | "weak" | "rest";
 }
 
-function NegotiationView({
+function MarketPlaybookView({
   agent,
   market,
   authHeaders,
@@ -835,9 +736,11 @@ function NegotiationView({
   return (
     <div className={styles.view}>
       <div className={styles.negHead}>
-        {neg
-          ? <SayLine lead="Your numbers for this market. " dim="Then what to know." />
-          : <SayLine lead="How I'd play this category. " dim="Numbers land once the market fills in." />}
+        {market === null
+          ? <SayLine lead="Reading the market… " />
+          : neg
+            ? <SayLine lead="Here's this market and your numbers. " dim="Then how to play it." />
+            : <SayLine lead="Still a thin market. " dim="I'll know more with every sweep." />}
         {neg && (
           <div className={styles.chartLegend}>
             <span className={styles.legendTitle}>Legend</span>
@@ -885,6 +788,51 @@ function NegotiationView({
             <span>fair ${neg.fair_low}–{neg.fair_high}</span>
             <span>${Math.round(scale.hi)}</span>
           </div>
+        </div>
+      )}
+
+      {market && (
+        <div className={styles.maStats}>
+          <div className={styles.maStat}><span className={styles.maNum}>{market.n_live}</span><span className={styles.maLabel}>live now</span></div>
+          {market.typical != null && (
+            <div className={styles.maStat}><span className={styles.maNum}>${market.typical}</span><span className={styles.maLabel}>typical price</span></div>
+          )}
+          {market.within_budget != null && (
+            <div className={styles.maStat}><span className={[styles.maNum, styles.goodText].join(" ")}>{market.within_budget} of {market.n_live}</span><span className={styles.maLabel}>within your budget</span></div>
+          )}
+          {market.newest_find_hours != null && (
+            <div className={styles.maStat}><span className={styles.maNum}>{market.newest_find_hours < 48 ? `${Math.max(1, Math.round(market.newest_find_hours))}h` : `${Math.round(market.newest_find_hours / 24)}d`}</span><span className={styles.maLabel}>newest find</span></div>
+          )}
+          <div className={styles.heatStat}>
+            <span className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}>
+              {market.heat.label}
+            </span>
+            <span className={styles.heatWhy}>{market.heat.why}</span>
+          </div>
+        </div>
+      )}
+
+      {market && (market.going_rate_prose || market.structure.rows.length > 0) && (
+        <div className={styles.factsBand}>
+          {market.going_rate_prose && <p className={styles.prose}>{market.going_rate_prose}</p>}
+          {market.structure.rows.length > 0 && (
+            <div className={styles.split}>
+              <span className={styles.monoLabel}>
+                price structure · {market.structure.kind === "condition" ? "by condition"
+                  : market.structure.kind === "marketplace" ? "by marketplace" : "spread"}
+              </span>
+              {(() => {
+                const top = Math.max(...market.structure.rows.map(r => r.avg_price), 1);
+                return market.structure.rows.map(r => (
+                  <div key={r.label} className={styles.splitRow}>
+                    <span className={styles.splitName}>{MARKETPLACE_LABELS[r.label] ?? r.label}</span>
+                    <div className={styles.splitBar}><div className={styles.splitFill} style={{ width: `${(r.avg_price / top) * 100}%` }} /></div>
+                    <span className={styles.splitVal}>${r.avg_price} avg</span>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
         </div>
       )}
 

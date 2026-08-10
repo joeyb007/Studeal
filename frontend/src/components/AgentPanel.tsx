@@ -781,17 +781,17 @@ function NegotiationView({
       <div className={styles.negGrid}>
       {neg && (
         <div className={styles.negFig}>
-          <div className={styles.figRow}>
+          <div className={[styles.figRow, styles.figRowGreen].join(" ")}>
             <span className={[styles.figDot, styles.figGreen].join(" ")} />
             <span className={styles.figLabel}>Open at</span>
             <span className={[styles.figVal, styles.figValGreen].join(" ")}>${neg.open}</span>
           </div>
-          <div className={styles.figRow}>
-            <span className={[styles.figDot, styles.figYellow].join(" ")} />
+          <div className={[styles.figRow, styles.figRowBlue].join(" ")}>
+            <span className={[styles.figDot, styles.figBlue].join(" ")} />
             <span className={styles.figLabel}>Fair deal</span>
-            <span className={[styles.figVal, styles.figValYellow].join(" ")}>${neg.fair_low}–{neg.fair_high}</span>
+            <span className={[styles.figVal, styles.figValBlue].join(" ")}>${neg.fair_low}–{neg.fair_high}</span>
           </div>
-          <div className={styles.figRow}>
+          <div className={[styles.figRow, styles.figRowRed].join(" ")}>
             <span className={[styles.figDot, styles.figRed].join(" ")} />
             <span className={styles.figLabel}>Walk away</span>
             <span className={[styles.figVal, styles.figValRed].join(" ")}>${neg.walk}</span>

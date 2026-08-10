@@ -526,30 +526,27 @@
   gap: 28px;
   align-items: start;
 }
-/* Notion-style callout rows: quiet dot, plain label, toned value */
-.negFig {
-  display: flex; flex-direction: column;
-  border: 1px solid rgba(47, 46, 43, 0.9); border-radius: 12px;
-  background: var(--bg); padding: 6px 16px;
-}
+/* Tinted callout blocks: each number lives in its own soft-toned panel */
+.negFig { display: flex; flex-direction: column; gap: 8px; }
 .figRow {
-  display: flex; align-items: center; gap: 10px;
-  padding: 14px 2px;
-  border-bottom: 1px solid rgba(47, 46, 43, 0.6);
+  display: flex; align-items: center; gap: 11px;
+  padding: 13px 15px; border-radius: 11px;
 }
-.figRow:last-child { border-bottom: none; }
-.figDot { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; }
+.figRowGreen { background: rgba(111, 191, 143, 0.07); border: 1px solid rgba(111, 191, 143, 0.16); }
+.figRowBlue  { background: rgba(168, 188, 232, 0.07); border: 1px solid rgba(168, 188, 232, 0.18); }
+.figRowRed   { background: rgba(222, 123, 98, 0.07);  border: 1px solid rgba(222, 123, 98, 0.18); }
+.figDot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .figGreen { background: var(--success); }
-.figYellow { background: #e0b64e; }
-.figRed { background: var(--danger); }
-.figLabel { font-size: 13px; color: var(--text-secondary); }
+.figBlue  { background: var(--accent); }
+.figRed   { background: var(--danger); }
+.figLabel { font-size: 13px; color: var(--text-primary); font-weight: 500; }
 .figVal {
-  margin-left: auto; font-size: 17px; font-weight: 650;
+  margin-left: auto; font-size: 16px; font-weight: 650;
   font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
 }
 .figValGreen { color: var(--success); }
-.figValYellow { color: #e0b64e; }
-.figValRed { color: var(--danger); }
+.figValBlue  { color: var(--accent); }
+.figValRed   { color: var(--danger); }
 .negRight { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .negRight .negCards { margin-left: 0; max-width: none; }
 .negRight .copyLine { margin-left: 0; max-width: none; }

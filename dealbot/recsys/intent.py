@@ -29,6 +29,9 @@ def compose_intent_document(context: WatchlistContext) -> str:
         parts.append(context.product_query.strip())
     if context.buyer_profile and context.buyer_profile.strip():
         parts.append(context.buyer_profile.strip())
+    if context.appearance_notes and context.appearance_notes.strip():
+        # The physical brief pulls physically-matching titles up in retrieval.
+        parts.append(f"Looks: {context.appearance_notes.strip()}.")
     if context.brands:
         parts.append(f"Prefers brands: {', '.join(context.brands)}.")
     if context.condition:

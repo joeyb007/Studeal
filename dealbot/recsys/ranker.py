@@ -60,6 +60,12 @@ def _spec_text(spec: WatchlistContext) -> str:
     parts = [f"Looking for: {spec.product_query}"]
     if spec.buyer_profile and spec.buyer_profile.strip():
         parts.append(f"About the buyer: {spec.buyer_profile.strip()}")
+    if spec.appearance_notes and spec.appearance_notes.strip():
+        parts.append(
+            f"Physical brief (what it should look like): {spec.appearance_notes.strip()}. "
+            "A listing that clearly contradicts the brief serves this buyer poorly, "
+            "however good the deal."
+        )
     if spec.brands:
         parts.append(f"Prefers brands: {', '.join(spec.brands)}")
     if spec.condition:

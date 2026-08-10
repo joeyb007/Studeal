@@ -48,3 +48,19 @@ def test_empty_query_still_composes_from_profile():
     ))
     assert doc.strip(), "must not return blank — embed_text() no-ops on blank input"
     assert "first apartment" in doc
+
+
+def test_physical_brief_is_included():
+    doc = compose_intent_document(WatchlistContext(
+        product_query="sectional couch",
+        appearance_notes="l shaped brown sectional, mild to medium wear, under 10 years",
+    ))
+    assert "l shaped brown sectional" in doc
+
+
+def test_empty_brief_leaves_no_label():
+    doc = compose_intent_document(WatchlistContext(
+        product_query="sectional couch",
+        appearance_notes="   ",
+    ))
+    assert "Looks:" not in doc

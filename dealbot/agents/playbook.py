@@ -90,6 +90,8 @@ def _render_grounding(context: WatchlistContext, comps: list[Listing]) -> str:
         lines.append(f"Buyer budget: ${context.max_budget:.0f}")
     if context.buyer_profile:
         lines.append(f"Buyer profile: {context.buyer_profile}")
+    if context.appearance_notes:
+        lines.append(f"Physical brief: {context.appearance_notes}")
     band = price_band([c.price for c in comps])
     if band:
         p25, p50, p75 = band

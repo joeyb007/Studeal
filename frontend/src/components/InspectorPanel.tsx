@@ -70,6 +70,7 @@ interface Checklist {
     added?: boolean;
   }[];
   ready: boolean;
+  tailoring?: { question: string; chips: string[]; answer: string | null } | null;
 }
 
 export default function InspectorPanel({
@@ -253,18 +254,26 @@ export default function InspectorPanel({
     }
   };
 
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (override?: { text: string; tailoring?: boolean }) => {
+    const text = (override?.text ?? draft).trim();
     if ((!text && pendingImages.length === 0) || replying || inspection?.status !== "ok") return;
-    const imageKeys = pendingImages.map(p => p.key);
+    const imageKeys = override ? [] : pendingImages.map(p => p.key);
     const next: ChatMsg[] = [...messages, {
       role: "user",
       content: text || "Here are some screenshots, take a look?",
       images: imageKeys,
     }];
     setMessages(next);
-    setDraft("");
-    setPendingImages([]);
+    if (!override) {
+      setDraft("");
+      setPendingImages([]);
+    }
+    if (override?.tailoring) {
+      // The chips disappear the moment one is tapped.
+      setChecklist(prev => prev?.tailoring
+        ? { ...prev, tailoring: { ...prev.tailoring, answer: text } }
+        : prev);
+    }
     setReplying(true);
     try {
       const res = await fetch(`/api/listings/${listing.id}/chat`, {
@@ -276,6 +285,7 @@ export default function InspectorPanel({
             .map(({ role, content }) => ({ role, content })),
           watchlist_id: watchlistId ?? null,
           image_keys: imageKeys,
+          tailoring_answer: override?.tailoring ?? false,
         }),
       });
       const data = await res.json();
@@ -461,6 +471,24 @@ export default function InspectorPanel({
                     ))}
                   </div>
                 )}
+                {checklist?.tailoring && !checklist.tailoring.answer && (
+                  <div className={styles.tailoring}>
+                    <p className={styles.tailoringQ}>{checklist.tailoring.question}</p>
+                    <div className={styles.tailoringChips}>
+                      {checklist.tailoring.chips.map(chip => (
+                        <button
+                          key={chip}
+                          type="button"
+                          className={styles.qchip}
+                          disabled={replying}
+                          onClick={() => send({ text: chip, tailoring: true })}
+                        >
+                          {chip}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <button type="button" className={styles.notesToggle} onClick={() => setShowNotes(v => !v)}>
                 {showNotes ? "Hide Scout's full notes" : "Scout's full notes"}
@@ -570,7 +598,7 @@ export default function InspectorPanel({
           />
           <button
             className={styles.send}
-            onClick={send}
+            onClick={() => send()}
             disabled={inspection?.status !== "ok" || replying || (!draft.trim() && pendingImages.length === 0)}
           >
             Send

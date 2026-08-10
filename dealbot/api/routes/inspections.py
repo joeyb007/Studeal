@@ -283,6 +283,7 @@ class InspectionChatRequest(BaseModel):
     messages: list[ChatMessage]
     watchlist_id: int | None = None
     image_keys: list[str] = []         # screenshots attached to the LAST user message
+    tailoring_answer: bool = False     # the LAST user message answers Scout's question
 
 
 class InspectionChatResponse(BaseModel):
@@ -379,7 +380,17 @@ Output JSON:
 - verify_via for open items: "ask_seller" when a message can settle it,
   "at_pickup" when it needs hands-on.
 - Each check under 90 chars, imperative, plain language. Evidence under 90
-  chars. Never use em dashes. JSON only."""
+  chars.
+
+Also decide ONE optional tailoring question, in the same JSON:
+"tailoring": {"question": str, "chips": [str, ...]} | null
+- Ask ONLY when the buyer's answer would genuinely change your call: the
+  only knock is cosmetic and you don't know if they care about looks; the
+  fit depends on what it's for. null is the common answer.
+- Sounds like a friend, under 120 chars ("do you care how they look, or
+  just how they sound?"). chips: 2-3 short answers a person would actually
+  tap, in their voice ("looks matter", "just the sound").
+- Never use em dashes. JSON only."""
 
 
 CHECKLIST_ASSESS_SYSTEM = """You are Scout. A buyer has a pre-purchase checklist for
@@ -467,9 +478,28 @@ def _apply_assessment(items: list[dict], parsed: dict) -> list[dict]:
     return out
 
 
-async def _seed_criteria(playbook_checks: list[str], report: dict) -> list[dict] | None:
-    """One LLM call merging category checks with THIS listing's unknowns.
-    None on any failure — callers fall back to the deterministic seed."""
+def _tailoring_from_payload(parsed: dict) -> dict | None:
+    """Validated {question, chips, answer:None} from the seed call; None when
+    the model (correctly, usually) declined to ask."""
+    entry = parsed.get("tailoring")
+    if not isinstance(entry, dict):
+        return None
+    question = sanitize(str(entry.get("question") or "").strip())
+    if len(question) < 10:
+        return None
+    chips = [
+        sanitize(str(c).strip())[:40]
+        for c in (entry.get("chips") or []) if isinstance(c, str) and c.strip()
+    ][:3]
+    return {"question": question[:160], "chips": chips, "answer": None}
+
+
+async def _seed_criteria(
+    playbook_checks: list[str], report: dict,
+) -> tuple[list[dict] | None, dict | None]:
+    """One LLM call merging category checks with THIS listing's unknowns,
+    plus the optional verdict-flipping tailoring question.
+    (None, None) on any failure — callers fall back to the deterministic seed."""
     payload = {
         "category_checks": playbook_checks,
         "inspection_notes": {
@@ -485,11 +515,12 @@ async def _seed_criteria(playbook_checks: list[str], report: dict) -> list[dict]
             ],
             response_format={"type": "json_object"},
         )
-        items = _criteria_from_payload(json.loads(response.content or "{}"))
-        return items or None
+        parsed = json.loads(response.content or "{}")
+        items = _criteria_from_payload(parsed)
+        return (items or None), _tailoring_from_payload(parsed)
     except Exception:
         logger.warning("criteria seed failed", exc_info=True)
-        return None
+        return None, None
 
 
 async def _assess_checklist(items: list[dict], evidence: str) -> list[dict]:
@@ -528,6 +559,7 @@ class ChecklistResponse(BaseModel):
     items: list[ChecklistItem]
     ready: bool
     watchlist_id: int | None = None
+    tailoring: dict | None = None      # {question, chips, answer} when Scout asked
 
 
 def _checklist_response(row: InspectionChecklist) -> ChecklistResponse:
@@ -538,7 +570,15 @@ def _checklist_response(row: InspectionChecklist) -> ChecklistResponse:
         and all(i.status == "satisfied" for i in items)
         and not any(i.status == "flagged" for i in items)
     )
-    return ChecklistResponse(items=items, ready=ready, watchlist_id=row.watchlist_id)
+    tailoring = None
+    if row.purchase_context:
+        try:
+            tailoring = json.loads(row.purchase_context)
+        except (json.JSONDecodeError, TypeError):
+            tailoring = None
+    return ChecklistResponse(
+        items=items, ready=ready, watchlist_id=row.watchlist_id, tailoring=tailoring,
+    )
 
 
 async def _get_or_seed_checklist(
@@ -560,9 +600,10 @@ async def _get_or_seed_checklist(
     if not items:
         return None
 
+    tailoring = None
     inspection = await get_cached_inspection(listing_id)
     if inspection and inspection.get("report"):
-        merged = await _seed_criteria([i["check"] for i in items], inspection["report"])
+        merged, tailoring = await _seed_criteria([i["check"] for i in items], inspection["report"])
         if merged is not None:
             items = merged
         else:
@@ -578,6 +619,7 @@ async def _get_or_seed_checklist(
             row = InspectionChecklist(
                 user_id=user_id, listing_id=listing_id,
                 watchlist_id=watchlist_id, items=items,
+                purchase_context=json.dumps(tailoring) if tailoring else None,
             )
             session.add(row)
             await session.commit()
@@ -689,11 +731,17 @@ async def inspection_verdict(
         if watchlist.context else None
     )
     market = await _watchlist_market(watchlist, context)
-    grounding = _grounding(listing, inspection, watchlist.playbook, context, market)
     async with get_async_session() as session:
         checklist_row = await session.get(
             InspectionChecklist, (current_user.id, listing_id)
         )
+    purchase = None
+    if checklist_row is not None and checklist_row.purchase_context:
+        try:
+            purchase = json.loads(checklist_row.purchase_context)
+        except (json.JSONDecodeError, TypeError):
+            purchase = None
+    grounding = _grounding(listing, inspection, watchlist.playbook, context, market, purchase)
     if checklist_row is not None and checklist_row.items:
         grounding += "\n\nReady-to-buy checklist state: " + json.dumps(checklist_row.items)
     llm = _chat_llm()
@@ -735,7 +783,8 @@ Rules:
 
 def _grounding(listing: Listing, inspection: dict, playbook: str | None,
                context: WatchlistContext | None,
-               market: dict | None = None) -> str:
+               market: dict | None = None,
+               purchase: dict | None = None) -> str:
     parts = [
         f"Listing: {listing.title}",
         f"Price: ${listing.price:.2f} {listing.currency} on {listing.marketplace} · URL: {listing.raw_url}",
@@ -759,6 +808,12 @@ def _grounding(listing: Listing, inspection: dict, playbook: str | None,
             "listing's price to them when relevant): " + json.dumps({
                 k: market.get(k) for k in ("typical", "band", "negotiation", "heat")
             })
+        )
+    if purchase and purchase.get("answer"):
+        parts.append(
+            "For THIS purchase the buyer told you "
+            f"(answering your question \"{purchase.get('question', '')}\"): "
+            f"{purchase['answer']}. Weigh the call accordingly."
         )
     if playbook:
         parts.append(f"Your playbook for this category:\n{playbook}")
@@ -874,9 +929,32 @@ async def inspection_chat(
             )
         image_parts = await _image_parts(image_keys)
 
+    # Purchase-level tailoring: a chip tap persists the answer before the
+    # reply is generated, so the reply IS the re-tuned call.
+    purchase = None
+    if watchlist is not None:
+        async with get_async_session() as session:
+            checklist_row = await session.get(
+                InspectionChecklist, (current_user.id, listing_id)
+            )
+            if checklist_row is not None and checklist_row.purchase_context:
+                try:
+                    purchase = json.loads(checklist_row.purchase_context)
+                except (json.JSONDecodeError, TypeError):
+                    purchase = None
+            if (
+                body.tailoring_answer
+                and purchase is not None
+                and history[-1]["role"] == "user"
+            ):
+                purchase["answer"] = history[-1]["content"][:300]
+                checklist_row.purchase_context = json.dumps(purchase)
+                checklist_row.updated_at = datetime.now(timezone.utc)
+                await session.commit()
+
     messages = [
         {"role": "system", "content": CHAT_SYSTEM},
-        {"role": "system", "content": _grounding(listing, inspection, playbook, context, market)},
+        {"role": "system", "content": _grounding(listing, inspection, playbook, context, market, purchase)},
         *history,
     ]
     if image_parts:

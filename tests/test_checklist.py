@@ -100,3 +100,17 @@ def test_apply_assessment_never_touches_settled_checks():
     ]})
     assert out[0]["status"] == "satisfied"
     assert out[1]["status"] == "flagged"
+
+
+def test_tailoring_payload_validates():
+    from dealbot.api.routes.inspections import _tailoring_from_payload
+    assert _tailoring_from_payload({"tailoring": None}) is None
+    assert _tailoring_from_payload({}) is None
+    assert _tailoring_from_payload({"tailoring": {"question": "hm?"}}) is None  # too short
+    t = _tailoring_from_payload({"tailoring": {
+        "question": "Do you care how they look, or just how they sound?",
+        "chips": ["looks matter", "just the sound", "", 42, "bit of both", "extra"],
+    }})
+    assert t["question"].startswith("Do you care")
+    assert t["chips"] == ["looks matter", "just the sound", "bit of both"]
+    assert t["answer"] is None

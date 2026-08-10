@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from dealbot.agents.playbook import sanitize
 from dealbot.api.auth import get_current_user
@@ -110,6 +110,98 @@ def _chat_llm() -> LLMClient:
         return BedrockClient(model=os.environ.get("BEDROCK_SCOUT_MODEL", DEFAULT_NAV_MODEL))
     from dealbot.llm.openai_client import OpenAIClient
     return OpenAIClient()
+
+
+# Link-in (copilot spec 2026-08-10, phase A): a pasted URL resolves to a pool
+# listing by the same canonical key ingest dedupes on, so share links and
+# tracking-param variants all land. Grounding agent = closest intent match
+# within the retrieval gate's similarity floor; the UI confirms before use.
+_HOST_MARKETPLACES = (
+    ("facebook.com", "fb_marketplace"),
+    ("kijiji.ca", "kijiji"),
+    ("ebay.", "ebay"),
+    ("craigslist.org", "craigslist"),
+)
+
+
+def _marketplace_for_url(url: str) -> str | None:
+    from urllib.parse import urlparse
+
+    host = urlparse(url).netloc.lower()
+    for needle, marketplace in _HOST_MARKETPLACES:
+        if needle in host:
+            return marketplace
+    return None
+
+
+class ResolveRequest(BaseModel):
+    url: str
+
+
+class ResolveListing(BaseModel):
+    id: int
+    title: str
+    price: float
+    currency: str
+    marketplace: str
+    url: str
+    image_url: str | None
+
+
+class ResolveWatchlist(BaseModel):
+    id: int
+    name: str
+
+
+class ResolveResponse(BaseModel):
+    listing: ResolveListing | None
+    watchlist: ResolveWatchlist | None
+
+
+@router.post("/resolve", response_model=ResolveResponse)
+async def resolve_listing(
+    body: ResolveRequest,
+    current_user: User = Depends(get_current_user),
+) -> ResolveResponse:
+    from dealbot.persistence.canonicalize import canonicalize_url
+    from dealbot.recsys.gate import GATE_SIMILARITY_TAU
+
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty URL.")
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    marketplace = _marketplace_for_url(url)
+    canonical = canonicalize_url(url, marketplace or "")
+
+    async with get_async_session() as session:
+        listing = (await session.execute(
+            select(Listing)
+            .where(or_(Listing.canonical_url == canonical, Listing.raw_url == url))
+            .limit(1)
+        )).scalars().first()
+
+        watchlist = None
+        if listing is not None and listing.embedding is not None:
+            distance_cutoff = 1.0 - GATE_SIMILARITY_TAU
+            watchlist = (await session.execute(
+                select(Watchlist)
+                .where(Watchlist.user_id == current_user.id)
+                .where(Watchlist.intent_embedding.isnot(None))
+                .where(Watchlist.intent_embedding.cosine_distance(listing.embedding) < distance_cutoff)
+                .order_by(Watchlist.intent_embedding.cosine_distance(listing.embedding))
+                .limit(1)
+            )).scalars().first()
+
+    return ResolveResponse(
+        listing=ResolveListing(
+            id=listing.id, title=listing.title, price=listing.price,
+            currency=listing.currency, marketplace=listing.marketplace,
+            url=listing.raw_url, image_url=listing.image_url,
+        ) if listing is not None else None,
+        watchlist=ResolveWatchlist(id=watchlist.id, name=watchlist.name)
+        if watchlist is not None else None,
+    )
 
 
 class InspectionResponse(BaseModel):

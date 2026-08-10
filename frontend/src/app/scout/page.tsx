@@ -24,9 +24,44 @@ interface InspectedItem {
   inspected_at: string;
 }
 
+interface ResolveResult {
+  listing: {
+    id: number; title: string; price: number; currency: string;
+    marketplace: string; url: string; image_url: string | null;
+  } | null;
+  watchlist: { id: number; name: string } | null;
+}
+
 export default function ScoutPage() {
   const [items, setItems] = useState<InspectedItem[] | null>(null);
   const [open, setOpen] = useState<InspectedItem | null>(null);
+
+  // Check-a-listing: paste a marketplace link, Scout finds it in the pool.
+  const [linkDraft, setLinkDraft] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [resolved, setResolved] = useState<ResolveResult | "nomatch" | null>(null);
+  const [linkOpen, setLinkOpen] = useState<{ listing: InspectListing; watchlistId?: number } | null>(null);
+
+  const checkLink = async () => {
+    const url = linkDraft.trim();
+    if (!url || resolving) return;
+    setResolving(true);
+    setResolved(null);
+    try {
+      const res = await fetch("/api/listings/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data: ResolveResult = await res.json();
+      setResolved(data.listing ? data : "nomatch");
+    } catch {
+      setResolved("nomatch");
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const load = async () => {
     try {
@@ -59,6 +94,58 @@ export default function ScoutPage() {
         <h1>Scout</h1>
         <span className={styles.sub}>everything you have asked Scout to look at</span>
       </header>
+
+      <div className={styles.checkBar}>
+        <input
+          className={styles.checkInput}
+          type="text"
+          value={linkDraft}
+          onChange={e => { setLinkDraft(e.target.value); setResolved(null); }}
+          onKeyDown={e => { if (e.key === "Enter") checkLink(); }}
+          placeholder="Paste a listing link and Scout will check it out…"
+        />
+        <button className={styles.checkBtn} onClick={checkLink} disabled={resolving || !linkDraft.trim()}>
+          {resolving ? "Looking…" : "Check it"}
+        </button>
+      </div>
+
+      {resolved === "nomatch" && (
+        <p className={styles.checkMiss}>
+          Scout hasn&apos;t seen that one in its pool yet. Fetching straight from a
+          link is coming soon; for now paste links to listings your agents have found.
+        </p>
+      )}
+
+      {resolved !== null && resolved !== "nomatch" && resolved.listing && (
+        <div className={styles.resolveCard}>
+          {resolved.listing.image_url && (
+            <img src={resolved.listing.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.resolveThumb} />
+          )}
+          <div className={styles.resolveBody}>
+            <span className={styles.resolveTitle}>{resolved.listing.title}</span>
+            <span className={styles.resolveMeta}>
+              ${resolved.listing.price.toFixed(0)} · {MARKETPLACE_LABELS[resolved.listing.marketplace] ?? resolved.listing.marketplace}
+              {resolved.watchlist && <> · looks like one for your <b>{resolved.watchlist.name}</b> agent</>}
+            </span>
+            <div className={styles.resolveActions}>
+              {resolved.watchlist && (
+                <button
+                  className={styles.resolveGo}
+                  onClick={() => setLinkOpen({ listing: resolved.listing!, watchlistId: resolved.watchlist!.id })}
+                >
+                  Ask Scout · with {resolved.watchlist.name}&apos;s numbers
+                </button>
+              )}
+              <button
+                className={resolved.watchlist ? styles.resolvePlain : styles.resolveGo}
+                onClick={() => setLinkOpen({ listing: resolved.listing! })}
+              >
+                {resolved.watchlist ? "Just the basics" : "Ask Scout"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {items !== null && items.length === 0 && (
         <div className={styles.empty}>
@@ -130,6 +217,14 @@ export default function ScoutPage() {
 
       {open && (
         <InspectorPanel listing={asListing(open)} onClose={() => setOpen(null)} />
+      )}
+
+      {linkOpen && (
+        <InspectorPanel
+          listing={linkOpen.listing}
+          watchlistId={linkOpen.watchlistId}
+          onClose={() => { setLinkOpen(null); load(); }}
+        />
       )}
     </main>
   );

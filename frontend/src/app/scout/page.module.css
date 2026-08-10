@@ -162,3 +162,46 @@
 @media (prefers-reduced-motion: reduce) {
   .row { animation: none; }
 }
+
+/* check-a-listing paste bar */
+.checkBar { display: flex; gap: 10px; margin-bottom: 18px; }
+.checkInput {
+  flex: 1; padding: 11px 15px; border-radius: 11px;
+  border: 1px solid rgba(168, 188, 232, 0.14); background: var(--bg-card);
+  font-size: 13px; color: var(--text-primary); outline: none; font-family: inherit;
+  caret-color: var(--accent);
+  transition: border-color 0.2s ease, box-shadow 0.25s ease;
+}
+.checkInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(168, 188, 232, 0.1);
+}
+.checkInput::placeholder { color: var(--text-faint); }
+.checkBtn {
+  font-size: 12.5px; font-weight: 600; padding: 0 18px; border-radius: 11px;
+  background: var(--accent); color: var(--on-accent); border: none;
+  cursor: pointer; font-family: inherit; transition: opacity 0.15s;
+}
+.checkBtn:disabled { opacity: 0.45; cursor: default; }
+.checkMiss { font-size: 12.5px; color: var(--text-faint); margin: -6px 0 16px; }
+.resolveCard {
+  display: flex; gap: 14px; align-items: flex-start;
+  border: 1px solid rgba(168, 188, 232, 0.2); background: rgba(168, 188, 232, 0.04);
+  border-radius: 12px; padding: 14px; margin-bottom: 18px;
+}
+.resolveThumb { width: 64px; height: 52px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+.resolveBody { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.resolveTitle { font-size: 13.5px; font-weight: 600; }
+.resolveMeta { font-size: 12px; color: var(--text-secondary); }
+.resolveMeta b { color: var(--accent); font-weight: 600; }
+.resolveActions { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
+.resolveGo {
+  font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px;
+  background: var(--accent); color: var(--on-accent); border: none;
+  cursor: pointer; font-family: inherit;
+}
+.resolvePlain {
+  font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px;
+  background: none; color: var(--text-secondary); cursor: pointer; font-family: inherit;
+  border: 1px solid rgba(47, 46, 43, 0.9);
+}

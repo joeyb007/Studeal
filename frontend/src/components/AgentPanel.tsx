@@ -91,7 +91,7 @@ function ScoutGlyph({ size = 14 }: { size?: number }) {
 
 // Same typing treatment Scout has in the builder chat: interval-sliced text
 // with a blinking cursor until done. lead types first, then the dim tail.
-function useTypewriter(text: string, speed = 14) {
+function useTypewriter(text: string, speed = 14, delay = 420) {
   const [displayed, setDisplayed] = useState("");
   const [done, setDone] = useState(false);
   useEffect(() => {
@@ -101,17 +101,25 @@ function useTypewriter(text: string, speed = 14) {
       setDone(true);
       return;
     }
-    let i = 0;
-    const interval = setInterval(() => {
-      i++;
-      setDisplayed(text.slice(0, i));
-      if (i >= text.length) {
-        clearInterval(interval);
-        setDone(true);
-      }
-    }, speed);
-    return () => clearInterval(interval);
-  }, [text, speed]);
+    let interval: ReturnType<typeof setInterval> | null = null;
+    // Breathe first, then speak: the pause lets the view settle in and the
+    // avatar pulse read as "thinking" before the line types out.
+    const starter = setTimeout(() => {
+      let i = 0;
+      interval = setInterval(() => {
+        i++;
+        setDisplayed(text.slice(0, i));
+        if (i >= text.length) {
+          if (interval) clearInterval(interval);
+          setDone(true);
+        }
+      }, speed);
+    }, delay);
+    return () => {
+      clearTimeout(starter);
+      if (interval) clearInterval(interval);
+    };
+  }, [text, speed, delay]);
   return { displayed, done };
 }
 
@@ -122,7 +130,9 @@ function SayLine({ lead, dim }: { lead: string; dim?: string }) {
   const dimShown = displayed.length > lead.length ? displayed.slice(lead.length) : "";
   return (
     <div className={styles.say}>
-      <span className={styles.avatar}><ScoutGlyph /></span>
+      <span className={[styles.avatar, !done ? styles.avatarActive : ""].join(" ")}>
+        <ScoutGlyph />
+      </span>
       <p className={styles.sentence}>
         {leadShown}
         {dimShown && <span className={styles.dim}>{dimShown}</span>}

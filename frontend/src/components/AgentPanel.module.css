@@ -56,6 +56,8 @@
   .view > *, .mini, .maLeft > *, .maRight > *, .negRight > *, .negFig > * { animation: none; }
   .tabIndicator { transition: none; animation: none; }
   .card, .mini, .hero, .miniThumb, .heroThumb, .askBtn, .viewBtn, .cta { transition: none; transform: none; }
+  .avatarActive { animation: none; box-shadow: none; }
+  .cursor { animation: none; }
 }
 
 /* tabs */
@@ -119,6 +121,19 @@
   border: 1.5px solid rgba(168, 188, 232, 0.3); color: var(--accent);
   display: flex; align-items: center; justify-content: center;
   background: rgba(168, 188, 232, 0.06);
+  transition: box-shadow 0.3s ease;
+}
+
+/* Breathing while Scout is typing, same as the builder chat's active avatar */
+.avatarActive {
+  box-shadow:
+    0 0 0 3px rgba(168, 188, 232, 0.08),
+    0 0 12px rgba(168, 188, 232, 0.25);
+  animation: avatarBreath 1.4s ease-in-out infinite;
+}
+@keyframes avatarBreath {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
 }
 
 /* chips */

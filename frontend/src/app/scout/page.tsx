@@ -238,15 +238,17 @@ export default function ScoutPage() {
                 </span>
               </div>
               <div className={styles.rowRight}>
+                <span className={[
+                  styles.rowPrice,
+                  item.sold ? styles.rowPriceSold : item.price_dropped ? styles.rowPriceDrop : "",
+                ].join(" ")}>
+                  ${item.price.toFixed(0)} {item.currency}
+                </span>
                 {item.sold ? (
-                  <span className={styles.soldBadge}>gone</span>
-                ) : item.price_dropped ? (
-                  <span className={styles.dropBadge}>
-                    dropped to ${item.price.toFixed(0)}
-                  </span>
+                  <span className={styles.statusSold}>sold</span>
                 ) : (
-                  <span className={styles.rowPrice}>
-                    ${item.price.toFixed(2)} {item.currency}
+                  <span className={styles.statusLive} title={item.price_dropped ? `dropped since you asked (was $${item.price_at_inspection.toFixed(0)})` : undefined}>
+                    live{item.price_dropped ? " · dropped" : ""}
                   </span>
                 )}
               </div>

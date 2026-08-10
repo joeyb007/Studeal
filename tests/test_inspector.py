@@ -307,8 +307,10 @@ async def test_allowance_caps_free_and_not_pro(wdb):
 
 
 @pytest.mark.asyncio
-async def test_auto_inspect_skips_free_owners(wdb, monkeypatch):
-    from dealbot.db.models import Hunt, Watchlist
+async def test_auto_inspect_runs_for_all_owners_top5(wdb, monkeypatch):
+    """Redesign spec: top-5 pre-reads for every agent (card teasers depend
+    on them), free owners included; already-inspected listings are skipped."""
+    from dealbot.db.models import Hunt, ListingAlert, Watchlist
     from dealbot.worker import inspections as wi
 
     factory = wdb
@@ -321,18 +323,35 @@ async def test_auto_inspect_skips_free_owners(wdb, monkeypatch):
         await session.flush()
         hunt = Hunt(watchlist_id=wl.id, status="succeeded")
         session.add(hunt)
+        await session.flush()
+        listings = [_listing(canonical_url=f"c{i}", raw_url=f"r{i}") for i in range(7)]
+        session.add_all(listings)
+        await session.flush()
+        for i, listing in enumerate(listings):
+            session.add(ListingAlert(
+                user_id=owner.id, watchlist_id=wl.id, listing_id=listing.id,
+                hunt_id=hunt.id, score=0.9 - i * 0.05,
+            ))
+        # The best-scored listing is already inspected: it must be skipped.
+        session.add(ListingInspection(
+            listing_id=listings[0].id, status="ok", report="{}",
+            detail=ListingDetail().model_dump_json(),
+            created_at=datetime.now(timezone.utc),
+        ))
         await session.commit()
         hunt_id = hunt.id
+        inspected_already = listings[0].id
 
     called = []
 
-    async def _boom(listing_id):
+    async def _fake(listing_id, force=False):
         called.append(listing_id)
         return {"status": "ok"}
 
-    monkeypatch.setattr("dealbot.agents.inspector.get_or_create_inspection", _boom)
-    assert await wi.auto_inspect_top_matches(hunt_id) == 0
-    assert called == []
+    monkeypatch.setattr("dealbot.agents.inspector.get_or_create_inspection", _fake)
+    assert await wi.auto_inspect_top_matches(hunt_id) == 5
+    assert len(called) == 5
+    assert inspected_already not in called
 
 
 def test_price_read_is_deterministic():

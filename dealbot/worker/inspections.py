@@ -26,7 +26,10 @@ from dealbot.notifications.email import send_email
 
 logger = logging.getLogger(__name__)
 
-AUTO_INSPECT_TOP_N = 2
+# Top-5 pre-reads power the agent card's ✦ teasers (redesign spec 2026-08-09):
+# system-initiated, cached per listing, never counted against the free
+# allowance. Cost tracks NEW picks only (cache-by-listing absorbs repeats).
+AUTO_INSPECT_TOP_N = 5
 
 
 def build_price_drop_email(listing: Listing, old_price: float) -> tuple[str, str]:
@@ -78,8 +81,9 @@ async def check_price_drops() -> int:
 
 
 async def auto_inspect_top_matches(hunt_id: int, top_n: int = AUTO_INSPECT_TOP_N) -> int:
-    """Pro perk: pre-run Tier A on the hunt's best new matches. Free users'
-    hunts are a no-op (their clicks stay the trigger)."""
+    """Pre-run Tier A on the hunt's best new matches so every agent card's
+    top picks open with Scout's read already cached (all users; the card's
+    teasers depend on it)."""
     from dealbot.agents.inspector import get_or_create_inspection
 
     async with get_async_session() as session:
@@ -90,7 +94,7 @@ async def auto_inspect_top_matches(hunt_id: int, top_n: int = AUTO_INSPECT_TOP_N
         if watchlist is None:
             return 0
         owner = await session.get(User, watchlist.user_id)
-        if owner is None or not owner.is_pro:
+        if owner is None:
             return 0
 
         candidates = (await session.execute(

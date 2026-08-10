@@ -85,6 +85,10 @@ class WatchlistResponse(BaseModel):
     context: Optional[dict] = None
     playbook: Optional[str] = None
     playbook_updated_at: Optional[str] = None
+    # Sweep state for the card's top-right pill (list endpoint populates).
+    running_hunt_id: Optional[int] = None
+    last_hunt_at: Optional[str] = None
+    next_hunt_at: Optional[str] = None
 
 
 class WatchlistDealResponse(BaseModel):
@@ -363,6 +367,7 @@ class ListingResponse(BaseModel):
     condition: str
     relevance_score: float
     reason: Optional[str] = None                # one-line "why this listing"
+    headline: Optional[str] = None              # Scout's cached read, one line (✦)
     first_seen_at: str
     last_seen_at: str
 
@@ -479,6 +484,25 @@ async def list_watchlist_listings(
         except Exception:
             pass  # broker down — stale keeps serving; next read retries
 
+    # ✦ teasers: cached Tier A read headlines for whatever's already inspected.
+    headlines: dict[int, str] = {}
+    if rows:
+        from dealbot.db.models import ListingInspection
+
+        async with get_async_session() as session:
+            cached = (await session.execute(
+                select(ListingInspection)
+                .where(ListingInspection.listing_id.in_([l.id for _r, l in rows]))
+                .where(ListingInspection.status == "ok")
+            )).scalars().all()
+        for row in cached:
+            try:
+                headline = json.loads(row.report or "{}").get("headline")
+                if headline:
+                    headlines[row.listing_id] = headline
+            except (json.JSONDecodeError, AttributeError):
+                continue
+
     return ListingsResponse(
         listings=[
             ListingResponse(
@@ -488,6 +512,7 @@ async def list_watchlist_listings(
                 image_url=listing.image_url, location=listing.location,
                 condition=listing.condition,
                 relevance_score=ranking.score, reason=ranking.reason,
+                headline=headlines.get(listing.id),
                 first_seen_at=listing.first_seen_at.isoformat(),
                 last_seen_at=listing.last_seen_at.isoformat(),
             )
@@ -526,9 +551,23 @@ async def list_watchlists(
         )
         watchlists = result.scalars().all()
 
+        # Sweep pill state: one query for all cards' running hunts.
+        from dealbot.api.routes.hunts import _next_hunt_at
+        from dealbot.db.models import Hunt
+
+        running: dict[int, int] = {}
+        if watchlists:
+            hunt_rows = (await session.execute(
+                select(Hunt.watchlist_id, Hunt.id)
+                .where(Hunt.watchlist_id.in_([w.id for w in watchlists]))
+                .where(Hunt.status == "running")
+            )).all()
+            running = {wl_id: hunt_id for wl_id, hunt_id in hunt_rows}
+
         responses = []
         for wl in watchlists:
             wl.expires_at = _expiry()
+            next_at = _next_hunt_at(wl, current_user.is_pro)
             responses.append(WatchlistResponse(
                 id=wl.id,
                 name=wl.name,
@@ -540,6 +579,9 @@ async def list_watchlists(
                     wl.playbook_updated_at.isoformat()
                     if wl.playbook_updated_at else None
                 ),
+                running_hunt_id=running.get(wl.id),
+                last_hunt_at=wl.last_hunt_at.isoformat() if wl.last_hunt_at else None,
+                next_hunt_at=next_at.isoformat() if next_at else None,
             ))
 
         await session.commit()

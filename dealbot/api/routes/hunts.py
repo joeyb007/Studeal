@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -138,3 +138,63 @@ async def list_hunt_lanes(
         )
         for lane in rows
     ]
+
+
+class SweepListingResponse(BaseModel):
+    id: int
+    title: str
+    price: float
+    currency: str
+    marketplace: str
+    url: str
+    image_url: str | None
+    matched: bool                 # cleared the agent's bar (in rankings, non-weak)
+
+
+class SweepListingsResponse(BaseModel):
+    listings: list[SweepListingResponse]
+    total: int
+
+
+@router.get("/{hunt_id}/listings", response_model=SweepListingsResponse)
+async def hunt_listings(
+    hunt_id: int,
+    current_user: User = Depends(get_current_user),
+) -> SweepListingsResponse:
+    """Everything the sweep surfaced (the card's deepest disclosure layer):
+    every unique listing linked to this hunt, matched or not."""
+    from dealbot.db.models import HuntListing, Listing, WatchlistRanking
+    from dealbot.recsys.market_stats import WEAK_SCORE
+
+    async with get_async_session() as session:
+        hunt = await session.get(Hunt, hunt_id)
+        if hunt is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hunt not found.")
+        watchlist = await session.get(Watchlist, hunt.watchlist_id)
+        if watchlist is None or watchlist.user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hunt not found.")
+
+        rows = (await session.execute(
+            select(Listing)
+            .join(HuntListing, HuntListing.listing_id == Listing.id)
+            .where(HuntListing.hunt_id == hunt_id)
+            .order_by(Listing.price)
+        )).scalars().all()
+
+        matched_ids = set((await session.execute(
+            select(WatchlistRanking.listing_id)
+            .where(WatchlistRanking.watchlist_id == hunt.watchlist_id)
+            .where(WatchlistRanking.score >= WEAK_SCORE)
+        )).scalars().all())
+
+    return SweepListingsResponse(
+        listings=[
+            SweepListingResponse(
+                id=l.id, title=l.title, price=l.price, currency=l.currency,
+                marketplace=l.marketplace, url=l.raw_url, image_url=l.image_url,
+                matched=l.id in matched_ids,
+            )
+            for l in rows
+        ],
+        total=len(rows),
+    )

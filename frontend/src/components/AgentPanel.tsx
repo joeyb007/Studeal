@@ -142,6 +142,54 @@ function SayLine({ lead, dim }: { lead: string; dim?: string }) {
   );
 }
 
+interface Takeaway { text: string; kind: string }
+
+const TAKEAWAY_ICONS: Record<string, React.ReactNode> = {
+  price: (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2v20M17 6.5c0-2-2.2-3-5-3s-5 1-5 3 2 2.8 5 3.5 5 1.6 5 3.5-2.2 3-5 3-5-1-5-3" /></svg>
+  ),
+  warning: (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 2 20h20Z" /><path d="M12 10v4M12 17.5v.1" /></svg>
+  ),
+  tip: (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 3 L14 12 L12 21 L10 12 Z" /><path d="M3 12 L12 10 L21 12 L12 14 Z" /></svg>
+  ),
+  timing: (
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg>
+  ),
+};
+
+function TakeawayBoxes({ takeaways }: { takeaways: Takeaway[] }) {
+  if (!takeaways.length) return null;
+  return (
+    <div className={styles.takeaways}>
+      {takeaways.map((t, i) => (
+        <span
+          key={i}
+          className={[styles.takeaway, styles[`tk_${t.kind}`] ?? ""].join(" ")}
+          style={{ animationDelay: `${i * 90}ms` }}
+        >
+          <span className={styles.takeawayIcon}>{TAKEAWAY_ICONS[t.kind] ?? TAKEAWAY_ICONS.tip}</span>
+          {t.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TypedReply({ text, takeaways }: { text: string; takeaways: Takeaway[] }) {
+  const { displayed, done } = useTypewriter(text, 12, 150);
+  return (
+    <>
+      <p className={styles.msgText}>
+        {displayed}
+        {!done && <span className={styles.cursor}>▍</span>}
+      </p>
+      {done && <TakeawayBoxes takeaways={takeaways} />}
+    </>
+  );
+}
+
 function priceChip(price: number, median: number | null): { tone: string; text: string } | null {
   if (median == null) return null;
   const delta = price - median;
@@ -662,7 +710,7 @@ function NegotiationView({
   market: Market | null;
   authHeaders: Record<string, string>;
 }) {
-  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string; takeaways?: Takeaway[] }[]>([]);
   const [draft, setDraft] = useState("");
   const [asking, setAsking] = useState(false);
   const threadEnd = useRef<HTMLDivElement>(null);
@@ -686,12 +734,13 @@ function NegotiationView({
       const res = await fetch(`/api/watchlists/${agent.id}/ask`, {
         method: "POST",
         headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })) }),
       });
       const data = await res.json();
       setMessages([...next, {
         role: "assistant",
         content: res.ok ? data.reply : "I hit a snag answering that one. Give it another try in a moment.",
+        takeaways: res.ok && Array.isArray(data.takeaways) ? data.takeaways : [],
       }]);
     } catch {
       setMessages([...next, { role: "assistant", content: "I hit a snag answering that one. Give it another try in a moment." }]);
@@ -775,9 +824,16 @@ function NegotiationView({
 
       {messages.map((m, i) => (
         <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsgRow}>
-          {m.role === "assistant" && <span className={styles.avatar}><ScoutGlyph /></span>}
+          {m.role === "assistant" && <span className={[styles.avatar, styles.avatarActive].join(" ")}><ScoutGlyph /></span>}
           <div className={m.role === "user" ? undefined : styles.scoutMsg}>
-            <p className={styles.msgText}>{m.content}</p>
+            {m.role === "assistant" && i === messages.length - 1 ? (
+              <TypedReply text={m.content} takeaways={m.takeaways ?? []} />
+            ) : (
+              <>
+                <p className={styles.msgText}>{m.content}</p>
+                {m.role === "assistant" && <TakeawayBoxes takeaways={m.takeaways ?? []} />}
+              </>
+            )}
           </div>
         </div>
       ))}

@@ -74,6 +74,19 @@ async def _count_inspection(user_id: int) -> None:
             await session.commit()
 
 
+async def _watchlist_market(watchlist: Watchlist, context: WatchlistContext | None) -> dict | None:
+    """Agent-scoped market numbers so listing chats and verdicts can place
+    THIS deal against the playbook's rates. Best-effort."""
+    try:
+        from dealbot.recsys.market_stats import agent_comps, compute_market
+
+        comps = await agent_comps(watchlist)
+        return compute_market(comps, context)
+    except Exception:
+        logger.warning("market grounding failed for wl %d", watchlist.id, exc_info=True)
+        return None
+
+
 async def _record_watch(user_id: int, listing: Listing) -> None:
     """Inspecting = interest: start (or keep) a price-drop watch. Best-effort."""
     try:
@@ -215,7 +228,8 @@ async def inspection_verdict(
         WatchlistContext.model_validate_json(watchlist.context)
         if watchlist.context else None
     )
-    grounding = _grounding(listing, inspection, watchlist.playbook, context)
+    market = await _watchlist_market(watchlist, context)
+    grounding = _grounding(listing, inspection, watchlist.playbook, context, market)
     llm = _chat_llm()
     try:
         response = await llm.complete([
@@ -252,7 +266,8 @@ Rules:
 
 
 def _grounding(listing: Listing, inspection: dict, playbook: str | None,
-               context: WatchlistContext | None) -> str:
+               context: WatchlistContext | None,
+               market: dict | None = None) -> str:
     parts = [
         f"Listing: {listing.title}",
         f"Price: ${listing.price:.2f} {listing.currency} on {listing.marketplace} · URL: {listing.raw_url}",
@@ -270,6 +285,13 @@ def _grounding(listing: Listing, inspection: dict, playbook: str | None,
         if context.buyer_profile:
             buyer.append(f"profile: {context.buyer_profile}")
         parts.append("Buyer context: " + " · ".join(buyer))
+    if market:
+        parts.append(
+            "Your market numbers for this category (computed; relate THIS "
+            "listing's price to them when relevant): " + json.dumps({
+                k: market.get(k) for k in ("typical", "band", "negotiation", "heat")
+            })
+        )
     if playbook:
         parts.append(f"Your playbook for this category:\n{playbook}")
     return "\n\n".join(parts)
@@ -302,10 +324,12 @@ async def inspection_chat(
 
     context = None
     playbook = None
+    market = None
     if watchlist is not None:
         playbook = watchlist.playbook
         if watchlist.context:
             context = WatchlistContext.model_validate_json(watchlist.context)
+        market = await _watchlist_market(watchlist, context)
 
     history = [
         {"role": m.role, "content": m.content}
@@ -317,7 +341,7 @@ async def inspection_chat(
 
     messages = [
         {"role": "system", "content": CHAT_SYSTEM},
-        {"role": "system", "content": _grounding(listing, inspection, playbook, context)},
+        {"role": "system", "content": _grounding(listing, inspection, playbook, context, market)},
         *history,
     ]
     llm = _chat_llm()

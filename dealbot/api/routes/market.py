@@ -106,24 +106,35 @@ async def market_analysis(
     return MarketResponse(**market)
 
 
-ASK_SYSTEM = """You are Scout, the user's expert friend on this specific secondhand
-market. You wrote the playbook below and computed the market numbers below; the
-user is asking you questions about them.
+ASK_SYSTEM = """You are Scout, the user's expert friend on this secondhand market.
+You wrote the playbook and computed the numbers below. Answer their question.
 
-Rules:
-- Ground every claim in the playbook, the market numbers, or the buyer context
-  provided. If something isn't knowable from those, say so plainly.
-- You cannot take actions from this chat (no new sweeps, no contacting anyone).
-  If asked, say what you'd do instead and point them at the right button.
-- Short, direct, warm. Plain language. Never use em dashes. No stock closers."""
+Output JSON: {"answer": str, "takeaways": [{"text": str, "kind": str}]}
+- "answer": 1-3 sentences, direct, warm, plain language. Numbers over adjectives.
+  Only what changes their decision; no restating what they can already see.
+- "takeaways": 0-3 compact facts worth pinning, each text under 60 chars with a
+  concrete number where possible (e.g. "Open at $223, not lower"). "kind" is one
+  of: "price" (numbers/offers), "warning" (risk/caution), "tip" (tactic),
+  "timing" (when to act). Empty list when the answer alone covers it.
+- Ground everything in the playbook, numbers, or buyer context. Unknowable
+  from those: say so in one sentence.
+- You cannot act from this chat (no sweeps, no contacting anyone); point at
+  the right button instead.
+- Never use em dashes. No greetings, no stock closers. JSON only."""
 
 
 class AskRequest(BaseModel):
     messages: list[ChatMessage]
 
 
+class Takeaway(BaseModel):
+    text: str
+    kind: str = "tip"          # price | warning | tip | timing
+
+
 class AskResponse(BaseModel):
     reply: str
+    takeaways: list[Takeaway] = []
 
 
 @router.post("/{watchlist_id}/ask", response_model=AskResponse)
@@ -165,12 +176,25 @@ async def ask_scout(
         {"role": "system", "content": "\n\n".join(grounding_parts)},
         *history,
     ]
+    reply, takeaways = "", []
     try:
-        response = await _chat_llm().complete(messages)
-        reply = sanitize((response.content or "").strip())
+        response = await _chat_llm().complete(
+            messages, response_format={"type": "json_object"},
+        )
+        parsed = json.loads(response.content or "{}")
+        reply = sanitize(str(parsed.get("answer", "")).strip())
+        for t in (parsed.get("takeaways") or [])[:3]:
+            if isinstance(t, dict) and str(t.get("text", "")).strip():
+                kind = str(t.get("kind", "tip"))
+                takeaways.append(Takeaway(
+                    text=sanitize(str(t["text"]).strip()),
+                    kind=kind if kind in ("price", "warning", "tip", "timing") else "tip",
+                ))
+            elif isinstance(t, str) and t.strip():
+                takeaways.append(Takeaway(text=sanitize(t.strip())))
     except Exception:
         logger.exception("watchlist ask failed for %d", watchlist_id)
-        reply = ""
     if not reply:
         reply = "I hit a snag answering that one. Give it another try in a moment."
-    return AskResponse(reply=reply)
+        takeaways = []
+    return AskResponse(reply=reply, takeaways=takeaways)

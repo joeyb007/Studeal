@@ -357,6 +357,24 @@
   border-radius: 14px 14px 4px 14px; padding: 9px 13px;
 }
 .msgText { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-primary); }
+
+/* Pinned takeaways: quick analytics under Scout's answer */
+.takeaways { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.takeaway {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 550; padding: 6px 11px; border-radius: 9px;
+  border: 1px solid rgba(168, 188, 232, 0.16); color: var(--text-primary);
+  background: rgba(168, 188, 232, 0.05);
+  animation: viewIn 0.28s ease backwards;
+  font-variant-numeric: tabular-nums;
+}
+.takeawayIcon { display: inline-flex; flex-shrink: 0; }
+.tk_price { border-color: rgba(168, 188, 232, 0.3); }
+.tk_price .takeawayIcon { color: var(--accent); }
+.tk_warning { border-color: rgba(217, 163, 68, 0.35); background: rgba(217, 163, 68, 0.06); }
+.tk_warning .takeawayIcon { color: var(--amber); }
+.tk_tip .takeawayIcon { color: var(--success); }
+.tk_timing .takeawayIcon { color: var(--text-secondary); }
 .typingBubble {
   display: inline-flex; align-items: center; gap: 5px; padding: 12px 15px;
   background: rgba(168, 188, 232, 0.05); border: 1px solid rgba(168, 188, 232, 0.08);

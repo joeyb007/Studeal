@@ -297,7 +297,7 @@
 /* negotiation */
 .negChart { margin-left: 40px; display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 14px; }
 .negScale {
-  position: relative; height: 150px; border-radius: 10px;
+  position: relative; height: 210px; border-radius: 10px;
   background: linear-gradient(90deg, rgba(111, 191, 143, 0.14), rgba(168, 188, 232, 0.08) 50%, rgba(217, 163, 68, 0.14) 82%, rgba(222, 123, 98, 0.12));
   border: 1px solid rgba(47, 46, 43, 0.9);
 }
@@ -337,17 +337,18 @@
 .chartLegend .cd_match { width: 9px; height: 9px; }
 .chartLegend .cd_weak  { width: 7px; height: 7px; }
 .chartLegend .cd_rest  { width: 6px; height: 6px; }
+.negHead { display: flex; align-items: center; gap: 20px; }
+.negHead > :first-child { flex: 1; min-width: 0; }
 .chartLegend {
-  position: absolute; top: 10px; right: 10px; z-index: 6;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 9px 12px; border-radius: 9px; font-size: 10.5px;
-  color: var(--text-secondary);
-  background: rgba(25, 25, 24, 0.85); backdrop-filter: blur(3px);
+  display: inline-flex; align-items: center; gap: 14px;
+  padding: 7px 13px; border-radius: 9px; font-size: 11px;
+  color: var(--text-secondary); flex-shrink: 0;
+  background: var(--bg-inset);
   border: 1px solid rgba(47, 46, 43, 0.9);
 }
 .legendTitle {
-  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
-  letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
+  font-size: 11px; font-weight: 500; color: var(--text-faint);
+  padding-right: 10px; border-right: 1px solid rgba(47, 46, 43, 0.9);
 }
 .chartLegend span { display: inline-flex; align-items: center; gap: 7px; }
 .chartLegend i {

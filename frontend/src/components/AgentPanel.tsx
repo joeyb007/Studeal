@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AgentCard, { HuntSummary } from "./AgentCard";
-import InspectorPanel from "./InspectorPanel";
+import InspectorPanel, { InspectListing } from "./InspectorPanel";
 import { MARKETPLACE_LABELS } from "./PoolCard";
 import styles from "./AgentPanel.module.css";
 
@@ -246,7 +246,7 @@ export default function AgentPanel({
   const [listings, setListings] = useState<RankedListing[] | null>(null);
   const [market, setMarket] = useState<Market | null>(null);
   const [sweep, setSweep] = useState<SweepListing[] | null>(null);
-  const [inspecting, setInspecting] = useState<RankedListing | null>(null);
+  const [inspecting, setInspecting] = useState<InspectListing | null>(null);
   const [showSweepModal, setShowSweepModal] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -594,6 +594,9 @@ export default function AgentPanel({
           market={market}
           authHeaders={authHeaders}
           listings={ranked}
+          weakListings={weak}
+          sweep={sweep}
+          ensureSweep={loadSweep}
           onInspect={setInspecting}
         />
       )}
@@ -712,18 +715,35 @@ export default function AgentPanel({
 // Negotiation tab (own component: it carries its own ask-thread state)
 // ---------------------------------------------------------------------------
 
+interface ChartItem {
+  id: number;
+  title: string;
+  price: number;
+  currency: string;
+  marketplace: string;
+  url: string;
+  image_url: string | null;
+  tier: "pick" | "match" | "weak" | "rest";
+}
+
 function NegotiationView({
   agent,
   market,
   authHeaders,
   listings,
+  weakListings,
+  sweep,
+  ensureSweep,
   onInspect,
 }: {
   agent: Agent;
   market: Market | null;
   authHeaders: Record<string, string>;
   listings: RankedListing[];
-  onInspect: (l: RankedListing) => void;
+  weakListings: RankedListing[];
+  sweep: SweepListing[] | null;
+  ensureSweep: () => void;
+  onInspect: (l: InspectListing) => void;
 }) {
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string; takeaways?: Takeaway[] }[]>([]);
   const [draft, setDraft] = useState("");
@@ -733,6 +753,18 @@ function NegotiationView({
   useEffect(() => {
     threadEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, asking]);
+
+  useEffect(() => {
+    ensureSweep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const chartItems: ChartItem[] = [
+    ...listings.slice(0, 5).map(l => ({ ...l, tier: "pick" as const })),
+    ...listings.slice(5).map(l => ({ ...l, tier: "match" as const })),
+    ...weakListings.map(l => ({ ...l, tier: "weak" as const })),
+    ...(sweep ?? []).filter(l => !l.matched).map(l => ({ ...l, tier: "rest" as const })),
+  ];
 
   const checks = playbookSection(agent.playbook, "What to check", "The going rate");
   const haggle = playbookSection(agent.playbook, "How to haggle", "Your walk-away");
@@ -784,9 +816,13 @@ function NegotiationView({
             <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
             <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
             <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
-            {listings.slice(0, 14).map(l => (
-              <span key={l.id} className={styles.chartDotWrap} style={{ left: pos(l.price) }}>
-                <span className={[styles.chartDot, market?.ceiling != null && l.price > market.ceiling ? styles.chartDotOver : ""].join(" ")} />
+            {chartItems.map(l => (
+              <span
+                key={`${l.tier}-${l.id}`}
+                className={styles.chartDotWrap}
+                style={{ left: pos(l.price), top: `${18 + ((l.id * 37) % 64)}%` }}
+              >
+                <span className={[styles.chartDot, styles[`cd_${l.tier}`]].join(" ")} />
                 <span className={styles.chartPop}>
                   {l.image_url && (
                     <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.chartPopThumb} />
@@ -807,6 +843,12 @@ function NegotiationView({
             <span>${Math.round(scale.lo)}</span>
             <span>fair ${neg.fair_low}–{neg.fair_high}</span>
             <span>${Math.round(scale.hi)}</span>
+          </div>
+          <div className={styles.chartLegend}>
+            <span><i className={styles.cd_pick} /> top picks</span>
+            <span><i className={styles.cd_match} /> matches</span>
+            <span><i className={styles.cd_weak} /> weak</span>
+            <span><i className={styles.cd_rest} /> everything else</span>
           </div>
         </div>
       )}

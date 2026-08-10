@@ -701,6 +701,21 @@ function MarketPlaybookView({
     lo: Math.min(neg.open * 0.85, neg.open - 20),
     hi: Math.max(neg.walk * 1.2, neg.walk + 40),
   } : null;
+  const hasChart = neg !== null && scale !== null;
+
+  // Chart choreography: range wipes in, dots pop left-to-right, a shine pass
+  // seals it, and only then does the content below cascade in.
+  const [chartDone, setChartDone] = useState(false);
+  useEffect(() => {
+    if (!hasChart) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setChartDone(true);
+      return;
+    }
+    const t = setTimeout(() => setChartDone(true), 1900);
+    return () => clearTimeout(t);
+  }, [hasChart]);
+  const showBelow = market !== null && (!hasChart || chartDone);
   const pos = (v: number) => scale ? `${Math.min(96, Math.max(3, ((v - scale.lo) / (scale.hi - scale.lo)) * 100))}%` : "0%";
 
   // Beeswarm placement: same-price listings fan out from the centerline
@@ -764,7 +779,7 @@ function MarketPlaybookView({
               <span
                 key={`${l.tier}-${l.id}`}
                 className={styles.chartDotWrap}
-                style={{ left: `${l.x}%`, top: `${l.y}%` }}
+                style={{ left: `${l.x}%`, top: `${l.y}%`, animationDelay: `${500 + l.x * 6}ms` }}
               >
                 <span className={[styles.chartDot, styles[`cd_${l.tier}`]].join(" ")} />
                 <span className={styles.chartPop}>
@@ -782,6 +797,7 @@ function MarketPlaybookView({
                 </span>
               </span>
             ))}
+            <span className={styles.chartShine} aria-hidden />
           </div>
           <div className={styles.negScaleLabels}>
             <span>${Math.round(scale.lo)}</span>
@@ -791,6 +807,7 @@ function MarketPlaybookView({
         </div>
       )}
 
+      {showBelow && (<>
       {market && (
         <div className={styles.maStats}>
           <div className={styles.maStat}><span className={styles.maNum}>{market.n_live}</span><span className={styles.maLabel}>live now</span></div>
@@ -943,6 +960,7 @@ function MarketPlaybookView({
         />
         <button className={styles.cta} onClick={ask} disabled={asking || !draft.trim()}>Ask</button>
       </div>
+      </>)}
 
     </div>
   );

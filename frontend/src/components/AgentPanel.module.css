@@ -54,6 +54,7 @@
 @media (prefers-reduced-motion: reduce) {
   .liveDot { animation: none; }
   .view > *, .mini, .negRight > *, .negFig > * { animation: none; }
+  .negScale, .chartDotWrap, .negScaleLabels, .chartShine::after { animation: none; }
   .tabIndicator { transition: none; animation: none; }
   .card, .mini, .hero, .miniThumb, .heroThumb, .askBtn, .viewBtn, .cta { transition: none; transform: none; }
   .avatarActive { animation: none; box-shadow: none; }
@@ -283,6 +284,7 @@
 .negChart { margin-left: 40px; display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 14px; }
 .negScale {
   position: relative; height: 210px; border-radius: 10px;
+  animation: chartWipe 0.65s cubic-bezier(0.25, 0.7, 0.3, 1) backwards;
   background: linear-gradient(90deg, rgba(111, 191, 143, 0.14), rgba(168, 188, 232, 0.08) 50%, rgba(217, 163, 68, 0.14) 82%, rgba(222, 123, 98, 0.12));
   border: 1px solid rgba(47, 46, 43, 0.9);
 }
@@ -307,6 +309,12 @@
   position: absolute; transform: translate(-50%, -50%);
   padding: 7px;                 /* generous hover target */
   z-index: 2;
+  animation: dotPop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes dotPop {
+  0%   { opacity: 0; transform: translate(-50%, -18%) scale(0.3); }
+  70%  { opacity: 1; transform: translate(-50%, -57%) scale(1.12); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 .chartDotWrap:hover { z-index: 5; }
 .chartDot {
@@ -373,7 +381,24 @@
 .negScaleLabels {
   display: flex; justify-content: space-between; font-size: 10.5px;
   color: var(--text-faint); margin-top: 22px; font-variant-numeric: tabular-nums;
+  animation: viewIn 0.4s ease 0.55s backwards;
 }
+@keyframes chartWipe {
+  from { clip-path: inset(-70px 100% -70px 0); }
+  to   { clip-path: inset(-70px 0 -70px 0); }
+}
+.negChart { animation: none; }   /* the wipe is its entrance */
+.chartShine {
+  position: absolute; inset: 0; border-radius: inherit;
+  overflow: hidden; pointer-events: none; z-index: 4;
+}
+.chartShine::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 24%;
+  background: linear-gradient(100deg, transparent, rgba(232, 240, 255, 0.13), transparent);
+  transform: translateX(-130%);
+  animation: shineSweep 0.6s ease-in-out 1.55s both;
+}
+@keyframes shineSweep { to { transform: translateX(560%); } }
 
 .negCards { margin-left: 40px; display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
 .negCard {

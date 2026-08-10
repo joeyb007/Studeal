@@ -62,7 +62,13 @@ interface PendingImage {
 }
 
 interface Checklist {
-  items: { check: string; status: "open" | "satisfied" | "flagged"; evidence: string | null }[];
+  items: {
+    check: string;
+    status: "open" | "satisfied" | "flagged";
+    evidence: string | null;
+    verify_via?: "ask_seller" | "at_pickup" | "confirmed" | null;
+    added?: boolean;
+  }[];
   ready: boolean;
 }
 
@@ -451,6 +457,11 @@ export default function InspectorPanel({
                       <span className={styles.checkBody}>
                         <span className={item.status === "satisfied" ? styles.checkTextDone : styles.checkText}>
                           {item.check}
+                          {item.verify_via && item.status !== "satisfied" && (
+                            <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
+                              {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
+                            </span>
+                          )}
                         </span>
                         {item.evidence && <span className={styles.checkEvidence}>{item.evidence}</span>}
                       </span>

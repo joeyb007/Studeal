@@ -377,10 +377,14 @@ class InspectionChecklist(Base):
     watchlist_id: Mapped[int | None] = mapped_column(
         ForeignKey("watchlists.id", ondelete="SET NULL"), nullable=True
     )
-    # [{"check": str, "status": "open"|"satisfied"|"flagged", "evidence": str|None}]
+    # [{"check", "status": open|satisfied|flagged, "evidence",
+    #   "verify_via": ask_seller|at_pickup|confirmed, "added": bool}]
     items: Mapped[list] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
+    # Purchase-level tailoring (send-to-Scout v2, stage 3): the buyer's answer
+    # to Scout's verdict-flipping question. Thread-local by design.
+    purchase_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

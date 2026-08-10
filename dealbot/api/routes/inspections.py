@@ -360,31 +360,146 @@ def checklist_from_playbook(playbook: str | None) -> list[dict]:
     return [{"check": c, "status": "open", "evidence": None} for c in checks[:_CHECKLIST_MAX]]
 
 
+CRITERIA_SEED_SYSTEM = """You are Scout. Build the buyer's pre-purchase criteria
+for ONE secondhand listing: the specific things that must be true for it to be
+worth buying. You get generic category checks plus your own inspection notes
+for THIS listing (what the photos showed, what you could not tell, red flags,
+questions worth asking the seller).
+
+Output JSON:
+{"criteria": [{"check": str, "status": "open"|"satisfied"|"flagged",
+               "evidence": str|null,
+               "verify_via": "ask_seller"|"at_pickup"|"confirmed"}]}
+
+- 3-5 criteria. Keep the category checks that matter for THIS listing, add
+  listing-specific ones from the notes, dedupe overlaps.
+- "satisfied" ONLY when the notes already settle it; then verify_via is
+  "confirmed" and evidence cites the source ("photos show clean cups").
+- "flagged" only when the notes show a real problem. Unverifiable is "open".
+- verify_via for open items: "ask_seller" when a message can settle it,
+  "at_pickup" when it needs hands-on.
+- Each check under 90 chars, imperative, plain language. Evidence under 90
+  chars. Never use em dashes. JSON only."""
+
+
 CHECKLIST_ASSESS_SYSTEM = """You are Scout. A buyer has a pre-purchase checklist for
 one secondhand listing. New evidence just arrived. Decide which OPEN checks the
-evidence clearly settles.
+evidence clearly settles, and whether it raises anything NEW that belongs on
+the list.
 
-Output JSON: {"updates": [{"index": int, "status": "satisfied"|"flagged", "evidence": str}]}
-- "satisfied": the evidence positively shows that check passes for THIS listing.
-- "flagged": the evidence shows the check FAILS: a visible defect, a seller
-  admission, a known problem confirmed.
+Output JSON:
+{"updates": [{"index": int, "status": "satisfied"|"flagged", "evidence": str}],
+ "additions": [{"check": str, "status": "open"|"flagged", "evidence": str|null,
+                "verify_via": "ask_seller"|"at_pickup"}]}
+
+- updates: "satisfied" when the evidence positively shows a check passes for
+  THIS listing; "flagged" when it shows the check FAILS (a visible defect, a
+  seller admission, a confirmed problem).
 - Evidence that is missing, unclear, or "cannot be verified from here" settles
   NOTHING: leave those checks open. Unverifiable is open, never flagged.
-- Only checks the evidence CLEARLY settles. An empty updates list is a normal
-  answer, and the most common one.
-- "evidence" under 90 chars, plain language, naming the source ("photos show
-  clean cups", "seller says battery at 91%").
+- additions: ONLY for a genuinely NEW concern that would change the buy
+  decision (a seller admission like "one ear crackles", a defect visible in a
+  screenshot, a dealbreaker the buyer just named). Not restatements of
+  existing checks, not curiosities. Usually empty.
+- "evidence" under 90 chars, plain language, naming the source. Checks under
+  90 chars, imperative.
+- An empty answer on both lists is normal, and the most common one.
 - Never use em dashes. JSON only."""
+
+_CHECKLIST_ADDS_MAX = 3
+_VERIFY_VIA = ("ask_seller", "at_pickup", "confirmed")
+
+
+def _criteria_from_payload(parsed: dict) -> list[dict]:
+    """Validated criteria items from the seed call; [] when unusable."""
+    items: list[dict] = []
+    for entry in (parsed.get("criteria") or [])[:5]:
+        if not isinstance(entry, dict):
+            continue
+        check = sanitize(str(entry.get("check") or "").strip())
+        if len(check) < 8:
+            continue
+        status_val = entry.get("status")
+        status_val = status_val if status_val in ("open", "satisfied", "flagged") else "open"
+        verify = entry.get("verify_via")
+        verify = verify if verify in _VERIFY_VIA else ("confirmed" if status_val == "satisfied" else None)
+        evidence = entry.get("evidence")
+        evidence = sanitize(str(evidence).strip())[:120] if isinstance(evidence, str) and evidence.strip() else None
+        items.append({
+            "check": check[:120], "status": status_val,
+            "evidence": evidence, "verify_via": verify,
+        })
+    return items
+
+
+def _apply_assessment(items: list[dict], parsed: dict) -> list[dict]:
+    """Pure application of an assess payload: settle open checks, append
+    bounded additions (marked `added`). Never mutates the input list."""
+    out = [dict(item) for item in items]
+    open_idx = {i for i, item in enumerate(out) if item.get("status") == "open"}
+    for update in (parsed.get("updates") or []):
+        if not isinstance(update, dict):
+            continue
+        index = update.get("index")
+        status_val = update.get("status")
+        if index in open_idx and status_val in ("satisfied", "flagged"):
+            evidence = sanitize(str(update.get("evidence") or "").strip())[:120] or None
+            out[index] = {**out[index], "status": status_val, "evidence": evidence}
+
+    added_room = _CHECKLIST_ADDS_MAX - sum(1 for item in out if item.get("added"))
+    for entry in (parsed.get("additions") or []):
+        if added_room <= 0 or not isinstance(entry, dict):
+            break
+        check = sanitize(str(entry.get("check") or "").strip())
+        if len(check) < 8:
+            continue
+        status_val = entry.get("status")
+        verify = entry.get("verify_via")
+        evidence = entry.get("evidence")
+        out.append({
+            "check": check[:120],
+            "status": status_val if status_val in ("open", "flagged") else "open",
+            "evidence": sanitize(str(evidence).strip())[:120] if isinstance(evidence, str) and evidence.strip() else None,
+            "verify_via": verify if verify in ("ask_seller", "at_pickup") else None,
+            "added": True,
+        })
+        added_room -= 1
+    return out
+
+
+async def _seed_criteria(playbook_checks: list[str], report: dict) -> list[dict] | None:
+    """One LLM call merging category checks with THIS listing's unknowns.
+    None on any failure — callers fall back to the deterministic seed."""
+    payload = {
+        "category_checks": playbook_checks,
+        "inspection_notes": {
+            k: report.get(k)
+            for k in ("identification", "condition", "cant_tell", "red_flags", "seller_questions")
+        },
+    }
+    try:
+        response = await _chat_llm().complete(
+            [
+                {"role": "system", "content": CRITERIA_SEED_SYSTEM},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        items = _criteria_from_payload(json.loads(response.content or "{}"))
+        return items or None
+    except Exception:
+        logger.warning("criteria seed failed", exc_info=True)
+        return None
 
 
 async def _assess_checklist(items: list[dict], evidence: str) -> list[dict]:
-    """One cheap JSON call: which open checks does this evidence settle?
-    Returns updated items; the original list on any failure."""
-    open_idx = [i for i, item in enumerate(items) if item.get("status") == "open"]
-    if not open_idx or not evidence.strip():
+    """One cheap JSON call: settle open checks against new evidence and admit
+    bounded new concerns. Returns updated items; the original on any failure."""
+    open_items = [i for i, item in enumerate(items) if item.get("status") == "open"]
+    if not evidence.strip():
         return items
     payload = {
-        "checklist": [{"index": i, "check": items[i]["check"]} for i in open_idx],
+        "checklist": [{"index": i, "check": items[i]["check"]} for i in open_items],
         "evidence": evidence[:4000],
     }
     try:
@@ -395,25 +510,18 @@ async def _assess_checklist(items: list[dict], evidence: str) -> list[dict]:
             ],
             response_format={"type": "json_object"},
         )
-        parsed = json.loads(response.content or "{}")
-        for update in parsed.get("updates") or []:
-            index = update.get("index")
-            status_val = update.get("status")
-            if index in open_idx and status_val in ("satisfied", "flagged"):
-                items[index] = {
-                    "check": items[index]["check"],
-                    "status": status_val,
-                    "evidence": sanitize(str(update.get("evidence") or "").strip())[:120] or None,
-                }
+        return _apply_assessment(items, json.loads(response.content or "{}"))
     except Exception:
         logger.warning("checklist assess failed", exc_info=True)
-    return items
+        return items
 
 
 class ChecklistItem(BaseModel):
     check: str
     status: str                    # open | satisfied | flagged
     evidence: str | None = None
+    verify_via: str | None = None  # ask_seller | at_pickup | confirmed
+    added: bool = False            # admitted mid-conversation by the assessor
 
 
 class ChecklistResponse(BaseModel):
@@ -424,7 +532,12 @@ class ChecklistResponse(BaseModel):
 
 def _checklist_response(row: InspectionChecklist) -> ChecklistResponse:
     items = [ChecklistItem(**item) for item in row.items]
-    ready = len(items) > 0 and all(i.status == "satisfied" for i in items)
+    # Ready means NOTHING in the way: every check satisfied, none flagged.
+    ready = (
+        len(items) > 0
+        and all(i.status == "satisfied" for i in items)
+        and not any(i.status == "flagged" for i in items)
+    )
     return ChecklistResponse(items=items, ready=ready, watchlist_id=row.watchlist_id)
 
 
@@ -449,9 +562,15 @@ async def _get_or_seed_checklist(
 
     inspection = await get_cached_inspection(listing_id)
     if inspection and inspection.get("report"):
-        items = await _assess_checklist(
-            items, "Scout's inspection notes: " + json.dumps(inspection["report"]),
-        )
+        merged = await _seed_criteria([i["check"] for i in items], inspection["report"])
+        if merged is not None:
+            items = merged
+        else:
+            # Seed call failed: settle the deterministic checks against the
+            # report the old way rather than shipping an unassessed list.
+            items = await _assess_checklist(
+                items, "Scout's inspection notes: " + json.dumps(inspection["report"]),
+            )
 
     async with get_async_session() as session:
         row = await session.get(InspectionChecklist, (user_id, listing_id))
@@ -511,19 +630,21 @@ async def toggle_checklist(
 
 
 VERDICT_SYSTEM = """You are Scout, the user's expert friend. You already inspected
-this listing (your notes below). Now give YOUR TAKE FOR THIS SPECIFIC BUYER,
-using their profile, budget, and your category playbook.
+this listing (your notes below). Give THE CALL for this specific buyer,
+decision-first, in flowing prose (no headings, no lists):
 
-Cover, in flowing prose (no headings, no lists):
-- If a ready-to-buy checklist is provided, OPEN with the readiness call: all
-  checks satisfied means start with "Ready to buy." Anything open or flagged
-  means start with "Not yet" and name in a few words what's still unverified
-  or failed. No checklist provided: skip this, open with fit.
-- Fit: does this listing suit what they actually need? Be honest if not.
-- The number: what they should offer, and their walk-away, using ONLY the
-  prices provided (asking price, market band, their budget).
-- The opener: one short ready-to-send message to the seller making that offer,
-  in quotes.
+- Open with the price call in one sentence, using ONLY the numbers provided
+  ("$255 is fair for this market, typical is $279").
+- If a ready-to-buy checklist is provided: every check satisfied means the
+  next words are "Ready to buy." Anything open means "potentially a good buy
+  IF", naming the open items in a few words. Anything flagged means being
+  honest that it is not looking good, and why. No checklist: go straight to
+  fit.
+- Fit: one honest sentence on whether it suits what this buyer actually
+  needs. Say so plainly if it does not.
+- The number: what to offer and the walk-away, from the provided prices only.
+- The opener: one short ready-to-send message to the seller making that
+  offer, in quotes.
 
 80-140 words. Second person, warm, direct. Plain text only: no markdown, no
 asterisks, no bold, no headings. Never use em dashes. No greeting, no

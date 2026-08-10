@@ -589,7 +589,13 @@ export default function AgentPanel({
 
       {/* ================= NEGOTIATION PLAYBOOK ================= */}
       {tab === "neg" && (
-        <NegotiationView agent={agent} market={market} authHeaders={authHeaders} />
+        <NegotiationView
+          agent={agent}
+          market={market}
+          authHeaders={authHeaders}
+          listings={ranked}
+          onInspect={setInspecting}
+        />
       )}
 
       {/* ================= ALL MATCHES ================= */}
@@ -710,10 +716,14 @@ function NegotiationView({
   agent,
   market,
   authHeaders,
+  listings,
+  onInspect,
 }: {
   agent: Agent;
   market: Market | null;
   authHeaders: Record<string, string>;
+  listings: RankedListing[];
+  onInspect: (l: RankedListing) => void;
 }) {
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string; takeaways?: Takeaway[] }[]>([]);
   const [draft, setDraft] = useState("");
@@ -774,6 +784,24 @@ function NegotiationView({
             <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
             <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
             <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
+            {listings.slice(0, 14).map(l => (
+              <span key={l.id} className={styles.chartDotWrap} style={{ left: pos(l.price) }}>
+                <span className={[styles.chartDot, market?.ceiling != null && l.price > market.ceiling ? styles.chartDotOver : ""].join(" ")} />
+                <span className={styles.chartPop}>
+                  {l.image_url && (
+                    <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.chartPopThumb} />
+                  )}
+                  <span className={styles.chartPopBody}>
+                    <span className={styles.chartPopTitle}>{l.title}</span>
+                    <span className={styles.chartPopPrice}>${l.price.toFixed(0)} · {MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
+                    <span className={styles.chartPopActions}>
+                      <button className={styles.askBtn} onClick={() => onInspect(l)}>Ask Scout</button>
+                      <a className={styles.viewBtn} style={{ marginLeft: 0 }} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                    </span>
+                  </span>
+                </span>
+              </span>
+            ))}
           </div>
           <div className={styles.negScaleLabels}>
             <span>${Math.round(scale.lo)}</span>

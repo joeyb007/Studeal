@@ -836,6 +836,9 @@ function NegotiationView({
         </div>
       </div>
 
+      </div>
+      </div>
+
       {neg && (
         <div className={styles.copyLine}>
           <span>&quot;Hi! Is this still available? Would you take ${neg.open} if I pick up today?&quot;</span>
@@ -851,9 +854,6 @@ function NegotiationView({
           </button>
         </div>
       )}
-
-      </div>
-      </div>
 
       {messages.map((m, i) => (
         <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsgRow}>

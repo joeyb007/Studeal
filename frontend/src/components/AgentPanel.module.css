@@ -337,7 +337,7 @@
 .copyLine {
   margin-left: 40px; display: flex; align-items: center; gap: 10px;
   border: 1px dashed rgba(168, 188, 232, 0.25); border-radius: 10px;
-  padding: 10px 14px; font-size: 12.5px; color: var(--text-primary); max-width: 640px;
+  padding: 10px 14px; font-size: 12.5px; color: var(--text-primary);
 }
 .copyBtn {
   margin-left: auto; flex-shrink: 0; font-size: 11.5px; font-weight: 600;
@@ -527,7 +527,7 @@
   align-items: stretch;
 }
 /* Tinted callout blocks: each number lives in its own soft-toned panel */
-.negFig { display: flex; flex-direction: column; justify-content: space-between; gap: 8px; height: 100%; }
+.negFig { display: flex; flex-direction: column; gap: 8px; }
 .figRow {
   display: flex; align-items: center; gap: 12px;
   padding: 16px 17px; border-radius: 11px;

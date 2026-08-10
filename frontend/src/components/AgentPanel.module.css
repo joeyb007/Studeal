@@ -362,11 +362,16 @@
   width: 240px; padding: 10px 12px;
   background: var(--bg-card); border: 1px solid rgba(168, 188, 232, 0.2);
   border-radius: 10px; box-shadow: var(--shadow-pop);
-  opacity: 0; pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear;
+  transition-delay: 0.3s;   /* grace period: brief pointer exits don't kill it */
+}
+.chartPop::after {          /* invisible bridge over the gap down to the dot */
+  content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 12px;
 }
 .chartDotWrap:hover .chartPop {
-  opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0);
+  opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0);
+  transition-delay: 0s;
 }
 .chartPopThumb {
   width: 52px; height: 40px; object-fit: cover; border-radius: 6px; flex-shrink: 0;

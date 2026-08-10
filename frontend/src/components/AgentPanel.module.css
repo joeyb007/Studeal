@@ -54,7 +54,7 @@
 @media (prefers-reduced-motion: reduce) {
   .liveDot { animation: none; }
   .view > *, .mini, .negRight > *, .negFig > * { animation: none; }
-  .negScale, .chartDotWrap, .negScaleLabels, .chartShine::after { animation: none; }
+  .negScale, .chartDotWrap, .negScaleLabels, .chartShine::after, .chartPop { animation: none; }
   .statTiles > *, .factsBand > *, .readEmblem { animation: none; }
   .composer:focus-within .avatar, .composer .cta:not(:disabled) { animation: none; }
   .tabIndicator { transition: none; animation: none; }
@@ -348,7 +348,7 @@
   70%  { opacity: 1; transform: translate(-50%, -57%) scale(1.12); }
   100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
-.chartDotWrap:hover { z-index: 5; }
+
 .chartDot {
   display: block; border-radius: 50%;
   border: 1.5px solid rgba(25, 25, 24, 0.8);
@@ -379,24 +379,26 @@
 .chartLegend i {
   width: 7px; height: 7px; border-radius: 50%; display: inline-block;
 }
-.chartDotWrap:hover .chartDot { transform: scale(1.5); }
+.chartDotHot { transform: scale(1.5); }
 .chartPop {
   position: absolute; bottom: calc(100% + 4px); left: 50%;
-  transform: translateX(-50%) translateY(4px);
   display: flex; gap: 10px; align-items: flex-start;
   width: 240px; padding: 10px 12px;
   background: var(--bg-card); border: 1px solid rgba(168, 188, 232, 0.2);
   border-radius: 10px; box-shadow: var(--shadow-pop);
-  opacity: 0; visibility: hidden;
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear;
-  transition-delay: 0.3s;   /* grace period: brief pointer exits don't kill it */
+  animation: chartPopIn 0.16s ease both;
+}
+@keyframes chartPopIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(5px) scale(0.98); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+.chartPopOut { animation: chartPopOut 0.18s ease both; }
+@keyframes chartPopOut {
+  from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateX(-50%) translateY(4px) scale(0.98); }
 }
 .chartPop::after {          /* invisible bridge over the gap down to the dot */
   content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 12px;
-}
-.chartDotWrap:hover .chartPop {
-  opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0);
-  transition-delay: 0s;
 }
 .chartPopThumb {
   width: 52px; height: 40px; object-fit: cover; border-radius: 6px; flex-shrink: 0;

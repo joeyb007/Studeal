@@ -760,6 +760,29 @@ function MarketPlaybookView({
   const [asking, setAsking] = useState(false);
   const threadEnd = useRef<HTMLDivElement>(null);
 
+  // One live popover, driven by state instead of :hover CSS: with a hundred
+  // dots, a hidden shadowed card per dot made pointer sweeps churn the
+  // compositor, and z-index dropped mid-fade so dots bled through the card.
+  const [popDot, setPopDot] = useState<{ id: number; closing: boolean } | null>(null);
+  const popTimers = useRef<{ leave?: ReturnType<typeof setTimeout>; close?: ReturnType<typeof setTimeout> }>({});
+  const enterDot = (id: number) => {
+    if (popTimers.current.leave) clearTimeout(popTimers.current.leave);
+    if (popTimers.current.close) clearTimeout(popTimers.current.close);
+    setPopDot({ id, closing: false });
+  };
+  const leaveDot = () => {
+    if (popTimers.current.leave) clearTimeout(popTimers.current.leave);
+    popTimers.current.leave = setTimeout(() => {
+      setPopDot(p => (p ? { ...p, closing: true } : null));
+      popTimers.current.close = setTimeout(() => setPopDot(null), 190);
+    }, 200);
+  };
+  useEffect(() => () => {
+    if (popTimers.current.leave) clearTimeout(popTimers.current.leave);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (popTimers.current.close) clearTimeout(popTimers.current.close);
+  }, []);
+
   useEffect(() => {
     threadEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, asking]);
@@ -887,22 +910,30 @@ function MarketPlaybookView({
               <span
                 key={`${l.tier}-${l.id}`}
                 className={styles.chartDotWrap}
-                style={{ left: `${l.x}%`, top: `${l.y}%`, animationDelay: `${500 + l.x * 6}ms` }}
+                style={{
+                  left: `${l.x}%`, top: `${l.y}%`,
+                  animationDelay: `${500 + l.x * 6}ms`,
+                  zIndex: popDot?.id === l.id ? 30 : undefined,
+                }}
+                onMouseEnter={() => enterDot(l.id)}
+                onMouseLeave={leaveDot}
               >
-                <span className={[styles.chartDot, styles[`cd_${l.tier}`]].join(" ")} />
-                <span className={styles.chartPop}>
-                  {l.image_url && (
-                    <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.chartPopThumb} />
-                  )}
-                  <span className={styles.chartPopBody}>
-                    <span className={styles.chartPopTitle}>{l.title}</span>
-                    <span className={styles.chartPopPrice}>${l.price.toFixed(0)} · {MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
-                    <span className={styles.chartPopActions}>
-                      <button className={styles.askBtn} onClick={() => onInspect(l)}>Ask Scout</button>
-                      <a className={styles.viewBtn} style={{ marginLeft: 0 }} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                <span className={[styles.chartDot, styles[`cd_${l.tier}`], popDot?.id === l.id ? styles.chartDotHot : ""].join(" ")} />
+                {popDot?.id === l.id && (
+                  <span className={[styles.chartPop, popDot.closing ? styles.chartPopOut : ""].join(" ")}>
+                    {l.image_url && (
+                      <img src={l.image_url} alt="" referrerPolicy="no-referrer" className={styles.chartPopThumb} />
+                    )}
+                    <span className={styles.chartPopBody}>
+                      <span className={styles.chartPopTitle}>{l.title}</span>
+                      <span className={styles.chartPopPrice}>${l.price.toFixed(0)} · {MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
+                      <span className={styles.chartPopActions}>
+                        <button className={styles.askBtn} onClick={() => onInspect(l)}>Ask Scout</button>
+                        <a className={styles.viewBtn} style={{ marginLeft: 0 }} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                      </span>
                     </span>
                   </span>
-                </span>
+                )}
               </span>
             ))}
             <span className={styles.chartShine} aria-hidden />

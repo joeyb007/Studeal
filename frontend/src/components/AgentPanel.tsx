@@ -1250,13 +1250,13 @@ function EditBriefModal({
             </button>
           ))}
         </div>
-        <label className={styles.fieldLabel}>Anything specific Scout should check in photos?</label>
+        <label className={styles.fieldLabel}>What should it look like?</label>
         <input
           className={styles.fieldInput}
           type="text"
           value={appearance}
           onChange={e => setAppearance(e.target.value)}
-          placeholder="e.g. no dents on the ear cups, original box included"
+          placeholder="e.g. L-shaped brown sectional, mild wear is fine, under 10 years old"
         />
         <p className={styles.modalSub}>Saving re-aims the agent: rankings and the playbook refresh in the background.</p>
         <div className={styles.modalActions}>

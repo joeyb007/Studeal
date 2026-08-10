@@ -77,8 +77,9 @@ class WatchlistContext(BaseModel):
     # How picky this buyer is about cosmetic condition; drives quality
     # filtering of picks. Inferred or asked once by Scout, editable later.
     quality_bar: Optional[str] = None  # pristine | good | wear_ok | any
-    # Specific physical requirements in the buyer's own words
-    # ("no dents on the cups", "must include original box").
+    # The physical brief (2026-08-10 spec): color, shape/variant, size, age
+    # and wear tolerance, must-have traits, in the buyer's own words
+    # ("l shaped brown sectional, mild to medium wear, under 10 years").
     appearance_notes: Optional[str] = None
 
     @field_validator("quality_bar", mode="before")

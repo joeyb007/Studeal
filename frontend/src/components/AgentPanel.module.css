@@ -529,21 +529,17 @@
 /* Tinted callout blocks: each number lives in its own soft-toned panel */
 .negFig { display: flex; flex-direction: column; gap: 8px; height: 100%; }
 .figRow {
-  display: flex; align-items: center; gap: 11px;
-  padding: 13px 15px; border-radius: 11px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  gap: 6px; padding: 12px 15px; border-radius: 11px;
   flex: 1;                      /* the three blocks share the column height */
 }
 .figRowGreen { background: rgba(111, 191, 143, 0.07); border: 1px solid rgba(111, 191, 143, 0.16); }
 .figRowBlue  { background: rgba(168, 188, 232, 0.07); border: 1px solid rgba(168, 188, 232, 0.18); }
 .figRowRed   { background: rgba(222, 123, 98, 0.07);  border: 1px solid rgba(222, 123, 98, 0.18); }
-.figDot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.figGreen { background: var(--success); }
-.figBlue  { background: var(--accent); }
-.figRed   { background: var(--danger); }
-.figLabel { font-size: 13px; color: var(--text-primary); font-weight: 500; }
+.figLabel { font-size: 11.5px; color: var(--text-secondary); font-weight: 500; }
 .figVal {
-  margin-left: auto; font-size: 16px; font-weight: 650;
-  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+  align-self: flex-end; font-size: 25px; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.015em; line-height: 1.1;
 }
 .figValGreen { color: var(--success); }
 .figValBlue  { color: var(--accent); }

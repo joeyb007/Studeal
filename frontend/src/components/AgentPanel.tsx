@@ -147,6 +147,23 @@ export default function AgentPanel({
   const [deleting, setDeleting] = useState(false);
   const [expanded, setExpanded] = useState<boolean | null>(null); // null until newCount known
 
+  // Sliding tab indicator: measured from the active tab button so it glides
+  // (left/width transition) instead of snapping between tabs.
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+  useEffect(() => {
+    const el = tabRefs.current[tab];
+    if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth });
+  }, [tab, expanded]);
+  useEffect(() => {
+    const onResize = () => {
+      const el = tabRefs.current[tab];
+      if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [tab]);
+
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   const loadListings = useCallback(async () => {
@@ -274,6 +291,7 @@ export default function AgentPanel({
         ] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
+            ref={el => { tabRefs.current[key] = el; }}
             role="tab"
             className={[styles.tab, tab === key ? styles.tabActive : ""].join(" ")}
             onClick={() => setTab(key)}
@@ -282,6 +300,13 @@ export default function AgentPanel({
             {key === "all" && ranked.length > 5 && <span className={styles.tabCount}> {rest.length + weak.length}</span>}
           </button>
         ))}
+        {indicator && (
+          <span
+            className={styles.tabIndicator}
+            style={{ left: indicator.left, width: indicator.width }}
+            aria-hidden
+          />
+        )}
       </div>
 
       {/* ================= TOP PICKS ================= */}

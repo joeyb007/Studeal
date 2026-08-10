@@ -823,8 +823,12 @@ function NegotiationView({
         return {
           ...l,
           x: Math.min(97.5, Math.max(2.5, x + xNudge)),
-          y: Math.min(86, Math.max(14, y)),
+          y: Math.min(90, Math.max(10, y)),
         };
+      })
+      .sort((a, b) => {
+        const rank = { rest: 0, weak: 1, match: 2, pick: 3 };
+        return rank[a.tier] - rank[b.tier];   // picks render last, on top
       });
   }, [chartItems, scale]);
 

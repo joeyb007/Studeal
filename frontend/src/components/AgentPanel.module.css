@@ -297,7 +297,7 @@
 /* negotiation */
 .negChart { margin-left: 40px; display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 14px; }
 .negScale {
-  position: relative; height: 62px; border-radius: 8px;
+  position: relative; height: 118px; border-radius: 10px;
   background: linear-gradient(90deg, rgba(111, 191, 143, 0.14), rgba(168, 188, 232, 0.08) 50%, rgba(217, 163, 68, 0.14) 82%, rgba(222, 123, 98, 0.12));
   border: 1px solid rgba(47, 46, 43, 0.9);
 }
@@ -320,19 +320,23 @@
 .negWalk b { color: var(--amber); }
 .chartDotWrap {
   position: absolute; transform: translate(-50%, -50%);
-  padding: 5px;                 /* generous hover target */
+  padding: 7px;                 /* generous hover target */
   z-index: 2;
 }
 .chartDotWrap:hover { z-index: 5; }
 .chartDot {
-  display: block; width: 7px; height: 7px; border-radius: 50%;
+  display: block; border-radius: 50%;
   border: 1.5px solid rgba(25, 25, 24, 0.8);
   transition: transform 0.15s ease;
 }
-.cd_pick  { background: var(--success); }
-.cd_match { background: var(--accent); }
-.cd_weak  { background: rgba(168, 188, 232, 0.38); }
-.cd_rest  { background: rgba(155, 154, 151, 0.35); }
+.cd_pick  { background: var(--success); width: 13px; height: 13px; }
+.cd_match { background: var(--accent); width: 10px; height: 10px; }
+.cd_weak  { background: rgba(168, 188, 232, 0.38); width: 8px; height: 8px; }
+.cd_rest  { background: rgba(155, 154, 151, 0.35); width: 6px; height: 6px; }
+.chartLegend .cd_pick  { width: 11px; height: 11px; }
+.chartLegend .cd_match { width: 9px; height: 9px; }
+.chartLegend .cd_weak  { width: 7px; height: 7px; }
+.chartLegend .cd_rest  { width: 6px; height: 6px; }
 .chartLegend {
   display: flex; gap: 16px; margin-top: 24px; font-size: 10.5px;
   color: var(--text-faint);

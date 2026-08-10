@@ -846,6 +846,13 @@ function NegotiationView({
             <span className={[styles.negMark, styles.negOpen].join(" ")} style={{ left: pos(neg.open) }}><i /><b>open ${neg.open}</b></span>
             <span className={[styles.negMark, styles.negTypical].join(" ")} style={{ left: pos(neg.median) }}><i /><b>typical ${neg.median}</b></span>
             <span className={[styles.negMark, styles.negWalk].join(" ")} style={{ left: pos(neg.walk) }}><i /><b>walk ${neg.walk}</b></span>
+            <div className={styles.chartLegend}>
+              <span className={styles.legendTitle}>Legend</span>
+              <span><i className={styles.cd_pick} /> top picks</span>
+              <span><i className={styles.cd_match} /> matches</span>
+              <span><i className={styles.cd_weak} /> weak</span>
+              <span><i className={styles.cd_rest} /> everything else</span>
+            </div>
             {placedDots.map(l => (
               <span
                 key={`${l.tier}-${l.id}`}
@@ -873,12 +880,6 @@ function NegotiationView({
             <span>${Math.round(scale.lo)}</span>
             <span>fair ${neg.fair_low}–{neg.fair_high}</span>
             <span>${Math.round(scale.hi)}</span>
-          </div>
-          <div className={styles.chartLegend}>
-            <span><i className={styles.cd_pick} /> top picks</span>
-            <span><i className={styles.cd_match} /> matches</span>
-            <span><i className={styles.cd_weak} /> weak</span>
-            <span><i className={styles.cd_rest} /> everything else</span>
           </div>
         </div>
       )}

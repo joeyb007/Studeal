@@ -911,7 +911,6 @@ function MarketPlaybookView({
       <div className={styles.thread}>
       {messages.map((m, i) => (
         <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsgRow}>
-          {m.role === "assistant" && <span className={[styles.avatar, styles.avatarActive].join(" ")}><ScoutGlyph /></span>}
           <div className={m.role === "user" ? undefined : styles.scoutMsg}>
             {m.role === "assistant" && i === messages.length - 1 ? (
               <TypedReply text={m.content} />
@@ -923,7 +922,6 @@ function MarketPlaybookView({
       ))}
       {asking && (
         <div className={styles.scoutMsgRow}>
-          <span className={styles.avatar}><ScoutGlyph /></span>
           <div className={styles.typingBubble} aria-hidden><span /><span /><span /></div>
         </div>
       )}

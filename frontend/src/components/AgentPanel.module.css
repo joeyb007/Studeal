@@ -461,7 +461,7 @@
 .thread {
   margin-left: 40px; display: flex; flex-direction: column; gap: 12px;
   max-height: 340px; overflow-y: auto;
-  padding-right: 8px; overscroll-behavior: contain;
+  padding: 2px 8px 2px 2px; overscroll-behavior: contain;
 }
 .thread .scoutMsgRow, .thread .userMsg { margin-left: 0; flex-shrink: 0; }
 .thread .userMsg { margin-left: auto; }

@@ -51,7 +51,7 @@ interface Inspection {
 }
 
 interface ChatMsg {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "sys";
   content: string;
   images?: string[];               // media keys
 }
@@ -94,7 +94,27 @@ export default function InspectorPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showNotes, setShowNotes] = useState(false);
   const [stage, setStage] = useState(0);
+  const [collapsed, setCollapsed] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+
+  // Checklist deltas become in-stream system lines ("✓ checked off: …").
+  const applyChecklist = (next: Checklist) => {
+    setChecklist(prev => {
+      if (prev) {
+        const lines: ChatMsg[] = [];
+        const satisfied = next.items.filter((item, i) =>
+          item.status === "satisfied" && prev.items[i]?.status === "open");
+        for (const item of satisfied) {
+          lines.push({ role: "sys", content: `✓ checked off: ${item.check.replace(/\.$/, "")}` });
+        }
+        for (const item of next.items.slice(prev.items.length)) {
+          lines.push({ role: "sys", content: `+ added to the list: ${item.check.replace(/\.$/, "")}` });
+        }
+        if (lines.length) setMessages(m => [...m, ...lines]);
+      }
+      return next;
+    });
+  };
 
   // Staged progress while Scout works. The phases happen in this order for
   // real (navigate, screenshot/read, report against comps); timing is
@@ -133,7 +153,7 @@ export default function InspectorPanel({
     (async () => {
       try {
         const cl = await fetch(`/api/listings/${listing.id}/checklist?watchlist_id=${watchlistId}`);
-        if (cl.ok && !cancelled) setChecklist(await cl.json());
+        if (cl.ok && !cancelled) setChecklist(await cl.json());   // first load: no delta lines
       } catch {
         /* checklist is a bonus */
       }
@@ -251,7 +271,9 @@ export default function InspectorPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: next.map(({ role, content }) => ({ role, content })),
+          messages: next
+            .filter(m => m.role !== "sys")
+            .map(({ role, content }) => ({ role, content })),
           watchlist_id: watchlistId ?? null,
           image_keys: imageKeys,
         }),
@@ -261,7 +283,7 @@ export default function InspectorPanel({
         role: "assistant",
         content: res.ok ? data.reply : "I hit a snag answering that one. Give it another try in a moment.",
       }]);
-      if (res.ok && data.checklist) setChecklist(data.checklist);
+      if (res.ok && data.checklist) applyChecklist(data.checklist);
     } catch {
       setMessages([...next, {
         role: "assistant",
@@ -277,18 +299,55 @@ export default function InspectorPanel({
   return createPortal(
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.panel} onClick={e => e.stopPropagation()}>
-        <div className={styles.head}>
-          <div className={styles.headText}>
-            <span className={styles.headTitle}>{listing.title}</span>
-            <span className={styles.headMeta}>
-              ${listing.price.toFixed(2)} {listing.currency} ·{" "}
-              {MARKETPLACE_LABELS[listing.marketplace] ?? listing.marketplace}
-            </span>
+        <div className={styles.dossier}>
+          <div className={styles.dosTop}>
+            {listing.image_url ? (
+              <img src={listing.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.dosThumb} />
+            ) : null}
+            <span className={styles.dosTitle}>{listing.title}</span>
+            <span className={styles.dosPrice}>${listing.price.toFixed(0)}</span>
+            {collapsed && checklist && checklist.items.length > 0 && (
+              <span className={styles.dosCount}>
+                {checklist.items.filter(i => i.status === "satisfied").length}/{checklist.items.length}
+              </span>
+            )}
+            <button className={styles.close} onClick={onClose} aria-label="Close">✕</button>
           </div>
-          <button className={styles.close} onClick={onClose} aria-label="Close">✕</button>
+          {!collapsed && report && (
+            <div className={styles.dosChips}>
+              {report.price_read && (
+                <span className={[styles.badge, badgeTone(report.price_read.level)].join(" ")}>{report.price_read.text}</span>
+              )}
+              {report.condition_grade && report.condition_grade !== "unknown" && (
+                <span className={[styles.badge, badgeTone(report.condition_grade)].join(" ")}>condition: {report.condition_grade}</span>
+              )}
+              <span className={[styles.badge, badgeTone(report.legitimacy.level)].join(" ")}>
+                {report.legitimacy.level === "fine" ? "looks legit"
+                  : report.legitimacy.level === "likely_scam" ? "likely scam" : "caution"}
+              </span>
+            </div>
+          )}
+          {!collapsed && checklist && checklist.items.length > 0 && (
+            <div className={styles.readiness}>
+              <span className={styles.readyLabel}>ready?</span>
+              <span className={styles.meterBar}>
+                <span
+                  className={[styles.meterFill, checklist.ready ? styles.meterDone : ""].join(" ")}
+                  style={{ width: `${Math.round(100 * checklist.items.filter(i => i.status === "satisfied").length / checklist.items.length)}%` }}
+                />
+              </span>
+              <span className={[styles.meterCount, checklist.ready ? styles.meterCountDone : ""].join(" ")}>
+                {checklist.ready ? "ready" : `${checklist.items.filter(i => i.status === "satisfied").length} / ${checklist.items.length}`}
+              </span>
+            </div>
+          )}
         </div>
 
-        <div className={styles.thread} ref={threadRef}>
+        <div
+          className={styles.thread}
+          ref={threadRef}
+          onScroll={e => setCollapsed((e.target as HTMLDivElement).scrollTop > 48)}
+        >
           <div className={styles.userMsg}>
             <div className={styles.sentCard}>
               {listing.image_url && (
@@ -369,124 +428,53 @@ export default function InspectorPanel({
           )}
 
           {report && (
-            <div className={styles.scoutRow}>
-            <ScoutAvatar />
-            <div className={styles.scoutMsg}>
-              {report.headline ? (
-                <>
-                  <div className={styles.overview}>
-                    {listing.image_url && (
-                      <img
-                        src={listing.image_url}
-                        alt=""
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        className={styles.overviewThumb}
-                      />
-                    )}
-                    <div className={styles.overviewBody}>
-                      <p className={styles.overviewHeadline}>{report.headline}</p>
-                      <div className={styles.badges}>
-                        {report.price_read && (
-                          <span className={[styles.badge, badgeTone(report.price_read.level)].join(" ")}>
-                            {report.price_read.text}
-                          </span>
-                        )}
-                        {report.condition_grade && report.condition_grade !== "unknown" && (
-                          <span className={[styles.badge, badgeTone(report.condition_grade)].join(" ")}>
-                            condition: {report.condition_grade}
-                          </span>
-                        )}
-                        <span className={[styles.badge, badgeTone(report.legitimacy.level)].join(" ")}>
-                          {report.legitimacy.level === "fine"
-                            ? "looks legit"
-                            : report.legitimacy.level === "likely_scam"
-                              ? "likely scam"
-                              : "caution"}
+            <div className={styles.scoutGroup}>
+              <div className={styles.who}><ScoutAvatar small /> scout</div>
+              <div className={[styles.scoutBubble, styles.scoutBubbleFirst, checklist?.ready ? styles.closer : ""].join(" ")}>
+                <p className={styles.sectionText}>{verdict ?? report.headline ?? report.summary}</p>
+                {checklist && checklist.items.length > 0 && (
+                  <div className={styles.critList}>
+                    {checklist.items.map((item, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={styles.critRow}
+                        title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
+                        onClick={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
+                      >
+                        <span className={[
+                          styles.tick,
+                          item.status === "satisfied" ? styles.tickOn : item.status === "flagged" ? styles.tickFlag : "",
+                        ].join(" ")}>
+                          {item.status === "satisfied" ? "✓" : item.status === "flagged" ? "!" : "○"}
                         </span>
-                      </div>
-                    </div>
+                        <span className={styles.critBody}>
+                          <span className={item.status === "satisfied" ? styles.critTextDone : styles.critText}>{item.check}</span>
+                          {item.evidence && <span className={styles.critEvidence}>{item.evidence}</span>}
+                        </span>
+                        {item.status !== "satisfied" && item.verify_via && item.verify_via !== "confirmed" && (
+                          <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
+                            {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
+                          </span>
+                        )}
+                      </button>
+                    ))}
                   </div>
-                  <button
-                    type="button"
-                    className={styles.notesToggle}
-                    onClick={() => setShowNotes(v => !v)}
-                  >
-                    {showNotes ? "Hide Scout's full notes" : "Scout's full notes"}
-                  </button>
-                  {showNotes && <FullNotes report={report} />}
-                </>
-              ) : (
-                <FullNotes report={report} />
+                )}
+              </div>
+              <button type="button" className={styles.notesToggle} onClick={() => setShowNotes(v => !v)}>
+                {showNotes ? "Hide Scout's full notes" : "Scout's full notes"}
+              </button>
+              {showNotes && (
+                <div className={styles.scoutBubble}><FullNotes report={report} /></div>
               )}
-            </div>
-            </div>
-          )}
-
-          {checklist && checklist.items.length > 0 && (
-            <div className={styles.scoutRow}>
-            <ScoutAvatar />
-            <div className={styles.scoutMsg}>
-              <div className={styles.section}>
-                <span className={styles.sectionLabel}>
-                  Ready to buy?{" "}
-                  {checklist.ready ? (
-                    <span className={[styles.badge, styles.badgeGood].join(" ")}>ready</span>
-                  ) : (
-                    <span className={[styles.badge, styles.badgeWarn].join(" ")}>
-                      {checklist.items.filter(i => i.status === "satisfied").length} of {checklist.items.length} checked
-                    </span>
-                  )}
-                </span>
-                <div className={styles.checklist}>
-                  {checklist.items.map((item, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className={styles.checkRow}
-                      title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
-                      onClick={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
-                    >
-                      <span className={[
-                        styles.checkIcon,
-                        item.status === "satisfied" ? styles.checkDone
-                          : item.status === "flagged" ? styles.checkFlag : "",
-                      ].join(" ")}>
-                        {item.status === "satisfied" ? "✓" : item.status === "flagged" ? "!" : "○"}
-                      </span>
-                      <span className={styles.checkBody}>
-                        <span className={item.status === "satisfied" ? styles.checkTextDone : styles.checkText}>
-                          {item.check}
-                          {item.verify_via && item.status !== "satisfied" && (
-                            <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
-                              {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
-                            </span>
-                          )}
-                        </span>
-                        {item.evidence && <span className={styles.checkEvidence}>{item.evidence}</span>}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            </div>
-          )}
-
-          {verdict && (
-            <div className={styles.scoutRow}>
-            <ScoutAvatar />
-            <div className={styles.scoutMsg}>
-              <div className={styles.section}>
-                <span className={styles.sectionLabel}>Scout&apos;s take for you</span>
-                <p className={styles.sectionText}>{verdict}</p>
-              </div>
-            </div>
             </div>
           )}
 
           {messages.map((m, i) =>
-            m.role === "user" ? (
+            m.role === "sys" ? (
+              <div key={i} className={styles.sysLine}>{m.content}</div>
+            ) : m.role === "user" ? (
               <div key={i} className={styles.userMsg}>
                 {m.images && m.images.length > 0 && (
                   <div className={styles.msgImages}>
@@ -499,9 +487,11 @@ export default function InspectorPanel({
                 <p className={styles.sectionText}>{m.content}</p>
               </div>
             ) : (
-              <div key={i} className={styles.scoutRow}>
-                <ScoutAvatar />
-                <div className={styles.scoutMsg}>
+              <div key={i} className={styles.scoutGroup}>
+                {messages[i - 1]?.role !== "assistant" && (
+                  <div className={styles.who}><ScoutAvatar small /> scout</div>
+                )}
+                <div className={[styles.scoutBubble, messages[i - 1]?.role !== "assistant" ? styles.scoutBubbleFirst : ""].join(" ")}>
                   <p className={styles.sectionText}>{m.content}</p>
                 </div>
               </div>
@@ -509,8 +499,8 @@ export default function InspectorPanel({
           )}
 
           {replying && (
-            <div className={styles.scoutRow}>
-              <ScoutAvatar />
+            <div className={styles.scoutGroup}>
+              <div className={styles.who}><ScoutAvatar small /> scout</div>
               <TypingBubble />
             </div>
           )}
@@ -570,7 +560,7 @@ export default function InspectorPanel({
             className={styles.input}
             placeholder={
               inspection?.status === "ok"
-                ? "Ask Scout about this listing…"
+                ? "Ask Scout, or paste what the seller said…"
                 : "Scout needs a successful look before you can chat"
             }
             value={draft}
@@ -608,10 +598,10 @@ function TypingBubble() {
   );
 }
 
-function ScoutAvatar() {
+function ScoutAvatar({ small = false }: { small?: boolean }) {
   return (
-    <span className={styles.avatar} aria-hidden>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+    <span className={[styles.avatar, small ? styles.avatarSmall : ""].join(" ")} aria-hidden>
+      <svg viewBox="0 0 24 24" width={small ? 9 : 15} height={small ? 9 : 15} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
         <path d="M12 3 L14 12 L12 21 L10 12 Z" />
         <path d="M3 12 L12 10 L21 12 L12 14 Z" />
       </svg>

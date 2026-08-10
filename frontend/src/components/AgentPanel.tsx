@@ -215,6 +215,11 @@ function hoursUntil(iso: string | null): string | null {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+function firstSentences(text: string, n = 2): string {
+  const parts = text.match(/[^.!?]+[.!?]+/g) ?? [text];
+  return parts.slice(0, n).join(" ").trim();
+}
+
 function playbookSection(playbook: string | null, heading: string, next: string | null): string | null {
   if (!playbook) return null;
   const clean = playbook.replace(/\*\*/g, "");
@@ -808,7 +813,7 @@ function NegotiationView({
             </span>
             <div className={styles.negCardBody}>
               <span className={styles.negCardTitle}>Check before you pay</span>
-              <span className={styles.negCardText}>{checks}</span>
+              <span className={styles.negCardText}>{firstSentences(checks, 3)}</span>
             </div>
           </div>
         )}
@@ -819,7 +824,7 @@ function NegotiationView({
             </span>
             <div className={styles.negCardBody}>
               <span className={styles.negCardTitle}>How to haggle here</span>
-              <span className={styles.negCardText}>{haggle}</span>
+              <span className={styles.negCardText}>{firstSentences(haggle, 2)}</span>
             </div>
           </div>
         )}

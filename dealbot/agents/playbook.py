@@ -70,15 +70,16 @@ Your walk-away
 
 Rules:
 - Plain language, second person, specific to THIS category. No generic advice.
-- "What to check": the 3-4 real failure points and what good condition actually
-  means for this item class.
+- "What to check": the 3-4 real failure points, at most 3 SHORT sentences.
+  Punchy imperatives, no filler ("Press the cushions for cracks. Ask for
+  battery percentage after an hour of use.").
 - "The going rate": use ONLY the price numbers provided in the data block. If no
   band is provided, say the pool is still filling and give honest general
   guidance for the category instead of inventing numbers.
-- "How to haggle": norms for the marketplaces listed (local classifieds expect
-  offers; fixed-price retail mostly does not), typical discount depth.
+- "How to haggle": marketplace norms and typical discount depth in at most
+  2 short sentences.
 - "Your walk-away": concrete numbers from their budget and the band.
-- 180-260 words total. Plain text only: no markdown, no asterisks, no bold.
+- 120-180 words total. Plain text only: no markdown, no asterisks, no bold.
   Each heading on its own line, exactly as written above.
 - Never use em dashes. No greetings, no sign-off."""
 

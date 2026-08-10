@@ -524,13 +524,14 @@
   display: grid;
   grid-template-columns: 280px 1fr;
   gap: 28px;
-  align-items: start;
+  align-items: stretch;
 }
 /* Tinted callout blocks: each number lives in its own soft-toned panel */
-.negFig { display: flex; flex-direction: column; gap: 8px; }
+.negFig { display: flex; flex-direction: column; gap: 8px; height: 100%; }
 .figRow {
   display: flex; align-items: center; gap: 11px;
   padding: 13px 15px; border-radius: 11px;
+  flex: 1;                      /* the three blocks share the column height */
 }
 .figRowGreen { background: rgba(111, 191, 143, 0.07); border: 1px solid rgba(111, 191, 143, 0.16); }
 .figRowBlue  { background: rgba(168, 188, 232, 0.07); border: 1px solid rgba(168, 188, 232, 0.18); }
@@ -548,6 +549,8 @@
 .figValBlue  { color: var(--accent); }
 .figValRed   { color: var(--danger); }
 .negRight { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.negRight .negCards { flex: 1; }
+.negCards .negCard { flex: 1; align-items: center; }
 .negRight .negCards { margin-left: 0; max-width: none; }
 .negRight .copyLine { margin-left: 0; max-width: none; }
 .negRight .scoutMsgRow { margin-left: 0; max-width: none; }

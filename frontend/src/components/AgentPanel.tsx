@@ -823,7 +823,7 @@ function MarketPlaybookView({
         </div>
       )}
 
-      {market && (
+      {market && !market.going_rate_prose && (
         <div className={styles.heatPop}>
           <span
             className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}
@@ -838,14 +838,25 @@ function MarketPlaybookView({
         <div className={styles.factsBand}>
           {market.going_rate_prose && (
             <div className={[styles.factsBox, styles.proseBox].join(" ")}>
-              <span className={styles.monoLabel}>scout&apos;s read</span>
-              <p className={styles.prose}>{market.going_rate_prose}</p>
+              <div className={styles.boxHead}>
+                <span className={styles.boxTitle}>Scout&apos;s read</span>
+                <span
+                  className={[styles.chip, market.heat.level === "good" ? styles.chipGood : market.heat.level === "warn" ? styles.chipWarn : styles.chipPlain].join(" ")}
+                  title={market.heat.why}
+                >
+                  {market.heat.label}
+                </span>
+              </div>
+              <div className={styles.readRow}>
+                <span className={styles.readEmblem}><ScoutGlyph size={26} /></span>
+                <p className={styles.prose}>{market.going_rate_prose}</p>
+              </div>
             </div>
           )}
           {market.structure.rows.length > 0 && (
             <div className={[styles.factsBox, styles.split].join(" ")}>
-              <span className={styles.monoLabel}>
-                price structure · {market.structure.kind === "condition" ? "by condition"
+              <span className={styles.boxTitle}>
+                Price structure · {market.structure.kind === "condition" ? "by condition"
                   : market.structure.kind === "marketplace" ? "by marketplace" : "spread"}
               </span>
               {(() => {

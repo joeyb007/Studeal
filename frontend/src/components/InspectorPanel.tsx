@@ -158,19 +158,21 @@ export default function InspectorPanel({
     }
   }, [listing.id]);
 
-  // With a watchlist in context: seed the ready-to-buy checklist first (the
-  // verdict reads its state), then fetch Scout's personal take. Both are
-  // bonuses, never blockers.
+  // The checklist seeds for EVERY inspection (agent playbook merge, or the
+  // report's own fields when no agent grounds it); the personal verdict
+  // needs an agent. Both are bonuses, never blockers.
   useEffect(() => {
-    if (!watchlistId || inspection?.status !== "ok") return;
+    if (inspection?.status !== "ok") return;
     let cancelled = false;
     (async () => {
       try {
-        const cl = await fetch(`/api/listings/${listing.id}/checklist?watchlist_id=${watchlistId}`);
+        const query = watchlistId ? `?watchlist_id=${watchlistId}` : "";
+        const cl = await fetch(`/api/listings/${listing.id}/checklist${query}`);
         if (cl.ok && !cancelled) setChecklist(await cl.json());   // first load: no delta lines
       } catch {
         /* checklist is a bonus */
       }
+      if (!watchlistId) return;
       try {
         const res = await fetch(`/api/listings/${listing.id}/verdict`, {
           method: "POST",
@@ -479,7 +481,9 @@ export default function InspectorPanel({
             <div className={styles.scoutGroup}>
               <div className={styles.who}><ScoutAvatar small /> scout</div>
               <div className={[styles.scoutBubble, styles.scoutBubbleFirst, checklist?.ready ? styles.closer : ""].join(" ")}>
-                <p className={styles.sectionText}>{verdict ?? report.headline ?? report.summary}</p>
+                <p className={styles.sectionText}>
+                  {verdict ?? [report.headline, watchlistId ? null : report.summary].filter(Boolean).join(" ")}
+                </p>
                 {checklist && checklist.items.length > 0 && (
                   <div className={styles.critList}>
                     {checklist.items.map((item, i) => (

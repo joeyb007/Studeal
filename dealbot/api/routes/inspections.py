@@ -601,23 +601,24 @@ def _checklist_response(row: InspectionChecklist) -> ChecklistResponse:
 
 
 async def _get_or_seed_checklist(
-    user_id: int, listing_id: int, watchlist_id: int,
+    user_id: int, listing_id: int, watchlist_id: int | None,
 ) -> InspectionChecklist | None:
-    """Existing row, or seed one from the agent's playbook and immediately
-    assess it against the cached inspection report. None when the playbook
-    has no checks to offer."""
+    """Existing row, or seed one and immediately assess it against the cached
+    inspection report. With an agent: playbook checks merge with the report's
+    unknowns. Without one (spec Pillar 1, no-agent inspections): the report's
+    own fields ARE the criteria. None when there's nothing to seed from."""
     from dealbot.agents.inspector import get_cached_inspection
 
     async with get_async_session() as session:
         row = await session.get(InspectionChecklist, (user_id, listing_id))
         if row is not None:
             return row
-        watchlist = await session.get(Watchlist, watchlist_id)
-        if watchlist is None or watchlist.user_id != user_id:
-            return None
-        items = checklist_from_playbook(watchlist.playbook)
-    if not items:
-        return None
+        items: list[dict] = []
+        if watchlist_id is not None:
+            watchlist = await session.get(Watchlist, watchlist_id)
+            if watchlist is None or watchlist.user_id != user_id:
+                return None
+            items = checklist_from_playbook(watchlist.playbook)
 
     tailoring = None
     inspection = await get_cached_inspection(listing_id)
@@ -625,12 +626,14 @@ async def _get_or_seed_checklist(
         merged, tailoring = await _seed_criteria([i["check"] for i in items], inspection["report"])
         if merged is not None:
             items = merged
-        else:
+        elif items:
             # Seed call failed: settle the deterministic checks against the
             # report the old way rather than shipping an unassessed list.
             items = await _assess_checklist(
                 items, "Scout's inspection notes: " + json.dumps(inspection["report"]),
             )
+    if not items:
+        return None
 
     async with get_async_session() as session:
         row = await session.get(InspectionChecklist, (user_id, listing_id))
@@ -648,14 +651,14 @@ async def _get_or_seed_checklist(
 @router.get("/{listing_id}/checklist", response_model=ChecklistResponse)
 async def read_checklist(
     listing_id: int,
-    watchlist_id: int = Query(...),
+    watchlist_id: int | None = Query(None),
     current_user: User = Depends(get_current_user),
 ) -> ChecklistResponse:
     row = await _get_or_seed_checklist(current_user.id, listing_id, watchlist_id)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No checklist for this listing yet; the agent's playbook has no checks.",
+            detail="Nothing to build a checklist from yet.",
         )
     return _checklist_response(row)
 
@@ -957,25 +960,24 @@ async def inspection_chat(
     # Purchase-level tailoring: a chip tap persists the answer before the
     # reply is generated, so the reply IS the re-tuned call.
     purchase = None
-    if watchlist is not None:
-        async with get_async_session() as session:
-            checklist_row = await session.get(
-                InspectionChecklist, (current_user.id, listing_id)
-            )
-            if checklist_row is not None and checklist_row.purchase_context:
-                try:
-                    purchase = json.loads(checklist_row.purchase_context)
-                except (json.JSONDecodeError, TypeError):
-                    purchase = None
-            if (
-                body.tailoring_answer
-                and purchase is not None
-                and history[-1]["role"] == "user"
-            ):
-                purchase["answer"] = history[-1]["content"][:300]
-                checklist_row.purchase_context = json.dumps(purchase)
-                checklist_row.updated_at = datetime.now(timezone.utc)
-                await session.commit()
+    async with get_async_session() as session:
+        checklist_row = await session.get(
+            InspectionChecklist, (current_user.id, listing_id)
+        )
+        if checklist_row is not None and checklist_row.purchase_context:
+            try:
+                purchase = json.loads(checklist_row.purchase_context)
+            except (json.JSONDecodeError, TypeError):
+                purchase = None
+        if (
+            body.tailoring_answer
+            and purchase is not None
+            and history[-1]["role"] == "user"
+        ):
+            purchase["answer"] = history[-1]["content"][:300]
+            checklist_row.purchase_context = json.dumps(purchase)
+            checklist_row.updated_at = datetime.now(timezone.utc)
+            await session.commit()
 
     messages = [
         {"role": "system", "content": CHAT_SYSTEM},
@@ -1038,7 +1040,7 @@ async def inspection_chat(
     # The conversation is evidence: let it settle open checks. Best-effort.
     checklist_payload = None
     closer = None
-    if not failed and watchlist is not None:
+    if not failed:
         try:
             async with get_async_session() as session:
                 row = await session.get(

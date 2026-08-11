@@ -176,22 +176,26 @@ export default function InspectorPanel({
   const threadRef = useRef<HTMLDivElement>(null);
 
   // Checklist deltas become in-stream system lines ("✓ checked off: …").
+  // The diff runs OUTSIDE the state updater: updaters must stay pure, and
+  // StrictMode double-invokes them (which doubled every sys line).
+  const checklistRef = useRef<Checklist | null>(null);
+  useEffect(() => { checklistRef.current = checklist; }, [checklist]);
   const applyChecklist = (next: Checklist) => {
-    setChecklist(prev => {
-      if (prev) {
-        const lines: ChatMsg[] = [];
-        const satisfied = next.items.filter((item, i) =>
-          item.status === "satisfied" && prev.items[i]?.status === "open");
-        for (const item of satisfied) {
-          lines.push({ role: "sys", content: `✓ checked off: ${item.check.replace(/\.$/, "")}` });
-        }
-        for (const item of next.items.slice(prev.items.length)) {
-          lines.push({ role: "sys", content: `+ added to the list: ${item.check.replace(/\.$/, "")}` });
-        }
-        if (lines.length) setMessages(m => [...m, ...lines]);
+    const prev = checklistRef.current;
+    if (prev) {
+      const lines: ChatMsg[] = [];
+      const satisfied = next.items.filter((item, i) =>
+        item.status === "satisfied" && prev.items[i]?.status === "open");
+      for (const item of satisfied) {
+        lines.push({ role: "sys", content: `✓ checked off: ${item.check.replace(/\.$/, "")}` });
       }
-      return next;
-    });
+      for (const item of next.items.slice(prev.items.length)) {
+        lines.push({ role: "sys", content: `+ added to the list: ${item.check.replace(/\.$/, "")}` });
+      }
+      if (lines.length) setMessages(m => [...m, ...lines]);
+    }
+    checklistRef.current = next;
+    setChecklist(next);
   };
 
   // Staged progress while Scout works. The phases happen in this order for

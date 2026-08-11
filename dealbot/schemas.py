@@ -63,6 +63,24 @@ class ValidationResult(BaseModel):
     tags: list[str] = []
 
 
+class SpecAttribute(BaseModel):
+    """One elicited product attribute (attribute-spec 2026-08-11).
+
+    tier="must" means a contradiction disqualifies the listing (hard demote);
+    tier="nice" contributes to fit scoring only. Unknown tiers degrade to
+    "nice" rather than failing the whole context parse.
+    """
+
+    name: str    # "handedness", "set composition", "bag"
+    value: str   # "right-handed", "complete set", "included"
+    tier: str = "nice"
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def _known_tier(cls, v: object) -> str:
+        return v if v in ("must", "nice") else "nice"
+
+
 class WatchlistContext(BaseModel):
     product_query: str
     max_budget: Optional[float] = None
@@ -81,6 +99,10 @@ class WatchlistContext(BaseModel):
     # and wear tolerance, must-have traits, in the buyer's own words
     # ("l shaped brown sectional, mild to medium wear, under 10 years").
     appearance_notes: Optional[str] = None
+    # Category-sharp facts about the right item (attribute-spec 2026-08-11):
+    # composition/variant, included accessories, fitment, spec level. Elicited
+    # by Scout's attribute beat; musts gate ranking, nices score fit.
+    attributes: list[SpecAttribute] = []
 
     @field_validator("quality_bar", mode="before")
     @classmethod
@@ -114,4 +136,5 @@ class WatchlistContextPatch(BaseModel):
     buyer_profile: Optional[str] = None
     quality_bar: Optional[str] = None
     appearance_notes: Optional[str] = None
+    attributes: Optional[list[SpecAttribute]] = None
 

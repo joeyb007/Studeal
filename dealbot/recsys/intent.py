@@ -32,6 +32,16 @@ def compose_intent_document(context: WatchlistContext) -> str:
     if context.appearance_notes and context.appearance_notes.strip():
         # The physical brief pulls physically-matching titles up in retrieval.
         parts.append(f"Looks: {context.appearance_notes.strip()}.")
+    musts = [a.value.strip() for a in context.attributes
+             if a.tier == "must" and a.value.strip()]
+    nices = [a.value.strip() for a in context.attributes
+             if a.tier == "nice" and a.value.strip()]
+    # Both tiers pull retrieval toward matching titles; the must/nice split
+    # only changes ranking behavior downstream.
+    if musts:
+        parts.append(f"Must be: {'; '.join(musts)}.")
+    if nices:
+        parts.append(f"Ideally: {'; '.join(nices)}.")
     if context.brands:
         parts.append(f"Prefers brands: {', '.join(context.brands)}.")
     if context.condition:

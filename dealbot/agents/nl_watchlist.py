@@ -77,6 +77,13 @@ is pristine, "don't care about scratches, just needs to work" is wear_ok, \
 shape or variant, size, age tolerance, wear tolerance, must-have traits. \
 "l shaped brown sectional, mild to medium wear, under 10 years" is a perfect \
 brief; capture it near-verbatim. Only what they actually said; never invented.
+- attributes: list of {"name", "value", "tier"} — category-sharp FACTS about \
+the right item: composition or variant ("complete set" vs "irons only"), \
+included accessories ("bag included"), fitment ("right-handed", "54cm frame"), \
+spec level ("regular flex", "16GB RAM"). tier is "must" when their phrasing \
+is a requirement ("I'm left-handed", "has to come with the bag") and "nice" \
+when it's a preference ("ideally", "a bag would be nice"). Extract from \
+whatever they volunteer AND from the attribute beat; never invent one.
 
 INPUT SAFEGUARDS — abort ONLY when input is clearly invalid. Be conservative — \
 if it could be a valid shopping-related response, do NOT abort.
@@ -126,6 +133,15 @@ COMPLETION RULES:
     if quality_bar is still null when you'd otherwise close, ONE turn: "how \
     fussy are you about scratches and scuffs?" Ask about a physical attribute \
     (like color) ONLY if it has real variance for that product. Then close.
+  - ATTRIBUTE BEAT (products with real CONFIGURATION variance — sets vs \
+    singles, sizes, handedness, included accessories, spec levels): before \
+    closing, spend ONE beat pinning down the 2-3 facts a knowledgeable friend \
+    would ask about THIS product, folded into one natural question: "you \
+    right-handed? and are you after the full set with a bag, or just irons?" \
+    Extract every answer into attributes with the right tier. When both this \
+    and the physical brief apply, brief first, attributes next turn, then \
+    close. Skip entirely when the product has no real configuration (books, \
+    cables, a specific model number that pins everything down).
   - Either way: close on the next turn NO MATTER WHAT they answer. Skip both \
     entirely for products where looks barely matter (books, cables, tools).
 - On the final turn (turns_remaining=0), force is_complete=true regardless.
@@ -147,7 +163,7 @@ IMPORTANT: Respond ONLY with valid JSON, no other text:
 {
   "reply": "...",
   "suggestions": [...],
-  "context": {"product_query": "...", "max_budget": null, "min_discount_pct": null, "condition": [], "brands": [], "keywords": [], "buyer_profile": null, "quality_bar": null, "appearance_notes": null},
+  "context": {"product_query": "...", "max_budget": null, "min_discount_pct": null, "condition": [], "brands": [], "keywords": [], "buyer_profile": null, "quality_bar": null, "appearance_notes": null, "attributes": []},
   "is_complete": false,
   "aborted": false,
   "abort_code": null,

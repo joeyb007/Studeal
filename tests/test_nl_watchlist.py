@@ -278,3 +278,43 @@ async def test_turn_budget_is_twelve():
     llm = _ProfileLLM(_opening_turn())
     result = await NLWatchlistAgent(llm).turn([{"role": "user", "content": "hi"}], None)
     assert result.turns_remaining == 11, "first turn of a 12-turn budget leaves 11"
+
+
+# ---------------------------------------------------------------------------
+# Attribute spec (2026-08-11): schema + prompt contract
+# ---------------------------------------------------------------------------
+
+def test_spec_attribute_unknown_tier_degrades_to_nice():
+    from dealbot.schemas import SpecAttribute
+
+    assert SpecAttribute(name="bag", value="included", tier="mandatory").tier == "nice"
+    assert SpecAttribute(name="bag", value="included", tier="must").tier == "must"
+    assert SpecAttribute(name="bag", value="included").tier == "nice"
+
+
+def test_context_roundtrips_attributes():
+    from dealbot.schemas import SpecAttribute, WatchlistContext
+
+    ctx = WatchlistContext(
+        product_query="golf clubs",
+        attributes=[SpecAttribute(name="handedness", value="right-handed", tier="must")],
+    )
+    again = WatchlistContext.model_validate_json(ctx.model_dump_json())
+    assert again.attributes[0].value == "right-handed"
+    assert again.attributes[0].tier == "must"
+
+
+def test_old_contexts_parse_without_attributes():
+    from dealbot.schemas import WatchlistContext
+
+    ctx = WatchlistContext.model_validate_json('{"product_query": "golf clubs"}')
+    assert ctx.attributes == []
+
+
+def test_prompt_carries_the_attribute_beat():
+    from dealbot.agents.nl_watchlist import _BASE_PROMPT as SYSTEM_PROMPT
+
+    lowered = SYSTEM_PROMPT.lower()
+    assert "attribute beat" in lowered
+    assert '"attributes": []' in SYSTEM_PROMPT, "JSON contract must include the field"
+    assert "never invent" in lowered

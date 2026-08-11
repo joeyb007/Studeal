@@ -64,3 +64,24 @@ def test_empty_brief_leaves_no_label():
         appearance_notes="   ",
     ))
     assert "Looks:" not in doc
+
+
+def test_spec_attributes_render_by_tier():
+    from dealbot.schemas import SpecAttribute
+
+    doc = compose_intent_document(WatchlistContext(
+        product_query="beginner golf clubs",
+        attributes=[
+            SpecAttribute(name="handedness", value="right-handed", tier="must"),
+            SpecAttribute(name="composition", value="complete set with bag", tier="must"),
+            SpecAttribute(name="flex", value="regular flex", tier="nice"),
+        ],
+    ))
+    assert "Must be: right-handed; complete set with bag." in doc
+    assert "Ideally: regular flex." in doc
+
+
+def test_no_attributes_leaves_no_labels():
+    doc = compose_intent_document(WatchlistContext(product_query="bike"))
+    assert "Must be" not in doc
+    assert "Ideally" not in doc

@@ -316,6 +316,8 @@ async def patch_watchlist(
             ctx.quality_bar = body.quality_bar
         if body.appearance_notes is not None:
             ctx.appearance_notes = body.appearance_notes
+        if body.attributes is not None:
+            ctx.attributes = body.attributes
 
         watchlist.context = ctx.model_dump_json()
         # Any context edit changes what the user wants; a vector describing the

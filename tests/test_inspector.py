@@ -269,7 +269,7 @@ async def test_price_drop_notifies_once_and_only_on_drop(wdb, monkeypatch):
 
     sent: list[tuple[str, str]] = []
 
-    async def _fake_send(to, subject, body):
+    async def _fake_send(to, subject, body, html=None):
         sent.append((to, subject))
         return True
 

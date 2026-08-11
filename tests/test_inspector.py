@@ -95,7 +95,7 @@ async def test_dead_page_marks_sold_and_caches_gone(idb, monkeypatch):
     lid = await _seed_listing(factory)
 
     async def _fake_visit(listing):
-        return ("This listing is no longer available", [b"jpg"])
+        return ("This listing is no longer available", [b"jpg"], False)
 
     async def _fake_detail(text):
         return ListingDetail(gone=True)
@@ -151,7 +151,7 @@ async def test_ok_flow_writes_cache_with_comps(idb, monkeypatch):
     lid = await _seed_listing(factory)
 
     async def _fake_visit(listing):
-        return ("normal listing page", [b"jpg1", b"jpg2"])
+        return ("normal listing page", [b"jpg1", b"jpg2"], False)
 
     async def _fake_detail(text):
         return ListingDetail(description="great chair")

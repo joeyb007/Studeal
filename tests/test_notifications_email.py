@@ -50,12 +50,14 @@ def test_build_alert_email_format():
     alert = ListingAlert(
         user_id=1, watchlist_id=1, listing_id=1, hunt_id=1, score=0.91,
     )
-    subject, body = build_alert_email("Aeron watch", [(alert, listing)])
-    assert subject == "Studeal: 1 new match for Aeron watch"
+    subject, body, html = build_alert_email("Aeron watch", [(alert, listing)])
+    assert subject == "Scout found 1 new match for Aeron watch"
     assert "Herman Miller Aeron" in body
     assert "$420.00 CAD" in body
     assert "https://k.ca/1?utm=x" in body
     assert "studeal.site" in body
+    assert "Herman Miller Aeron" in html
+    assert "https://k.ca/1?utm=x" in html
 
 
 def test_build_alert_email_pluralizes():
@@ -68,8 +70,30 @@ def test_build_alert_email_pluralizes():
         (ListingAlert(user_id=1, watchlist_id=1, listing_id=i, hunt_id=1, score=0.5), listing)
         for i, listing in enumerate(listings)
     ]
-    subject, _ = build_alert_email("wl", alerts)
-    assert subject == "Studeal: 2 new matches for wl"
+    subject, _, _ = build_alert_email("wl", alerts)
+    assert subject == "Scout found 2 new matches for wl"
+
+
+def test_alert_email_caps_rows_and_counts_the_rest():
+    """A first hunt can surface hundreds of matches; the email shows the top
+    ALERT_EMAIL_MAX_ROWS and folds the rest into the CTA."""
+    from dealbot.notifications.email import ALERT_EMAIL_MAX_ROWS
+
+    listings = [
+        Listing(canonical_url=f"c{i}", raw_url=f"https://k.ca/{i}", marketplace="kijiji",
+                title=f"item {i}", price=float(i), currency="CAD")
+        for i in range(8)
+    ]
+    alerts = [
+        (ListingAlert(user_id=1, watchlist_id=1, listing_id=i, hunt_id=1, score=0.5), listing)
+        for i, listing in enumerate(listings)
+    ]
+    subject, body, html = build_alert_email("wl", alerts)
+    assert subject == "Scout found 8 new matches for wl"
+    assert f"item {ALERT_EMAIL_MAX_ROWS - 1}" in html
+    assert f"item {ALERT_EMAIL_MAX_ROWS}" not in html
+    assert "and 3 more" in body
+    assert "See all 8 matches" in html
 
 
 def test_alert_email_renders_the_ranker_reason():
@@ -84,8 +108,9 @@ def test_alert_email_renders_the_ranker_reason():
         user_id=1, watchlist_id=1, listing_id=2, hunt_id=1, score=0.88,
         reason="Over-ear ANC, well under your budget.",
     )
-    _subject, body = build_alert_email("Headphones", [(alert, listing)])
+    _subject, body, html = build_alert_email("Headphones", [(alert, listing)])
     assert "Over-ear ANC, well under your budget." in body
+    assert "Over-ear ANC, well under your budget." in html
 
 
 def test_alert_email_omits_a_missing_reason_cleanly():
@@ -98,6 +123,7 @@ def test_alert_email_omits_a_missing_reason_cleanly():
     alert = ListingAlert(
         user_id=1, watchlist_id=1, listing_id=3, hunt_id=1, score=0.0, reason=None,
     )
-    _subject, body = build_alert_email("Chairs", [(alert, listing)])
+    _subject, body, html = build_alert_email("Chairs", [(alert, listing)])
     assert "None" not in body
+    assert "None" not in html
     assert "Aeron chair" in body

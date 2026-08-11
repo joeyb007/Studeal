@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Listing, User
 from dealbot.lifecycle import is_internal_user
-from dealbot.notifications.email import send_email
+from dealbot.notifications.email import build_digest_email, send_email
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -18,20 +18,6 @@ logger = logging.getLogger(__name__)
 _SIMILARITY_THRESHOLD = 0.60  # distance; sim>=0.40, aligned to the gate bar in Titan space
 # Cap listings-per-user-per-digest so emails stay skim-able
 _MAX_LISTINGS_PER_DIGEST = 20
-
-
-def _build_digest(user_email: str, matches: list[tuple[str, Listing]]) -> str:
-    """Pool listings have no list price to discount from, so the old
-    "(20% off)" suffix and the `legitimate` filter both retire with `deals`."""
-    lines = ["Here are your Studeal matches from the last 24 hours:\n"]
-    for watchlist_name, listing in matches:
-        lines.append(
-            f"• [{watchlist_name}] {listing.title}\n"
-            f"  ${listing.price:.2f} {listing.currency} · {listing.marketplace}\n"
-            f"  {listing.raw_url}\n"
-        )
-    lines.append("\nManage your agents at studeal.site")
-    return "\n".join(lines)
 
 
 async def _matched_listings_for_user(
@@ -93,12 +79,8 @@ async def _send_digests() -> dict:
                 skipped += 1
                 continue
 
-            body = _build_digest(user.email, matches)
-            await send_email(
-                to=user.email,
-                subject=f"Your Studeal digest: {len(matches)} deal{'s' if len(matches) != 1 else ''}",
-                body=body,
-            )
+            subject, body, html_body = build_digest_email(matches)
+            await send_email(to=user.email, subject=subject, body=body, html=html_body)
             sent += 1
 
     logger.info("digest: sent=%d skipped=%d", sent, skipped)

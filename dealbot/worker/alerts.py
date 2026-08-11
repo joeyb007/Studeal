@@ -126,10 +126,10 @@ async def _dispatch(
         emailed = False
         pushed = 0
         if not is_internal_user(user.email):
-            subject, body = build_alert_email(
+            subject, body, html_body = build_alert_email(
                 watchlist.name, [(a, r.listing) for a, r in zip(alerts, selected)],
             )
-            emailed = await send_email(user.email, subject, body)
+            emailed = await send_email(user.email, subject, body, html=html_body)
             if emailed:
                 for alert in alerts:
                     alert.channels = f"{alert.channels},email"

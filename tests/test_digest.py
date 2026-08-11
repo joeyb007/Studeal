@@ -56,20 +56,22 @@ async def test_digest_skips_free_users():
 
 def test_digest_body_renders_listings():
     from dealbot.db.models import Listing
-    from dealbot.worker.digest import _build_digest
+    from dealbot.notifications.email import build_digest_email
 
     listing = Listing(
         canonical_url="c1", raw_url="https://kijiji.ca/1",
         marketplace="kijiji", title="Sony WH-1000XM4",
         price=180.0, currency="CAD", condition="used",
     )
-    body = _build_digest("u@example.com", [("Headphones", listing)])
+    subject, body, html = build_digest_email([("Headphones", listing)])
 
-    assert "Sony WH-1000XM4" in body
-    assert "180" in body
-    assert "https://kijiji.ca/1" in body
-    assert "CAD" in body
-    assert "kijiji" in body
+    assert "1 new match" in subject
+    for rendered in (body, html):
+        assert "Sony WH-1000XM4" in rendered
+        assert "180" in rendered
+        assert "https://kijiji.ca/1" in rendered
+        assert "kijiji" in rendered
+    assert "Headphones" in html, "digest groups rows under the agent name"
 
 
 def test_digest_no_longer_queries_legacy_deals():

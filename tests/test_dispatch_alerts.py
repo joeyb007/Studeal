@@ -50,7 +50,7 @@ async def rig(monkeypatch):
 
     sent_emails: list[tuple[str, str, str]] = []
 
-    async def fake_send_email(to, subject, body):
+    async def fake_send_email(to, subject, body, html=None):
         sent_emails.append((to, subject, body))
         return True
 

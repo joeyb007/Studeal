@@ -26,7 +26,7 @@ from dealbot.db.models import (
     WatchlistRanking,
 )
 from dealbot.lifecycle import is_internal_user
-from dealbot.notifications.email import send_email
+from dealbot.notifications.email import build_price_drop_email, send_email
 from dealbot.schemas import WatchlistContext
 
 logger = logging.getLogger(__name__)
@@ -59,23 +59,6 @@ async def _inspect_many(listing_ids: list[int]) -> list[dict | None]:
     return list(await asyncio.gather(*(_one(l) for l in listing_ids)))
 
 
-def build_price_drop_email(listing: Listing, old_price: float) -> tuple[str, str]:
-    """→ (subject, body). The friend-remembered-you-asked email."""
-    subject = f"Studeal: the {listing.title[:60]} you asked about dropped to ${listing.price:.0f}"
-    body = "\n".join([
-        f"You sent this one to Scout at ${old_price:.0f}. It just dropped to "
-        f"${listing.price:.0f} ({listing.marketplace}).",
-        "",
-        listing.title,
-        listing.raw_url,
-        "",
-        "Worth another look before someone else grabs it.",
-        "",
-        "Manage your agents at studeal.site",
-    ])
-    return subject, body
-
-
 async def check_price_drops() -> int:
     """Email every watch whose listing now sits below its price-at-inspection.
     One notification per watch, ever (notified_at guards)."""
@@ -94,9 +77,12 @@ async def check_price_drops() -> int:
             if is_internal_user(user.email):
                 watch.notified_at = datetime.now(timezone.utc)
                 continue
-            subject, body = build_price_drop_email(listing, watch.price_at_inspection)
+            inspected_on = f"{watch.created_at:%b} {watch.created_at.day}" if watch.created_at else None
+            subject, body, html_body = build_price_drop_email(
+                listing, watch.price_at_inspection, inspected_on=inspected_on,
+            )
             try:
-                sent = await send_email(user.email, subject, body)
+                sent = await send_email(user.email, subject, body, html=html_body)
             except Exception:
                 logger.exception("price-drop email failed (user %d)", user.id)
                 continue

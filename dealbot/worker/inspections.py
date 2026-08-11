@@ -6,6 +6,7 @@ here never touches the hunt that spawned it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -34,6 +35,28 @@ logger = logging.getLogger(__name__)
 # system-initiated, cached per listing, never counted against the free
 # allowance. Cost tracks NEW picks only (cache-by-listing absorbs repeats).
 AUTO_INSPECT_TOP_N = 5
+
+# Post-hunt inspections run a browser session each; 3 in parallel fits the
+# headroom the session budget leaves beside hunt lanes.
+AUTO_INSPECT_CONCURRENCY = int(os.environ.get("AUTO_INSPECT_CONCURRENCY", "3"))
+
+
+async def _inspect_many(listing_ids: list[int]) -> list[dict | None]:
+    """Bounded-parallel Tier A reads. Per-listing locks inside the inspector
+    dedupe concurrent requests; failures return None and never propagate."""
+    from dealbot.agents.inspector import get_or_create_inspection
+
+    sem = asyncio.Semaphore(AUTO_INSPECT_CONCURRENCY)
+
+    async def _one(listing_id: int) -> dict | None:
+        async with sem:
+            try:
+                return await get_or_create_inspection(listing_id)
+            except Exception:
+                logger.exception("inspection failed for listing %d", listing_id)
+                return None
+
+    return list(await asyncio.gather(*(_one(l) for l in listing_ids)))
 
 
 def build_price_drop_email(listing: Listing, old_price: float) -> tuple[str, str]:
@@ -179,7 +202,6 @@ async def enforce_quality_bar(watchlist_id: int) -> int:
     notes contradict their physical brief, then inspect whatever newly
     entered the top 5 (≤5 calls). Replacements are never re-demoted this
     round. Returns demoted count."""
-    from dealbot.agents.inspector import get_or_create_inspection
     from dealbot.recsys.market_stats import WEAK_SCORE
 
     async with get_async_session() as session:
@@ -253,13 +275,7 @@ async def enforce_quality_bar(watchlist_id: int) -> int:
             select(ListingInspection.listing_id)
             .where(ListingInspection.listing_id.in_(promoted))
         )).scalars().all())
-    for listing_id in promoted:
-        if listing_id in already:
-            continue
-        try:
-            await get_or_create_inspection(listing_id)
-        except Exception:
-            logger.exception("quality-swap inspect failed for listing %d", listing_id)
+    await _inspect_many([l for l in promoted if l not in already])
 
     logger.info("enforce_quality_bar: wl=%d demoted %d", watchlist_id, len(failing))
     return len(failing)
@@ -269,8 +285,6 @@ async def auto_inspect_top_matches(hunt_id: int, top_n: int = AUTO_INSPECT_TOP_N
     """Pre-run Tier A on the hunt's best new matches so every agent card's
     top picks open with Scout's read already cached (all users; the card's
     teasers depend on it)."""
-    from dealbot.agents.inspector import get_or_create_inspection
-
     async with get_async_session() as session:
         hunt = await session.get(Hunt, hunt_id)
         if hunt is None:
@@ -292,14 +306,10 @@ async def auto_inspect_top_matches(hunt_id: int, top_n: int = AUTO_INSPECT_TOP_N
             .limit(top_n)
         )).scalars().all()
 
-    inspected = 0
-    for listing_id in candidates:
-        try:
-            result = await get_or_create_inspection(listing_id)
-            if result["status"] in ("ok", "listing_gone"):
-                inspected += 1
-        except Exception:
-            logger.exception("auto-inspect failed for listing %d", listing_id)
+    results = await _inspect_many(list(candidates))
+    inspected = sum(
+        1 for r in results if r is not None and r["status"] in ("ok", "listing_gone")
+    )
 
     try:
         await enforce_quality_bar(watchlist.id)

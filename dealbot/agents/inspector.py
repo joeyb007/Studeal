@@ -185,6 +185,24 @@ Rules:
 - Never use em dashes. No greetings. JSON only."""
 
 
+async def _listing_photo(listing: Listing) -> bytes | None:
+    """The listing's primary photo (og image captured at ingest). On sites
+    that wall their pages, this is the only real look at the item the vision
+    call gets. Best-effort."""
+    if not listing.image_url:
+        return None
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(listing.image_url)
+            if response.is_success and len(response.content) < 6 * 1024 * 1024:
+                return response.content
+    except Exception:
+        logger.debug("inspector: listing photo fetch failed for %d", listing.id)
+    return None
+
+
 def _frame_part(frame: bytes) -> dict[str, Any]:
     b64 = base64.b64encode(frame).decode("ascii")
     return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
@@ -247,6 +265,7 @@ async def _generate_report(
     frames: list[bytes],
     comps: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
+    photo = await _listing_photo(listing)
     grounding = "\n".join([
         f"Listing: {listing.title}",
         f"Marketplace: {listing.marketplace} · Price: ${listing.price:.2f} {listing.currency}",
@@ -254,8 +273,13 @@ async def _generate_report(
         f"Seller text: {detail.description or '(none extracted)'}",
         f"Posted: {detail.posted_raw or 'unknown'} · Location: {detail.location or 'unknown'}",
         _comps_block(listing, comps),
+        ("The FIRST image is the listing's primary photo; the rest are page "
+         "screenshots (which may show a login wall instead of content)."
+         if photo else ""),
     ])
     content: list[dict[str, Any]] = [{"type": "text", "text": grounding}]
+    if photo:
+        content.append(_frame_part(photo))
     content += [_frame_part(f) for f in frames]
 
     llm = _report_llm()

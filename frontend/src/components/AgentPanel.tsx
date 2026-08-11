@@ -245,7 +245,9 @@ function useAskPlaceholder(active: boolean) {
     timer = setTimeout(tick, 600);
     return () => clearTimeout(timer);
   }, [active]);
-  return text ? `Ask Scout: ${text}` : "Ask Scout anything about these listings…";
+  // While cycling, the prefix holds steady through the between-phrase gaps;
+  // the static line only shows when the cycle isn't running at all.
+  return active ? `Ask Scout: ${text}` : "Ask Scout anything about these listings…";
 }
 
 function SortSelect<T extends string>({

@@ -897,3 +897,27 @@
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+/* search skeleton: the pool shimmers while Scout digs */
+.skeletonGrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 16px; margin-top: 4px;
+}
+.skeletonCard {
+  border: 1px solid var(--border); border-radius: 14px; padding: 12px;
+  background: var(--bg-card);
+  display: flex; flex-direction: column; gap: 10px;
+  animation: skelIn 0.3s ease backwards;
+}
+@keyframes skelIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.skeletonThumb, .skeletonLine {
+  border-radius: 8px;
+  background: linear-gradient(100deg, rgba(168, 188, 232, 0.05) 35%, rgba(168, 188, 232, 0.12) 50%, rgba(168, 188, 232, 0.05) 65%);
+  background-size: 300% 100%;
+  animation: skelShimmer 1.4s ease-in-out infinite;
+}
+.skeletonThumb { height: 120px; }
+.skeletonLine { height: 12px; }
+.skeletonLineShort { width: 55%; }
+@keyframes skelShimmer { from { background-position: 120% 0; } to { background-position: -60% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeletonCard, .skeletonThumb, .skeletonLine { animation: none; } }

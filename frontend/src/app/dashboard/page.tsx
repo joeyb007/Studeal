@@ -312,6 +312,18 @@ function DashboardPageInner() {
         <p className={styles.searching}>Loading the pool…</p>
       )}
 
+      {searchLoading && (
+        <div className={styles.skeletonGrid} aria-hidden>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className={styles.skeletonCard} style={{ animationDelay: `${i * 70}ms` }}>
+              <div className={styles.skeletonThumb} />
+              <div className={styles.skeletonLine} />
+              <div className={[styles.skeletonLine, styles.skeletonLineShort].join(" ")} />
+            </div>
+          ))}
+        </div>
+      )}
+
       {isEmpty ? (
         <div className={styles.poolEmpty}>
           <p className={styles.poolEmptyTitle}>
@@ -329,7 +341,7 @@ function DashboardPageInner() {
         </div>
       ) : (
         <>
-          <div className={styles.poolGrid} style={searchLoading ? { opacity: 0.55 } : undefined}>
+          <div className={styles.poolGrid} style={searchLoading ? { display: "none" } : undefined}>
             {displayed.map((listing, i) => (
               <PoolCard
                 key={`${listing.id}-${i}`}

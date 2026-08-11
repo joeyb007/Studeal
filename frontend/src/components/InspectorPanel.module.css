@@ -6,6 +6,8 @@
   z-index: 90;
   background: rgba(10, 12, 18, 0.6);
   backdrop-filter: blur(6px);
+  /* the site nav is fixed above this overlay: keep the panel clear of it */
+  padding: 96px 20px 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -21,7 +23,7 @@
 .panel {
   width: min(680px, 100%);
   position: relative;
-  max-height: min(760px, calc(100vh - 48px));
+  max-height: min(760px, calc(100vh - 128px));
   display: flex;
   flex-direction: column;
   background: var(--bg-card);

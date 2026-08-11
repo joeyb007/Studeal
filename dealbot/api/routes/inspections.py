@@ -1234,6 +1234,32 @@ async def pickup_rundown(
     return rundown
 
 
+@router.delete("/{listing_id}/thread", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_thread(
+    listing_id: int,
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Remove this listing from the user's Scout page: their watch, their
+    conversation, their checklist. The shared inspection cache stays — other
+    users read it, and re-sending the listing later reuses it."""
+    from sqlalchemy import delete as sql_delete
+
+    async with get_async_session() as session:
+        await session.execute(sql_delete(InspectionMessage).where(
+            InspectionMessage.user_id == current_user.id,
+            InspectionMessage.listing_id == listing_id,
+        ))
+        await session.execute(sql_delete(InspectionChecklist).where(
+            InspectionChecklist.user_id == current_user.id,
+            InspectionChecklist.listing_id == listing_id,
+        ))
+        await session.execute(sql_delete(InspectionWatch).where(
+            InspectionWatch.user_id == current_user.id,
+            InspectionWatch.listing_id == listing_id,
+        ))
+        await session.commit()
+
+
 class ThreadMessage(BaseModel):
     role: str
     content: str

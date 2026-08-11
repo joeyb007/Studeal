@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 // Same typing treatment Scout has everywhere else: interval-sliced text with
 // a blinking cursor until done.
@@ -71,6 +72,22 @@ export default function ScoutPage() {
   const [needsPrice, setNeedsPrice] = useState<{ title: string; image_url: string | null; location: string | null } | null>(null);
   const [priceDraft, setPriceDraft] = useState("");
   const [linkOpen, setLinkOpen] = useState<{ listing: InspectListing; watchlistId?: number } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<InspectedItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const deleteThread = async () => {
+    if (!confirmDelete || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/listings/${confirmDelete.listing_id}/thread`, { method: "DELETE" });
+      if (res.ok) {
+        setItems(prev => (prev ?? []).filter(i => i.listing_id !== confirmDelete.listing_id));
+        setConfirmDelete(null);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const fetchLink = async (manualPrice?: number) => {
     const url = linkDraft.trim();
@@ -299,6 +316,14 @@ export default function ScoutPage() {
                   )}
                 </span>
               </div>
+              <span
+                className={styles.rowDelete}
+                role="button"
+                aria-label="Delete this conversation"
+                onClick={e => { e.stopPropagation(); setConfirmDelete(item); }}
+              >
+                ✕
+              </span>
               <div className={styles.rowRight}>
                 <span className={[
                   styles.rowPrice,
@@ -321,6 +346,25 @@ export default function ScoutPage() {
 
       {open && (
         <InspectorPanel listing={asListing(open)} onClose={() => setOpen(null)} />
+      )}
+
+      {confirmDelete && createPortal(
+        <div className={styles.overlay} onClick={() => setConfirmDelete(null)}>
+          <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <p className={styles.modalTitle}>Delete this conversation?</p>
+            <p className={styles.modalSub}>
+              &quot;{confirmDelete.title.slice(0, 60)}&quot; and everything you and Scout
+              worked out about it goes. The listing itself stays in the pool.
+            </p>
+            <div className={styles.modalActions}>
+              <button className={styles.modalGhost} onClick={() => setConfirmDelete(null)}>Keep it</button>
+              <button className={styles.modalDanger} onClick={deleteThread} disabled={deleting}>
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {linkOpen && (

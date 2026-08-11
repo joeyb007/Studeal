@@ -277,3 +277,42 @@
 .priceInput::-webkit-outer-spin-button, .priceInput::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .priceInput:focus { border-color: var(--accent); }
 .priceInput::placeholder { color: var(--text-faint); }
+
+/* row delete + confirm modal */
+.row { position: relative; }
+.rowDelete {
+  position: absolute; top: 8px; right: 10px; z-index: 2;
+  width: 22px; height: 22px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--text-faint); cursor: pointer;
+  opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.row:hover .rowDelete { opacity: 1; }
+.rowDelete:hover { color: var(--danger); background: rgba(222, 123, 98, 0.1); }
+.overlay {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(10, 10, 10, 0.6); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  animation: overlayIn 0.15s ease;
+}
+@keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px 22px; max-width: 400px; width: calc(100% - 48px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+.modalTitle { margin: 0 0 6px; font-size: 14.5px; font-weight: 700; }
+.modalSub { margin: 0 0 16px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+.modalActions { display: flex; justify-content: flex-end; gap: 10px; }
+.modalGhost {
+  font-size: 12.5px; font-weight: 600; color: var(--text-faint);
+  background: none; border: none; cursor: pointer; font-family: inherit; padding: 7px 10px;
+}
+.modalGhost:hover { color: var(--text-secondary); }
+.modalDanger {
+  font-size: 12.5px; font-weight: 650; padding: 7px 16px; border-radius: 8px;
+  background: rgba(222, 123, 98, 0.14); color: var(--danger);
+  border: 1px solid rgba(222, 123, 98, 0.3); cursor: pointer; font-family: inherit;
+}
+.modalDanger:hover:not(:disabled) { background: rgba(222, 123, 98, 0.22); }
+.modalDanger:disabled { opacity: 0.6; cursor: default; }

@@ -481,9 +481,10 @@ export default function InspectorPanel({
             <div className={styles.scoutGroup}>
               <div className={styles.who}><ScoutAvatar small /> scout</div>
               <div className={[styles.scoutBubble, styles.scoutBubbleFirst, checklist?.ready ? styles.closer : ""].join(" ")}>
-                <p className={styles.sectionText}>
-                  {verdict ?? [report.headline, watchlistId ? null : report.summary].filter(Boolean).join(" ")}
-                </p>
+                <p className={styles.sectionText}>{verdict ?? report.headline ?? report.summary}</p>
+                {!checklist && (
+                  <p className={styles.critLoading}>sizing up what needs to check out…</p>
+                )}
                 {checklist && checklist.items.length > 0 && (
                   <div className={styles.critList}>
                     {checklist.items.map((item, i) => (

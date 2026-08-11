@@ -671,3 +671,9 @@
   margin: 10px 0 0; padding-top: 9px; border-top: 1px solid rgba(47, 46, 43, 0.7);
   font-size: 11px; color: var(--text-faint); line-height: 1.5;
 }
+
+.critLoading {
+  margin: 8px 0 0; font-size: 11.5px; color: var(--text-faint); font-style: italic;
+  animation: critPulse 1.6s ease-in-out infinite;
+}
+@keyframes critPulse { 50% { opacity: 0.45; } }

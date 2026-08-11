@@ -747,3 +747,30 @@
   .factsBand { flex-direction: column; gap: 10px; }
   .factsBand .split { width: auto; }
 }
+
+/* scout nl filter + semantic fallback */
+.askFilterBtn {
+  position: absolute; right: 34px; top: 50%; transform: translateY(-50%);
+  font-size: 11px; font-weight: 650; color: var(--accent);
+  background: var(--accent-soft); border: none; border-radius: 8px;
+  padding: 5px 11px; cursor: pointer; font-family: inherit;
+  transition: background 0.15s ease;
+}
+.askFilterBtn:hover:not(:disabled) { background: rgba(168, 188, 232, 0.18); }
+.askFilterBtn:disabled { opacity: 0.5; cursor: default; }
+.cardSearchWrap .cardSearchInput { padding-right: 128px; }
+.aiNote {
+  margin-left: 40px; display: flex; align-items: center; gap: 9px;
+  font-size: 12px; color: var(--text-secondary);
+  border: 1px solid rgba(168, 188, 232, 0.16); background: rgba(168, 188, 232, 0.04);
+  border-radius: 10px; padding: 7px 12px;
+  animation: viewIn 0.25s ease;
+}
+.aiNoteIcon { color: var(--accent); flex-shrink: 0; }
+.aiNoteText { flex: 1; min-width: 0; }
+.semanticBtn {
+  font-size: 11.5px; font-weight: 650; color: var(--accent);
+  background: none; border: 1px solid rgba(168, 188, 232, 0.3); border-radius: 14px;
+  padding: 4px 12px; cursor: pointer; font-family: inherit;
+}
+.semanticBtn:hover:not(:disabled) { background: var(--accent-soft); }

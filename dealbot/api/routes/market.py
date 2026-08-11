@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from dealbot.agents.playbook import sanitize
 from dealbot.api.auth import get_current_user
 from dealbot.db.database import get_async_session
-from dealbot.db.models import User, Watchlist, WatchlistRanking
+from dealbot.db.models import Hunt, HuntListing, Listing, ListingInspection, User, Watchlist, WatchlistRanking
 from dealbot.llm.base import LLMClient
 from dealbot.recsys.market_stats import agent_comps, compute_market
 from dealbot.schemas import ChatMessage, WatchlistContext
@@ -30,6 +30,16 @@ router = APIRouter(prefix="/watchlists", tags=["market"])
 
 _CHAT_HISTORY_MAX = 30
 _TOP_PICKS = 5
+
+
+def _fast_llm() -> LLMClient:
+    """Extraction-tier model: the NL filter is mechanical matching, not voice."""
+    backend = os.environ.get("LLM_BACKEND", "openai")
+    if backend == "bedrock":
+        from dealbot.llm.bedrock_client import BedrockClient
+        return BedrockClient(model=os.environ.get("BEDROCK_EXTRACT_MODEL"))
+    from dealbot.llm.openai_client import OpenAIClient
+    return OpenAIClient()
 
 
 def _chat_llm() -> LLMClient:
@@ -320,3 +330,190 @@ async def ask_scout(
     if not reply:
         reply = "I hit a snag answering that one. Give it another try in a moment."
     return AskResponse(reply=reply)
+
+
+# ---------------------------------------------------------------------------
+# All-matches tab: Scout's NL filter + semantic search fallback
+# ---------------------------------------------------------------------------
+
+from sqlalchemy import select
+
+from dealbot.lifecycle import stale_cutoff
+
+_TAB_LISTINGS_MAX = 220
+
+
+async def _tab_listings(watchlist_id: int) -> list[Listing]:
+    """The exact population the All matches tab shows: every live ranked
+    listing plus the latest sweep's unranked ones."""
+    async with get_async_session() as session:
+        ranked = list((await session.execute(
+            select(Listing)
+            .join(WatchlistRanking, WatchlistRanking.listing_id == Listing.id)
+            .where(WatchlistRanking.watchlist_id == watchlist_id)
+            .where(Listing.last_seen_at >= stale_cutoff())
+            .where(Listing.sold_at.is_(None))
+            .order_by(WatchlistRanking.position)
+        )).scalars().all())
+        seen = {l.id for l in ranked}
+
+        latest_hunt = (await session.execute(
+            select(Hunt.id)
+            .where(Hunt.watchlist_id == watchlist_id)
+            .order_by(Hunt.started_at.desc())
+            .limit(1)
+        )).scalar()
+        if latest_hunt is not None:
+            swept = (await session.execute(
+                select(Listing)
+                .join(HuntListing, HuntListing.listing_id == Listing.id)
+                .where(HuntListing.hunt_id == latest_hunt)
+                .where(Listing.last_seen_at >= stale_cutoff())
+                .where(Listing.sold_at.is_(None))
+            )).scalars().all()
+            ranked += [l for l in swept if l.id not in seen]
+    return ranked[:_TAB_LISTINGS_MAX]
+
+
+NL_FILTER_SYSTEM = """You filter a buyer's saved marketplace listings against their
+natural-language request.
+
+Output JSON: {"listing_ids": [int], "note": str}
+- Include a listing ONLY when its data clearly satisfies the request. Price,
+  condition, marketplace, and location are reliable fields. Physical traits
+  (color, size, model variant) count only when the title or Scout's notes
+  mention them; absence of evidence is not a match.
+- note: under 140 chars, plain language, saying what you matched on and what
+  you could not check ("color only shows where sellers mention it").
+- No matches: empty list, and the note says so honestly.
+- Never use em dashes. JSON only."""
+
+
+class NLFilterRequest(BaseModel):
+    query: str
+
+
+class NLFilterResponse(BaseModel):
+    listing_ids: list[int]
+    note: str
+
+
+@router.post("/{watchlist_id}/filter", response_model=NLFilterResponse)
+async def nl_filter(
+    watchlist_id: int,
+    body: NLFilterRequest,
+    current_user: User = Depends(get_current_user),
+) -> NLFilterResponse:
+    """"Any brown ones under $200?" → the sublist, as ids the tab renders
+    itself. Fast tier; Scout's honest note rides along."""
+    await _owned_watchlist(watchlist_id, current_user)
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty query.")
+
+    listings = await _tab_listings(watchlist_id)
+    if not listings:
+        return NLFilterResponse(listing_ids=[], note="Nothing in the pool to filter yet.")
+
+    async with get_async_session() as session:
+        notes_by_id: dict[int, str] = {}
+        cached = (await session.execute(
+            select(ListingInspection)
+            .where(ListingInspection.listing_id.in_([l.id for l in listings]))
+            .where(ListingInspection.status == "ok")
+        )).scalars().all()
+        for row in cached:
+            try:
+                report = json.loads(row.report or "{}")
+                bits = [report.get("headline"), report.get("condition")]
+                text = " ".join(b for b in bits if isinstance(b, str))
+                if text:
+                    notes_by_id[row.listing_id] = text[:200]
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+    payload = {
+        "request": query[:300],
+        "listings": [
+            {
+                "id": l.id, "title": l.title[:120], "price": l.price,
+                "currency": l.currency, "marketplace": l.marketplace,
+                "condition": l.condition, "location": l.location,
+                **({"scout_notes": notes_by_id[l.id]} if l.id in notes_by_id else {}),
+            }
+            for l in listings
+        ],
+    }
+    try:
+        response = await _fast_llm().complete(
+            [
+                {"role": "system", "content": NL_FILTER_SYSTEM},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+        )
+        parsed = json.loads(response.content or "{}")
+        known = {l.id for l in listings}
+        ids = [i for i in (parsed.get("listing_ids") or []) if isinstance(i, int) and i in known]
+        note = sanitize(str(parsed.get("note") or "").strip())
+        if len(note) > 160:
+            # trim to the last full sentence that fits; never chop mid-word
+            cut = note[:160]
+            for stop in (". ", "! ", "? "):
+                if stop in cut:
+                    cut = cut[:cut.rfind(stop) + 1]
+                    break
+            else:
+                cut = cut[:cut.rfind(" ")] + "…"
+            note = cut
+        if not note:
+            note = f"{len(ids)} match" + ("" if len(ids) == 1 else "es")
+        return NLFilterResponse(listing_ids=ids, note=note)
+    except Exception:
+        logger.exception("nl filter failed for wl %d", watchlist_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scout could not run that filter just now.",
+        )
+
+
+class SemanticSearchRequest(BaseModel):
+    query: str
+
+
+class SemanticSearchResponse(BaseModel):
+    listing_ids: list[int]        # closest-by-meaning first
+
+
+@router.post("/{watchlist_id}/semantic-search", response_model=SemanticSearchResponse)
+async def semantic_search(
+    watchlist_id: int,
+    body: SemanticSearchRequest,
+    current_user: User = Depends(get_current_user),
+) -> SemanticSearchResponse:
+    """Meaning search over this agent's own pool: the substring fallback for
+    'leather' finding 'cowhide'. Empty result when embeddings are down."""
+    from dealbot.llm.embeddings import embed_text
+
+    await _owned_watchlist(watchlist_id, current_user)
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty query.")
+
+    listings = await _tab_listings(watchlist_id)
+    ids = [l.id for l in listings]
+    if not ids:
+        return SemanticSearchResponse(listing_ids=[])
+    vector = await embed_text(query)
+    if not vector:
+        return SemanticSearchResponse(listing_ids=[])
+
+    async with get_async_session() as session:
+        ordered = list((await session.execute(
+            select(Listing.id)
+            .where(Listing.id.in_(ids))
+            .where(Listing.embedding.isnot(None))
+            .order_by(Listing.embedding.cosine_distance(vector))
+            .limit(40)
+        )).scalars().all())
+    return SemanticSearchResponse(listing_ids=ordered)

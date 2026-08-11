@@ -260,10 +260,66 @@ export default function AgentPanel({
   const [maxPriceFilter, setMaxPriceFilter] = useState("");
   const [searchAll, setSearchAll] = useState("");
   const [sortAll, setSortAll] = useState<"best" | "price_asc" | "price_desc" | "newest">("best");
-  function filterSort<T extends { title: string; price: number; marketplace: string; first_seen_at?: string }>(items: T[]): T[] {
+  // Scout's NL filter / semantic search: an id-overlay on the same list.
+  const [aiFilter, setAiFilter] = useState<{ ids: Set<number>; note: string; kind: "scout" | "semantic" } | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const askScoutFilter = async () => {
+    const query = searchAll.trim();
+    if (!query || aiBusy) return;
+    setAiBusy(true);
+    try {
+      const res = await fetch(`/api/watchlists/${agent.id}/filter`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) {
+        setAiFilter({ ids: new Set(), note: "Scout couldn't run that filter just now. Try again in a moment.", kind: "scout" });
+        return;
+      }
+      const data = await res.json();
+      setAiFilter({ ids: new Set<number>(data.listing_ids), note: data.note, kind: "scout" });
+    } catch {
+      setAiFilter({ ids: new Set(), note: "Scout couldn't run that filter just now. Try again in a moment.", kind: "scout" });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const semanticSearch = async () => {
+    const query = searchAll.trim();
+    if (!query || aiBusy) return;
+    setAiBusy(true);
+    try {
+      const res = await fetch(`/api/watchlists/${agent.id}/semantic-search`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      setAiFilter({
+        ids: new Set<number>(data.listing_ids),
+        note: data.listing_ids.length > 0
+          ? `closest by meaning to "${query.slice(0, 40)}"`
+          : "Nothing close by meaning either.",
+        kind: "semantic",
+      });
+    } catch {
+      setAiFilter({ ids: new Set(), note: "Meaning search is unavailable right now.", kind: "semantic" });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+  function filterSort<T extends { id: number; title: string; price: number; marketplace: string; first_seen_at?: string }>(items: T[]): T[] {
     let out = items;
-    const q = searchAll.trim().toLowerCase();
-    if (q) out = out.filter(l => l.title.toLowerCase().includes(q));
+    if (aiFilter) {
+      out = out.filter(l => aiFilter.ids.has(l.id));
+    } else {
+      const q = searchAll.trim().toLowerCase();
+      if (q) out = out.filter(l => l.title.toLowerCase().includes(q));
+    }
     if (mpFilter) out = out.filter(l => l.marketplace === mpFilter);
     const cap = parseFloat(maxPriceFilter);
     if (!Number.isNaN(cap)) out = out.filter(l => l.price <= cap);
@@ -567,13 +623,39 @@ export default function AgentPanel({
                     className={styles.cardSearchInput}
                     type="text"
                     value={searchAll}
-                    onChange={e => setSearchAll(e.target.value)}
-                    placeholder="Search these listings…"
+                    onChange={e => { setSearchAll(e.target.value); if (aiFilter) setAiFilter(null); }}
+                    placeholder="Search, or describe what you want and ask Scout…"
                   />
                   {searchAll && (
-                    <button className={styles.cardSearchClear} onClick={() => setSearchAll("")}>✕</button>
+                    <button className={styles.cardSearchClear} onClick={() => { setSearchAll(""); setAiFilter(null); }}>✕</button>
                   )}
+                  <button
+                    className={styles.askFilterBtn}
+                    disabled={aiBusy || !searchAll.trim()}
+                    title="Ask Scout to filter these listings"
+                    onClick={askScoutFilter}
+                  >
+                    {aiBusy ? "…" : "✦ Ask Scout"}
+                  </button>
                 </div>
+
+                {aiFilter && (
+                  <div className={styles.aiNote}>
+                    <span className={styles.aiNoteIcon}>✦</span>
+                    <span className={styles.aiNoteText}>{aiFilter.note}</span>
+                    <button className={styles.cardSearchClear} style={{ position: "static", transform: "none" }} onClick={() => setAiFilter(null)}>✕</button>
+                  </div>
+                )}
+
+                {!aiFilter && searchAll.trim().length >= 3
+                  && fRest.length + fWeak.length + fSweep.length === 0 && (
+                  <div className={styles.aiNote}>
+                    <span className={styles.aiNoteText}>No literal matches.</span>
+                    <button className={styles.semanticBtn} disabled={aiBusy} onClick={semanticSearch}>
+                      {aiBusy ? "searching…" : "Search by meaning ✦"}
+                    </button>
+                  </div>
+                )}
 
                 <div className={styles.filterRow}>
                   <button
@@ -645,7 +727,7 @@ export default function AgentPanel({
 
                 {weak.length > 0 && (
                   <details className={styles.layer}>
-                    <summary><span className={styles.twist}>▶</span> Weaker matches <span className={styles.tabCount}>{fWeak.length}</span> <span className={styles.layerHint}>probably not it, but Scout kept them just in case</span></summary>
+                    <summary><span className={styles.twist}>▶</span> Close calls <span className={styles.tabCount}>{fWeak.length}</span> <span className={styles.layerHint}>almost cleared your bar; kept in case one clicks</span></summary>
                     <div className={styles.denseList}>
                       {fWeak.length === 0 && <p className={styles.loading}>Nothing here fits those filters.</p>}
                       {fWeak.map(l => (
@@ -661,7 +743,7 @@ export default function AgentPanel({
                 )}
 
                 <details className={styles.layer} onToggle={e => { if ((e.target as HTMLDetailsElement).open) loadSweep(); }}>
-                  <summary><span className={styles.twist}>▶</span> Everything from the last sweep{sweep ? <span className={styles.tabCount}> {fSweep.length}</span> : null} <span className={styles.layerHint}>every unique listing the agent reviewed, filtered or not</span></summary>
+                  <summary><span className={styles.twist}>▶</span> The long tail{sweep ? <span className={styles.tabCount}> {fSweep.length}</span> : null} <span className={styles.layerHint}>everything the last sweep saw, filtered or not</span></summary>
                   <div className={styles.denseList}>
                     {sweep === null && <p className={styles.loading}>Pulling the sweep…</p>}
                     {sweep !== null && sweep.length === 0 && <p className={styles.loading}>No sweep on record yet.</p>}

@@ -24,7 +24,7 @@ from dealbot.db.models import Hunt, HuntListing, Listing, User
 from dealbot.lifecycle import LISTING_STALE_DAYS
 from dealbot.llm.embeddings import embed_text
 
-SEARCH_DISTANCE_MAX = 0.84
+SEARCH_DISTANCE_MAX = 0.47
 
 router = APIRouter(prefix="/listings", tags=["pool"])
 
@@ -236,11 +236,11 @@ async def pool_search(
             stmt = (
                 base.where(Listing.embedding.is_not(None))
                 # Relevance floor: kNN always fills the page, so without a
-                # cutoff a golf query ends in AirPods. Measured 2026-08-11:
-                # true matches sit under ~0.80, the unrelated band starts
-                # ~0.85; 0.84 keeps margin. Title-blind items (no category
-                # word in the title) fall past it — multimodal embeddings are
-                # the eventual fix for those.
+                # cutoff a golf query ends in AirPods. Re-measured 2026-08-11
+                # in the Titan MULTIMODAL space: true matches (photos
+                # included) sit under ~0.45, the unrelated band starts
+                # ~0.48; 0.47 keeps margin. Re-measure on any embedding
+                # space change.
                 .where(Listing.embedding.cosine_distance(embedding) < SEARCH_DISTANCE_MAX)
                 .order_by(Listing.embedding.cosine_distance(embedding))
                 .offset(offset)

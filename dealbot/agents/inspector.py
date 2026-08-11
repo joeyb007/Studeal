@@ -286,9 +286,10 @@ async def _generate_report(
 # The visit
 # ---------------------------------------------------------------------------
 
-async def _visit(listing: Listing) -> tuple[str, list[bytes]] | None:
-    """Open the listing page; return (snapshot_text, frames) or None on
-    navigation failure. Never raises."""
+async def _visit(listing: Listing) -> tuple[str, list[bytes], bool] | None:
+    """Open the listing page; return (snapshot_text, frames, alive) or None on
+    navigation failure — alive is deterministic proof the listing is live
+    (FB's id-keyed price payload). Never raises."""
     from dealbot.agents.composition import build_session_from_env
     from dealbot.agents.explorer import _settled_snapshot
 
@@ -327,13 +328,20 @@ async def _visit(listing: Listing) -> tuple[str, list[bytes]] | None:
                 ] if isinstance(value, str) and value
             )
             text = (f"Page metadata:\n{head}\n\nPage body:\n" if head else "") + snap.text
+            # Deterministic proof of life: FB only embeds an id-keyed price
+            # payload for LIVE listings. Where it exists, no model judgment
+            # about "gone" is allowed to bury the row.
+            alive = False
+            if listing.marketplace == "fb_marketplace":
+                from dealbot.agents.fetch_listing import _embedded_price
+                alive = (await _embedded_price(page, listing.raw_url)) is not None
             frames: list[bytes] = []
             frames.append(await page.screenshot(type="jpeg", quality=55))
             for _ in range(_FRAME_COUNT - 1):
                 await page.mouse.wheel(0, 900)
                 await page.wait_for_timeout(1_200)
                 frames.append(await page.screenshot(type="jpeg", quality=55))
-            return text, frames
+            return text, frames, alive
     except Exception as exc:
         logger.warning("inspector: visit failed for listing %d: %s", listing.id, exc)
         return None
@@ -411,9 +419,12 @@ async def get_or_create_inspection(listing_id: int, force: bool = False) -> dict
     if visited is None:
         # Transient navigation failure: not evidence the listing is gone.
         return _payload("error", comps=comps[:_COMP_STRIP])
-    snapshot_text, frames = visited
+    snapshot_text, frames, alive = visited
 
     detail = await _extract_detail(snapshot_text)
+    if alive and detail.gone:
+        logger.info("inspector: liveness proof overrules gone verdict for %d", listing_id)
+        detail.gone = False
     if detail.gone:
         await _mark_sold(listing_id)
         await _write_cache(listing_id, "listing_gone", None, detail)

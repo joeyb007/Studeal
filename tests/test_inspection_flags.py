@@ -129,3 +129,12 @@ async def test_different_listings_do_not_serialize(monkeypatch):
     assert fast["id"] == 2
     release.set()
     assert (await slow)["id"] == 1
+
+
+def test_image_mime_sniffing():
+    from dealbot.agents.inspector import _sniff_image_mime
+    assert _sniff_image_mime(b"\xff\xd8\xff\xe0" + b"x" * 8) == "image/jpeg"
+    assert _sniff_image_mime(b"\x89PNG\r\n\x1a\n" + b"x" * 8) == "image/png"
+    assert _sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBP" + b"x" * 8) == "image/webp"
+    assert _sniff_image_mime(b"GIF89a" + b"x" * 8) == "image/gif"
+    assert _sniff_image_mime(b"unknown-bytes") == "image/jpeg"

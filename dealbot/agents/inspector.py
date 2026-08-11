@@ -206,9 +206,23 @@ async def _listing_photo(listing: Listing) -> bytes | None:
     return None
 
 
-def _frame_part(frame: bytes) -> dict[str, Any]:
+def _sniff_image_mime(data: bytes) -> str:
+    """Actual format from magic bytes: marketplaces serve webp/png behind
+    jpeg-looking URLs, and Bedrock rejects mislabeled media types."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return "image/jpeg"
+
+
+def _frame_part(frame: bytes, mime: str = "image/jpeg") -> dict[str, Any]:
     b64 = base64.b64encode(frame).decode("ascii")
-    return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
 def _sanitize_obj(value: Any) -> Any:
@@ -282,21 +296,22 @@ async def _generate_report(
     ])
     content: list[dict[str, Any]] = [{"type": "text", "text": grounding}]
     if photo:
-        content.append(_frame_part(photo))
+        content.append(_frame_part(photo, _sniff_image_mime(photo)))
     content += [_frame_part(f) for f in frames]
 
     llm = _report_llm()
-    response = await llm.complete(
-        [
-            {"role": "system", "content": REPORT_SYSTEM},
-            {"role": "user", "content": content},
-        ],
-        response_format={"type": "json_object"},
-    )
     try:
+        response = await llm.complete(
+            [
+                {"role": "system", "content": REPORT_SYSTEM},
+                {"role": "user", "content": content},
+            ],
+            response_format={"type": "json_object"},
+        )
         report = json.loads(response.content)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("inspector: report parse failed for listing %d", listing.id)
+    except Exception:
+        # A failed report degrades to the error payload, never a 500.
+        logger.exception("inspector: report call failed for listing %d", listing.id)
         return None
     if not isinstance(report, dict) or not _REPORT_KEYS.issubset(report):
         logger.warning("inspector: report missing keys for listing %d", listing.id)

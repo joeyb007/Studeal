@@ -60,8 +60,13 @@ def _session_payload(project_id: str, proxies: bool) -> dict:
 
     payload: dict = {
         "projectId": project_id,
-        "keepAlive": True,
-        "timeout": 3600,
+        # keepAlive would hold the session open after its owner dies — a
+        # killed worker's lanes then squat the concurrency pool for the
+        # full timeout (observed 2026-08-11: restart spree ate all 25
+        # slots). Lanes reconnect never; let sessions die with the CDP
+        # connection and cap stragglers at 15 minutes.
+        "keepAlive": False,
+        "timeout": int(os.environ.get("BROWSERBASE_SESSION_TIMEOUT_S", "900")),
         "region": os.environ.get("BROWSERBASE_REGION", "us-east-1"),
         "browserSettings": {
             "viewport": {"width": width, "height": height},

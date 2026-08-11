@@ -66,6 +66,22 @@ def _spec_text(spec: WatchlistContext) -> str:
             "A listing that clearly contradicts the brief serves this buyer poorly, "
             "however good the deal."
         )
+    musts = [a.value.strip() for a in spec.attributes
+             if a.tier == "must" and a.value.strip()]
+    nices = [a.value.strip() for a in spec.attributes
+             if a.tier == "nice" and a.value.strip()]
+    if musts:
+        parts.append(
+            f"Requirements (non-negotiable): {'; '.join(musts)}. A listing that "
+            "contradicts one of these is the wrong item — score it below every "
+            "non-contradicting listing, whatever the price. A listing that "
+            "doesn't say either way is NOT a contradiction."
+        )
+    if nices:
+        parts.append(
+            f"Nice to have: {'; '.join(nices)}. These raise fit; they never "
+            "disqualify."
+        )
     if spec.brands:
         parts.append(f"Prefers brands: {', '.join(spec.brands)}")
     if spec.condition:

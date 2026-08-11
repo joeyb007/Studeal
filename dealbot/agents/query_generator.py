@@ -41,6 +41,10 @@ Rules:
     a specific brand or model the spec implies, or a distinct angle sellers
     actually put in listing titles. Synonym shuffles and word-order swaps
     are worthless — marketplace search engines already match those.
+  - When the spec lists must-tier attributes, weave them into your query
+    using words sellers actually put in titles: handedness, set composition,
+    included accessories ("right handed complete golf club set with bag").
+    Must-tier attributes are the single best source of a complementary query.
   - Every query must be a plausible marketplace search string (short, no
     filler words like "please find").
   - No duplicate queries.

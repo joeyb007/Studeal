@@ -141,3 +141,10 @@ async def test_absent_profile_adds_no_stray_text():
     )
     blob = " ".join(m["content"] for m in llm.messages)
     assert "None" not in blob, "a null profile must not be stringified"
+
+
+def test_prompt_directs_musts_into_the_complement_query():
+    from dealbot.agents.query_generator import QUERY_GENERATOR_SYSTEM
+
+    assert "must-tier" in QUERY_GENERATOR_SYSTEM
+    assert "sellers actually put in titles" in QUERY_GENERATOR_SYSTEM

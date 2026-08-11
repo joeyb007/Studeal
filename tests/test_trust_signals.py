@@ -310,3 +310,74 @@ async def test_brief_llm_failure_demotes_nothing(db_factory, monkeypatch):
     from dealbot.worker.inspections import enforce_quality_bar
 
     assert await enforce_quality_bar(wl_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_must_attributes_demote_without_appearance_notes(db_factory, monkeypatch):
+    """A must-tier attribute alone activates the brief pass — a left-handed
+    set demotes even when no physical brief was captured."""
+    @asynccontextmanager
+    async def _s():
+        async with db_factory() as session:
+            yield session
+
+    monkeypatch.setattr("dealbot.worker.inspections.get_async_session", _s)
+
+    async def _fake_inspect(listing_id: int):
+        return {"status": "ok"}
+    monkeypatch.setattr(
+        "dealbot.agents.inspector.get_or_create_inspection", _fake_inspect
+    )
+
+    seen_payload: dict = {}
+
+    async def _fake_brief_match(brief, items):
+        seen_payload["brief"] = brief
+        return {items[0][0]: False} if items else {}
+
+    from dealbot.worker import inspections
+    monkeypatch.setattr(inspections, "_brief_match", _fake_brief_match)
+
+    async with db_factory() as session:
+        user = User(email="musts@example.com", hashed_password="x")
+        session.add(user)
+        await session.flush()
+        wl = Watchlist(
+            user_id=user.id, name="Golf clubs",
+            context=json.dumps({
+                "product_query": "beginner golf clubs",
+                "attributes": [
+                    {"name": "handedness", "value": "right-handed", "tier": "must"},
+                    {"name": "flex", "value": "regular flex", "tier": "nice"},
+                ],
+            }),
+        )
+        session.add(wl)
+        await session.flush()
+
+        listings = [_listing(f"m-{i}") for i in range(3)]
+        session.add_all(listings)
+        await session.flush()
+        now = datetime.now(timezone.utc)
+        for pos, listing in enumerate(listings):
+            session.add(WatchlistRanking(
+                watchlist_id=wl.id, listing_id=listing.id,
+                score=0.9 - pos * 0.05, position=pos, computed_at=now,
+            ))
+        session.add(ListingInspection(
+            listing_id=listings[0].id, status="ok",
+            report=json.dumps({
+                "identification": "Left-handed complete set",
+                "condition": "clean", "summary": "fine",
+            }),
+            flags={"photos_real": True, "condition_grade": "good"},
+        ))
+        await session.commit()
+        wl_id = wl.id
+
+    from dealbot.worker.inspections import enforce_quality_bar
+
+    demoted = await enforce_quality_bar(wl_id)
+    assert demoted == 1
+    assert seen_payload["brief"] == "Hard requirements: right-handed."
+    assert "regular flex" not in seen_payload["brief"], "nices never demote"

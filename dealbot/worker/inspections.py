@@ -117,13 +117,15 @@ def fails_quality_bar(bar: str | None, flags: dict | None) -> bool:
 # The brief match (physical-brief spec 2026-08-10, stage 3): Scout's cached
 # report text describes what the photos show; one cheap JSON call decides
 # which top picks clearly contradict the buyer's brief. Unknown never demotes.
-BRIEF_MATCH_SYSTEM = """A buyer described what their item should look like. For each
-listing you have Scout's inspection notes describing what its photos show.
-Decide per listing whether it matches the buyer's brief.
+BRIEF_MATCH_SYSTEM = """A buyer described what their item should look like, and
+may have hard requirements (handedness, set composition, included accessories).
+For each listing you have Scout's inspection notes describing what its photos
+show. Decide per listing whether it matches the buyer's brief.
 
 Output JSON: {"matches": [{"id": int, "match": true|false|null}]}
 - false ONLY when the notes clearly contradict the brief: wrong color, wrong
-  shape or variant, wear far beyond what the brief tolerates.
+  shape or variant, a violated hard requirement, wear far beyond what the
+  brief tolerates.
 - true when the notes clearly fit the brief.
 - null when the notes do not say enough to tell. Unknown is null, never false.
 - JSON only."""
@@ -197,6 +199,13 @@ async def enforce_quality_bar(watchlist_id: int) -> int:
         context = WatchlistContext.model_validate_json(watchlist.context)
     bar_active = context.quality_bar in _GRADES_ALLOWED
     brief = (context.appearance_notes or "").strip()
+    # Must-tier attributes are hard requirements — they join the brief so a
+    # left-handed set demotes even when no appearance notes were captured.
+    musts = [a.value.strip() for a in context.attributes
+             if a.tier == "must" and a.value.strip()]
+    if musts:
+        requirement = f"Hard requirements: {'; '.join(musts)}."
+        brief = f"{brief} {requirement}".strip() if brief else requirement
     if not bar_active and not brief:
         return 0
 

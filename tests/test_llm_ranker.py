@@ -150,3 +150,28 @@ async def test_budget_is_withheld_from_the_ranker():
 @pytest.mark.asyncio
 async def test_empty_candidates_returns_empty():
     assert await rank(_SPEC, [], llm=_RankingLLM({"rankings": []})) == []
+
+
+def test_spec_text_carries_must_and_nice_attributes():
+    from dealbot.recsys.ranker import _spec_text
+    from dealbot.schemas import SpecAttribute, WatchlistContext
+
+    text = _spec_text(WatchlistContext(
+        product_query="beginner golf clubs",
+        attributes=[
+            SpecAttribute(name="handedness", value="right-handed", tier="must"),
+            SpecAttribute(name="flex", value="regular flex", tier="nice"),
+        ],
+    ))
+    assert "Requirements (non-negotiable): right-handed" in text
+    assert "Nice to have: regular flex" in text
+    assert "NOT a contradiction" in text, "silence must never disqualify"
+
+
+def test_spec_text_omits_attribute_blocks_when_empty():
+    from dealbot.recsys.ranker import _spec_text
+    from dealbot.schemas import WatchlistContext
+
+    text = _spec_text(WatchlistContext(product_query="bike"))
+    assert "Requirements" not in text
+    assert "Nice to have" not in text

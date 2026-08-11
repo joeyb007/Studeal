@@ -483,7 +483,9 @@ export default function InspectorPanel({
               <div className={[styles.scoutBubble, styles.scoutBubbleFirst, checklist?.ready ? styles.closer : ""].join(" ")}>
                 <p className={styles.sectionText}>{verdict ?? report.headline ?? report.summary}</p>
                 {!checklist && (
-                  <p className={styles.critLoading}>sizing up what needs to check out…</p>
+                  <p className={styles.critLoading}>
+                    building your checklist · what has to be true before this is worth buying…
+                  </p>
                 )}
                 {checklist && checklist.items.length > 0 && (
                   <div className={styles.critList}>

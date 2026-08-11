@@ -105,9 +105,9 @@ async def _embedded_price(page: Any, url: str) -> tuple[float, str] | None:
     return None
 
 
-async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None, tuple[float, str] | None] | None:
-    """(extraction_text, og_image_url, embedded_price) for a listing page;
-    None on navigation failure. Same session + referer discipline as the
+async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None, tuple[float, str] | None, str | None] | None:
+    """(extraction_text, og_image_url, embedded_price, og_title) for a listing
+    page; None on navigation failure. Same session + referer discipline as the
     inspector's visit.
 
     Page metadata rides ahead of the body: FB serves a login wall in the body
@@ -150,7 +150,13 @@ async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None, tuple
             embedded = None
             if marketplace == "fb_marketplace":
                 embedded = await _embedded_price(page, url)
-            return text, og_image if isinstance(og_image, str) and og_image else None, embedded
+            og_title = metas.get("og_title")
+            return (
+                text,
+                og_image if isinstance(og_image, str) and og_image else None,
+                embedded,
+                og_title if isinstance(og_title, str) and og_title.strip() else None,
+            )
     except Exception as exc:
         logger.warning("fetch_listing: visit failed for %s: %s", url, exc)
         return None
@@ -177,7 +183,7 @@ async def fetch_and_persist(
     visited = await _visit_url(url, marketplace)
     if visited is None:
         return None, None
-    snapshot_text, og_image, embedded = visited
+    snapshot_text, og_image, embedded, og_title = visited
 
     try:
         response = await _extract_llm().complete(
@@ -192,7 +198,7 @@ async def fetch_and_persist(
         logger.warning("fetch_listing: extraction failed for %s", url, exc_info=True)
         return None, None
 
-    title = str(data.get("title") or "").strip()
+    title = str(data.get("title") or "").strip() or (og_title or "").strip()
     # Price precedence: the id-keyed embedded JSON beats the text extractor
     # (which can grab a number from the description), then the buyer's manual
     # entry as the last resort.
@@ -206,7 +212,10 @@ async def fetch_and_persist(
             price = float(extracted)
     if price is None and isinstance(manual_price, (int, float)) and manual_price > 0:
         price = float(manual_price)
-    if not data.get("available") or not title:
+    # An id-keyed price payload only ships for live listings: it overrules a
+    # model that got spooked by the login wall or a thin description.
+    available = bool(data.get("available")) or embedded is not None
+    if not available or not title:
         return None, None
     if price is None:
         return None, {

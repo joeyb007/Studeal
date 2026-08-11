@@ -118,7 +118,7 @@ export default function ScoutPage() {
         setFetchNote("Couldn't get a clean grab of that page. The site may be slow or blocking; worth trying again in a minute.");
       }
     } catch {
-      setFetchNote("Couldn't get a clean grab of that page. The site may be slow or blocking; worth trying again in a minute.");
+      setFetchNote("Couldn't reach Scout just now. Give it a few seconds and try again.");
     } finally {
       setFetching(false);
     }
@@ -140,7 +140,9 @@ export default function ScoutPage() {
       const data: ResolveResult = await res.json();
       setResolved(data.listing ? data : "nomatch");
     } catch {
-      setResolved("nomatch");
+      // A dead backend is not "Scout has never seen this": say what happened.
+      setResolved(null);
+      setFetchNote("Couldn't reach Scout just now. Give it a few seconds and check again.");
     } finally {
       setResolving(false);
     }
@@ -225,6 +227,10 @@ export default function ScoutPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {resolved === null && fetchNote && !resolving && (
+        <p className={styles.checkMiss}>{fetchNote}</p>
       )}
 
       {resolved === "nomatch" && !needsPrice && (

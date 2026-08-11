@@ -162,6 +162,7 @@ export default function InspectorPanel({
   // Opening theater: bubbles type in sequence; rehydrated threads skip it.
   const [openStage, setOpenStage] = useState(1);
   const [theater, setTheater] = useState(true);
+  const [checklistFailed, setChecklistFailed] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
 
   // Checklist deltas become in-stream system lines ("✓ checked off: …").
@@ -222,8 +223,9 @@ export default function InspectorPanel({
         const query = watchlistId ? `?watchlist_id=${watchlistId}` : "";
         const cl = await fetch(`/api/listings/${listing.id}/checklist${query}`);
         if (cl.ok && !cancelled) setChecklist(await cl.json());   // first load: no delta lines
+        else if (!cancelled) setChecklistFailed(true);
       } catch {
-        /* checklist is a bonus */
+        if (!cancelled) setChecklistFailed(true);
       }
       if (!watchlistId) return;
       try {
@@ -573,10 +575,16 @@ export default function InspectorPanel({
                       instant={!theater}
                       onDone={() => setOpenStage(s0 => Math.max(s0, 5))}
                     />
-                    {openStage >= 5 && !checklist && (
+                    {openStage >= 5 && !checklist && !checklistFailed && (
                       <div className={styles.critWait} aria-hidden>
                         <span /><span /><span />
                       </div>
+                    )}
+                    {openStage >= 5 && !checklist && checklistFailed && (
+                      <p className={styles.critFailed}>
+                        Couldn&apos;t put the list together just now. Ask me anything below and
+                        I&apos;ll work from my notes.
+                      </p>
                     )}
                     {openStage >= 5 && checklist && checklist.items.length > 0 && (
                       <div className={styles.critList}>

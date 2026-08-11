@@ -689,3 +689,5 @@
 @media (prefers-reduced-motion: reduce) {
   .typeCursor, .critWait span, .compsIn, .critRow { animation: none; }
 }
+
+.critFailed { margin: 8px 0 0; font-size: 12px; color: var(--text-faint); font-style: italic; }

@@ -13,9 +13,10 @@ export async function GET(
   }
   const { listingId } = await params;
   const watchlistId = req.nextUrl.searchParams.get("watchlist_id");
+  const query = watchlistId ? `?watchlist_id=${watchlistId}` : "";
   try {
     const res = await fetch(
-      `${API_BASE}/listings/${listingId}/checklist?watchlist_id=${watchlistId}`,
+      `${API_BASE}/listings/${listingId}/checklist${query}`,
       {
         headers: { Authorization: `Bearer ${session.accessToken}` },
         cache: "no-store",

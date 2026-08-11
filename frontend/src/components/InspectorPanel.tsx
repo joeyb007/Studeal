@@ -356,7 +356,7 @@ export default function InspectorPanel({
 
   const send = async (override?: { text: string; tailoring?: boolean }) => {
     const text = (override?.text ?? draft).trim();
-    if ((!text && pendingImages.length === 0) || replying || inspection?.status !== "ok") return;
+    if ((!text && pendingImages.length === 0) || replying || !chatOpen) return;
     const imageKeys = override ? [] : pendingImages.map(p => p.key);
     const next: ChatMsg[] = [...messages, {
       role: "user",
@@ -410,6 +410,11 @@ export default function InspectorPanel({
   };
 
   const report = inspection?.status === "ok" ? inspection.report : null;
+  // A confirmed purchase closes the conversation; so does a dead listing.
+  const concluded = rundownDone
+    || messages.some(m => m.role === "assistant" && m.content.startsWith("PICKUP RUNDOWN"));
+  const gone = inspection?.status === "listing_gone";
+  const chatOpen = inspection?.status === "ok" && !concluded;
 
   return createPortal(
     <div className={styles.overlay} onClick={onClose}>
@@ -687,6 +692,10 @@ export default function InspectorPanel({
               <TypingBubble />
             </div>
           )}
+
+          {concluded && (
+            <div className={styles.sysLine}>purchase confirmed · conversation closed · good luck at pickup</div>
+          )}
         </div>
 
         {inspection?.status === "ok" && (
@@ -734,7 +743,7 @@ export default function InspectorPanel({
             className={styles.attachBtn}
             title="Attach screenshots (seller photos, chat screenshots)"
             aria-label="Attach screenshots"
-            disabled={inspection?.status !== "ok" || replying || uploading || pendingImages.length >= 4}
+            disabled={!chatOpen || replying || uploading || pendingImages.length >= 4}
             onClick={() => fileInputRef.current?.click()}
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m5.5 19 5.5-5.5 3 3 2.5-2.5 2 2" /></svg>
@@ -742,19 +751,23 @@ export default function InspectorPanel({
           <input
             className={styles.input}
             placeholder={
-              inspection?.status === "ok"
-                ? "Ask Scout, or paste what the seller said…"
-                : "Scout needs a successful look before you can chat"
+              concluded
+                ? "Purchase confirmed · this conversation is closed"
+                : gone
+                  ? "This listing is gone · conversation closed"
+                  : inspection?.status === "ok"
+                    ? "Ask Scout, or paste what the seller said…"
+                    : "Scout needs a successful look before you can chat"
             }
             value={draft}
-            disabled={inspection?.status !== "ok" || replying}
+            disabled={!chatOpen || replying}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") send(); }}
           />
           <button
             className={styles.send}
             onClick={() => send()}
-            disabled={inspection?.status !== "ok" || replying || (!draft.trim() && pendingImages.length === 0)}
+            disabled={!chatOpen || replying || (!draft.trim() && pendingImages.length === 0)}
           >
             Send
           </button>

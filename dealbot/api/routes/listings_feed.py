@@ -24,6 +24,8 @@ from dealbot.db.models import Hunt, HuntListing, Listing, User
 from dealbot.lifecycle import LISTING_STALE_DAYS
 from dealbot.llm.embeddings import embed_text
 
+SEARCH_DISTANCE_MAX = 0.84
+
 router = APIRouter(prefix="/listings", tags=["pool"])
 
 # A single hunt writes ~100 near-identical listings at once. Without a cap the
@@ -233,6 +235,13 @@ async def pool_search(
         if embedding:
             stmt = (
                 base.where(Listing.embedding.is_not(None))
+                # Relevance floor: kNN always fills the page, so without a
+                # cutoff a golf query ends in AirPods. Measured 2026-08-11:
+                # true matches sit under ~0.80, the unrelated band starts
+                # ~0.85; 0.84 keeps margin. Title-blind items (no category
+                # word in the title) fall past it — multimodal embeddings are
+                # the eventual fix for those.
+                .where(Listing.embedding.cosine_distance(embedding) < SEARCH_DISTANCE_MAX)
                 .order_by(Listing.embedding.cosine_distance(embedding))
                 .offset(offset)
                 .limit(limit)

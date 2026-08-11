@@ -254,58 +254,58 @@ async def _run_one_lane(
     async def _lane_work() -> None:
         nonlocal pages, done_reason
         async with build_session_from_env() as session:
-                explorer = Explorer(nav_llm, trace=trace)
-                result = await explorer.explore(
-                    entry_url=target.entry_url,
-                    entry_referer=target.entry_referer,
-                    marketplace=target.marketplace,
-                    query=query,
-                    spec=spec,
-                    session=session,
-                    sink=sink,
+            explorer = Explorer(nav_llm, trace=trace)
+            result = await explorer.explore(
+                entry_url=target.entry_url,
+                entry_referer=target.entry_referer,
+                marketplace=target.marketplace,
+                query=query,
+                spec=spec,
+                session=session,
+                sink=sink,
+            )
+            pages = result.turns_used
+            done_reason = result.done_reason or result.stop_reason
+            logger.info(
+                "run_hunt[%s]: %s urls=%d turns=%d stop=%s",
+                query, target.marketplace,
+                len(result.urls_visited), result.turns_used,
+                result.stop_reason,
+            )
+            # No-results broadening: verbose query variants can
+            # legitimately match nothing on thin marketplaces (craigslist
+            # AND-matches every term). One retry with the spec's core
+            # product query, re-routed so the entry URL is rebuilt.
+            if (
+                result.stop_reason == "done"
+                and result.done_reason
+                and "no_results" in result.done_reason.lower()
+                and query.strip().lower() != spec.product_query.strip().lower()
+            ):
+                retry_query = spec.product_query
+                retry_targets = await router.route(retry_query, spec)
+                retry_target = next(
+                    (t for t in retry_targets
+                     if t.marketplace == target.marketplace),
+                    None,
                 )
-                pages = result.turns_used
-                done_reason = result.done_reason or result.stop_reason
-                logger.info(
-                    "run_hunt[%s]: %s urls=%d turns=%d stop=%s",
-                    query, target.marketplace,
-                    len(result.urls_visited), result.turns_used,
-                    result.stop_reason,
-                )
-                # No-results broadening: verbose query variants can
-                # legitimately match nothing on thin marketplaces (craigslist
-                # AND-matches every term). One retry with the spec's core
-                # product query, re-routed so the entry URL is rebuilt.
-                if (
-                    result.stop_reason == "done"
-                    and result.done_reason
-                    and "no_results" in result.done_reason.lower()
-                    and query.strip().lower() != spec.product_query.strip().lower()
-                ):
-                    retry_query = spec.product_query
-                    retry_targets = await router.route(retry_query, spec)
-                    retry_target = next(
-                        (t for t in retry_targets
-                         if t.marketplace == target.marketplace),
-                        None,
+                if retry_target is not None:
+                    logger.info(
+                        "run_hunt[%s]: %s no_results — retrying with core query %r",
+                        query, target.marketplace, retry_query,
                     )
-                    if retry_target is not None:
-                        logger.info(
-                            "run_hunt[%s]: %s no_results — retrying with core query %r",
-                            query, target.marketplace, retry_query,
-                        )
-                        retry_explorer = Explorer(nav_llm, trace=trace)
-                        retry_result = await retry_explorer.explore(
-                            entry_url=retry_target.entry_url,
-                            entry_referer=retry_target.entry_referer,
-                            marketplace=retry_target.marketplace,
-                            query=retry_query,
-                            spec=spec,
-                            session=session,
-                            sink=sink,
-                        )
-                        pages += retry_result.turns_used
-                        done_reason = retry_result.done_reason or retry_result.stop_reason
+                    retry_explorer = Explorer(nav_llm, trace=trace)
+                    retry_result = await retry_explorer.explore(
+                        entry_url=retry_target.entry_url,
+                        entry_referer=retry_target.entry_referer,
+                        marketplace=retry_target.marketplace,
+                        query=retry_query,
+                        spec=spec,
+                        session=session,
+                        sink=sink,
+                    )
+                    pages += retry_result.turns_used
+                    done_reason = retry_result.done_reason or retry_result.stop_reason
 
     try:
         async with lane_semaphore:

@@ -72,6 +72,57 @@ interface PendingImage {
   previewUrl: string;
 }
 
+// Same typing treatment Scout has everywhere: interval-sliced text with a
+// blinking cursor. instant skips the theater (rehydrated threads).
+function useTypedText(text: string, speed: number, instant: boolean) {
+  const [shown, setShown] = useState(instant ? text : "");
+  const [done, setDone] = useState(instant);
+  useEffect(() => {
+    if (instant) { setShown(text); setDone(true); return; }
+    setShown("");
+    setDone(false);
+    if (!text) { setDone(true); return; }
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setShown(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(interval);
+        setDone(true);
+      }
+    }, speed);
+    return () => clearInterval(interval);
+  }, [text, speed, instant]);
+  return { shown, done };
+}
+
+function Typed({
+  text,
+  instant = false,
+  speed = 9,
+  onDone,
+}: {
+  text: string;
+  instant?: boolean;
+  speed?: number;
+  onDone?: () => void;
+}) {
+  const { shown, done } = useTypedText(text, speed, instant);
+  const fired = useRef(false);
+  useEffect(() => {
+    if (done && !fired.current) {
+      fired.current = true;
+      onDone?.();
+    }
+  }, [done, onDone]);
+  return (
+    <p className={styles.sectionText}>
+      {shown}
+      {!done && <span className={styles.typeCursor}>▍</span>}
+    </p>
+  );
+}
+
 interface Checklist {
   items: {
     check: string;
@@ -108,6 +159,9 @@ export default function InspectorPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
+  // Opening theater: bubbles type in sequence; rehydrated threads skip it.
+  const [openStage, setOpenStage] = useState(1);
+  const [theater, setTheater] = useState(true);
   const threadRef = useRef<HTMLDivElement>(null);
 
   // Checklist deltas become in-stream system lines ("✓ checked off: …").
@@ -234,6 +288,8 @@ export default function InspectorPanel({
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled && Array.isArray(data.messages) && data.messages.length > 0) {
+          setTheater(false);
+          setOpenStage(9);
           setMessages(data.messages.map((m: { role: string; content: string; images?: string[] }) => ({
             role: m.role === "user" ? "user" : "assistant",
             content: m.content,
@@ -476,91 +532,112 @@ export default function InspectorPanel({
             </div>
           )}
 
-          {report && (
-            <div className={styles.scoutGroup}>
-              <div className={styles.who}><ScoutAvatar small /> scout</div>
-              <div className={[styles.scoutBubble, styles.scoutBubbleFirst, checklist?.ready ? styles.closer : ""].join(" ")}>
-                <p className={styles.sectionText}>{verdict ?? report.headline ?? report.summary}</p>
-                {!checklist && (
-                  <p className={styles.critLoading}>
-                    building your checklist · what has to be true before this is worth buying…
-                  </p>
-                )}
-                {checklist && checklist.items.length > 0 && (
-                  <div className={styles.critList}>
-                    {checklist.items.map((item, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        className={styles.critRow}
-                        title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
-                        onClick={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
-                      >
-                        <span className={[
-                          styles.tick,
-                          item.status === "satisfied" ? styles.tickOn : item.status === "flagged" ? styles.tickFlag : "",
-                        ].join(" ")}>
-                          {item.status === "satisfied" ? "✓" : item.status === "flagged" ? "!" : "○"}
-                        </span>
-                        <span className={styles.critBody}>
-                          <span className={item.status === "satisfied" ? styles.critTextDone : styles.critText}>{item.check}</span>
-                          {item.evidence && <span className={styles.critEvidence}>{item.evidence}</span>}
-                        </span>
-                        {item.status !== "satisfied" && item.verify_via && item.verify_via !== "confirmed" && (
-                          <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
-                            {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
-                          </span>
-                        )}
-                      </button>
-                    ))}
+          {report && (() => {
+            const call = report.headline ?? report.summary ?? "Took a look.";
+            const what = [report.identification, report.condition].filter(Boolean).join(" ");
+            const price = report.market_position ?? "";
+            const advance = (after: number) => {
+              let stage = after;
+              if (stage === 2 && !what) stage = 3;
+              if (stage === 3 && !price && report.comps.length === 0) stage = 4;
+              setOpenStage((s0: number) => Math.max(s0, stage));
+            };
+            return (
+              <div className={styles.scoutGroup}>
+                <div className={styles.who}><ScoutAvatar small /> scout</div>
+                <div className={[styles.scoutBubble, styles.scoutBubbleFirst].join(" ")}>
+                  <Typed text={call} instant={!theater} onDone={() => advance(2)} />
+                </div>
+                {openStage >= 2 && what && (
+                  <div className={styles.scoutBubble}>
+                    <Typed text={what} instant={!theater} onDone={() => advance(3)} />
                   </div>
                 )}
-                {report.seller_questions.length > 0
-                  && checklist?.items.some(i => i.status === "open" && i.verify_via === "ask_seller") && (
-                  <div className={styles.sendNext}>
-                    <span className={styles.sendNextMsg}>&quot;{report.seller_questions[0]}&quot;</span>
-                    <CopyBtn text={report.seller_questions[0]} />
+                {openStage >= 3 && (price || report.comps.length > 0) && (
+                  <div className={styles.scoutBubble}>
+                    {price
+                      ? <Typed text={price} instant={!theater} onDone={() => advance(4)} />
+                      : null}
+                    {(openStage >= 4 || !price) && report.comps.length > 0 && (
+                      <div className={styles.compsIn}>
+                        <p className={styles.compLead}>What similar ones are going for:</p>
+                        <CompStrip comps={report.comps} />
+                      </div>
+                    )}
                   </div>
                 )}
-                {checklist?.tailoring && !checklist.tailoring.answer && (
-                  <div className={styles.tailoring}>
-                    <p className={styles.tailoringQ}>{checklist.tailoring.question}</p>
-                    <div className={styles.tailoringChips}>
-                      {checklist.tailoring.chips.map(chip => (
-                        <button
-                          key={chip}
-                          type="button"
-                          className={styles.qchip}
-                          disabled={replying}
-                          onClick={() => send({ text: chip, tailoring: true })}
-                        >
-                          {chip}
-                        </button>
-                      ))}
-                    </div>
+                {openStage >= 4 && (
+                  <div className={[styles.scoutBubble, checklist?.ready ? styles.closer : ""].join(" ")}>
+                    <Typed
+                      text="Here's what you should know before you buy:"
+                      instant={!theater}
+                      onDone={() => setOpenStage(s0 => Math.max(s0, 5))}
+                    />
+                    {openStage >= 5 && !checklist && (
+                      <div className={styles.critWait} aria-hidden>
+                        <span /><span /><span />
+                      </div>
+                    )}
+                    {openStage >= 5 && checklist && checklist.items.length > 0 && (
+                      <div className={styles.critList}>
+                        {checklist.items.map((item, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className={styles.critRow}
+                            style={theater ? { animationDelay: `${i * 90}ms` } : { animation: "none" }}
+                            title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
+                            onClick={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
+                          >
+                            <span className={[
+                              styles.tick,
+                              item.status === "satisfied" ? styles.tickOn : item.status === "flagged" ? styles.tickFlag : "",
+                            ].join(" ")}>
+                              {item.status === "satisfied" ? "✓" : item.status === "flagged" ? "!" : "○"}
+                            </span>
+                            <span className={styles.critBody}>
+                              <span className={item.status === "satisfied" ? styles.critTextDone : styles.critText}>{item.check}</span>
+                              {item.evidence && <span className={styles.critEvidence}>{item.evidence}</span>}
+                            </span>
+                            {item.status !== "satisfied" && item.verify_via && item.verify_via !== "confirmed" && (
+                              <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
+                                {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {openStage >= 5 && checklist && report.seller_questions.length > 0
+                      && checklist.items.some(i => i.status === "open" && i.verify_via === "ask_seller") && (
+                      <div className={styles.sendNext}>
+                        <span className={styles.sendNextMsg}>&quot;{report.seller_questions[0]}&quot;</span>
+                        <CopyBtn text={report.seller_questions[0]} />
+                      </div>
+                    )}
+                    {openStage >= 5 && checklist?.tailoring && !checklist.tailoring.answer && (
+                      <div className={styles.tailoring}>
+                        <p className={styles.tailoringQ}>{checklist.tailoring.question}</p>
+                        <div className={styles.tailoringChips}>
+                          {checklist.tailoring.chips.map(chip => (
+                            <button
+                              key={chip}
+                              type="button"
+                              className={styles.qchip}
+                              disabled={replying}
+                              onClick={() => send({ text: chip, tailoring: true })}
+                            >
+                              {chip}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-              {(report.identification || report.condition) && (
-                <div className={styles.scoutBubble}>
-                  <p className={styles.sectionText}>
-                    {[report.identification, report.condition].filter(Boolean).join(" ")}
-                  </p>
-                </div>
-              )}
-              {(report.market_position || report.comps.length > 0) && (
-                <div className={styles.scoutBubble}>
-                  {report.market_position && <p className={styles.sectionText}>{report.market_position}</p>}
-                  {report.comps.length > 0 && (
-                    <>
-                      <p className={styles.compLead}>What similar ones are going for:</p>
-                      <CompStrip comps={report.comps} />
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {messages.map((m, i) =>
             m.role === "sys" ? (

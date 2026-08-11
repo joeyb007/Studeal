@@ -672,8 +672,20 @@
   font-size: 11px; color: var(--text-faint); line-height: 1.5;
 }
 
-.critLoading {
-  margin: 8px 0 0; font-size: 11.5px; color: var(--text-faint); font-style: italic;
-  animation: critPulse 1.6s ease-in-out infinite;
+.typeCursor { margin-left: 2px; color: var(--accent); animation: typeBlink 0.9s steps(2, start) infinite; }
+@keyframes typeBlink { to { visibility: hidden; } }
+.critWait { display: inline-flex; gap: 5px; padding: 10px 2px 2px; }
+.critWait span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary);
+  opacity: 0.4; animation: critWaitPulse 1.2s ease-in-out infinite;
 }
-@keyframes critPulse { 50% { opacity: 0.45; } }
+.critWait span:nth-child(2) { animation-delay: 0.18s; }
+.critWait span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes critWaitPulse { 40% { opacity: 1; transform: translateY(-2px); } }
+.compsIn { animation: compsFade 0.3s ease; }
+@keyframes compsFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.critRow { animation: critIn 0.28s ease backwards; }
+@keyframes critIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .typeCursor, .critWait span, .compsIn, .critRow { animation: none; }
+}

@@ -89,3 +89,19 @@ textarea:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .pageEnter { animation: none; }
 }
+
+/* Scrollbars in the house style: slim, quiet, brighter in the hand. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 188, 232, 0.18) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(168, 188, 232, 0.16);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(168, 188, 232, 0.32); background-clip: padding-box; border: 2px solid transparent; }
+*::-webkit-scrollbar-corner { background: transparent; }

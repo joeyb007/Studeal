@@ -86,6 +86,10 @@ text) and emit JSON with exactly these keys:
 
 "gone" is true ONLY if the page itself says the listing is unavailable, removed,
 deleted, sold, or not found. A page showing normal listing content means false.
+Some sites hide the page body behind a LOGIN WALL while the page metadata still
+fully describes the listing: metadata naming a specific item with a price means
+gone=false, and you extract description/price/location from the metadata. A
+login form is never evidence a listing is gone.
 "description" is the seller's own text, verbatim, trimmed to what matters.
 Only report what is actually on the page. Output JSON only."""
 
@@ -174,6 +178,8 @@ Rules:
 - Only claim what the screenshots and text support. Uncertainty goes in cant_tell.
 - photos_real is false only when EVERY image looks stock (renders, catalog
   shots, watermarks from other sites). One genuine photo of the item makes it true.
+  If you could not see the listing's photos at all (login wall, blocked page),
+  photos_real is null: absence from YOUR view is never evidence of stock photos.
 - Legitimacy: price far below the band, stock photos, or off-platform payment asks
   raise it; normal listings are "fine".
 - Never use em dashes. No greetings. JSON only."""
@@ -299,13 +305,35 @@ async def _visit(listing: Listing) -> tuple[str, list[bytes]] | None:
                 **goto_kwargs,
             )
             snap = await _settled_snapshot(page)
+            # Page metadata rides ahead of the body: FB serves a login wall in
+            # the body while og tags still carry the listing's title, price,
+            # and description. Without this, live FB listings read as "gone".
+            metas = await page.evaluate(
+                """() => {
+                    const grab = sel => document.querySelector(sel)?.content ?? null;
+                    return {
+                        title: document.title,
+                        og_title: grab('meta[property="og:title"]'),
+                        og_description: grab('meta[property="og:description"]'),
+                    };
+                }"""
+            )
+            metas = metas if isinstance(metas, dict) else {}
+            head = "\n".join(
+                f"{key}: {value}" for key, value in [
+                    ("Page title", metas.get("title")),
+                    ("og:title", metas.get("og_title")),
+                    ("og:description", metas.get("og_description")),
+                ] if isinstance(value, str) and value
+            )
+            text = (f"Page metadata:\n{head}\n\nPage body:\n" if head else "") + snap.text
             frames: list[bytes] = []
             frames.append(await page.screenshot(type="jpeg", quality=55))
             for _ in range(_FRAME_COUNT - 1):
                 await page.mouse.wheel(0, 900)
                 await page.wait_for_timeout(1_200)
                 frames.append(await page.screenshot(type="jpeg", quality=55))
-            return snap.text, frames
+            return text, frames
     except Exception as exc:
         logger.warning("inspector: visit failed for listing %d: %s", listing.id, exc)
         return None

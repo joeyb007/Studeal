@@ -253,13 +253,13 @@ export default function InspectorPanel({
   }, [watchlistId, inspection?.status, listing.id]);
 
   const fetchRundown = async () => {
-    if (!watchlistId || rundownBusy) return;
+    if (rundownBusy) return;
     setRundownBusy(true);
     try {
       const res = await fetch(`/api/listings/${listing.id}/rundown`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ watchlist_id: watchlistId }),
+        body: JSON.stringify({ watchlist_id: watchlistId ?? null }),
       });
       if (!res.ok) return;
       const data: Rundown = await res.json();
@@ -595,33 +595,24 @@ export default function InspectorPanel({
                       </p>
                     )}
                     {openStage >= 5 && checklist && checklist.items.length > 0 && (
-                      <div className={styles.critList}>
-                        {checklist.items.map((item, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            className={styles.critRow}
-                            style={theater ? { animationDelay: `${i * 90}ms` } : { animation: "none" }}
-                            title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
-                            onClick={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
-                          >
-                            <span className={[
-                              styles.tick,
-                              item.status === "satisfied" ? styles.tickOn : item.status === "flagged" ? styles.tickFlag : "",
-                            ].join(" ")}>
-                              {item.status === "satisfied" ? "✓" : item.status === "flagged" ? "!" : "○"}
-                            </span>
-                            <span className={styles.critBody}>
-                              <span className={item.status === "satisfied" ? styles.critTextDone : styles.critText}>{item.check}</span>
-                              {item.evidence && <span className={styles.critEvidence}>{item.evidence}</span>}
-                            </span>
-                            {item.status !== "satisfied" && item.verify_via && item.verify_via !== "confirmed" && (
-                              <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
-                                {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
-                              </span>
-                            )}
-                          </button>
-                        ))}
+                      <div className={styles.critPanel}>
+                        <div className={styles.critHead}>
+                          <span>checklist</span>
+                          <span className={styles.critCount}>
+                            {checklist.items.filter(i => i.status === "satisfied").length} / {checklist.items.length}
+                          </span>
+                        </div>
+                        <div className={styles.critList}>
+                          {checklist.items.map((item, i) => (
+                            <CritRow
+                              key={i}
+                              item={item}
+                              index={i}
+                              theater={theater}
+                              onToggle={() => toggleCheck(i, item.status === "satisfied" ? "open" : "satisfied")}
+                            />
+                          ))}
+                        </div>
                       </div>
                     )}
                     {openStage >= 5 && checklist && report.seller_questions.length > 0
@@ -629,24 +620,6 @@ export default function InspectorPanel({
                       <div className={styles.sendNext}>
                         <span className={styles.sendNextMsg}>&quot;{report.seller_questions[0]}&quot;</span>
                         <CopyBtn text={report.seller_questions[0]} />
-                      </div>
-                    )}
-                    {openStage >= 5 && checklist?.tailoring && !checklist.tailoring.answer && (
-                      <div className={styles.tailoring}>
-                        <p className={styles.tailoringQ}>{checklist.tailoring.question}</p>
-                        <div className={styles.tailoringChips}>
-                          {checklist.tailoring.chips.map(chip => (
-                            <button
-                              key={chip}
-                              type="button"
-                              className={styles.qchip}
-                              disabled={replying}
-                              onClick={() => send({ text: chip, tailoring: true })}
-                            >
-                              {chip}
-                            </button>
-                          ))}
-                        </div>
                       </div>
                     )}
                   </div>
@@ -696,10 +669,14 @@ export default function InspectorPanel({
             ),
           )}
 
-          {checklist?.ready && watchlistId && !rundownDone && inspection?.status === "ok" && (
-            <div className={styles.rundownOffer}>
-              <button type="button" className={styles.qchip} disabled={rundownBusy} onClick={fetchRundown}>
-                {rundownBusy ? "putting it together…" : "get the pickup rundown"}
+          {checklist?.ready && !rundownDone && inspection?.status === "ok" && (
+            <div className={styles.readyNudge}>
+              <div className={styles.readyNudgeText}>
+                <span className={styles.readyNudgeTitle}>Everything checked out.</span>
+                <span className={styles.readyNudgeSub}>Confirm the buy and take the pickup rundown with you.</span>
+              </div>
+              <button type="button" className={styles.readyNudgeBtn} disabled={rundownBusy} onClick={fetchRundown}>
+                {rundownBusy ? "Putting it together…" : "Confirm purchase"}
               </button>
             </div>
           )}
@@ -812,6 +789,55 @@ function ScoutAvatar({ small = false }: { small?: boolean }) {
         <path d="M3 12 L12 10 L21 12 L12 14 Z" />
       </svg>
     </span>
+  );
+}
+
+// A criterion pops in as an open circle, then a beat later settles into
+// what Scout already knows: the tick snaps in and the text strikes out,
+// or the flag lands. Reads as Scout working the list in front of you.
+function CritRow({
+  item,
+  index,
+  theater,
+  onToggle,
+}: {
+  item: Checklist["items"][number];
+  index: number;
+  theater: boolean;
+  onToggle: () => void;
+}) {
+  const [settled, setSettled] = useState(!theater || item.status === "open");
+  useEffect(() => {
+    if (settled) return;
+    const t = setTimeout(() => setSettled(true), 620 + index * 130);
+    return () => clearTimeout(t);
+  }, [settled, index]);
+  const status = settled ? item.status : "open";
+  return (
+    <button
+      type="button"
+      className={styles.critRow}
+      style={theater ? { animationDelay: `${index * 110}ms` } : { animation: "none" }}
+      title={item.status === "satisfied" ? "Mark as not verified" : "Mark as verified yourself"}
+      onClick={onToggle}
+    >
+      <span className={[
+        styles.tick,
+        status === "satisfied" ? styles.tickOn : status === "flagged" ? styles.tickFlag : "",
+        settled && item.status !== "open" ? styles.tickSettle : "",
+      ].join(" ")}>
+        {status === "satisfied" ? "✓" : status === "flagged" ? "!" : "○"}
+      </span>
+      <span className={styles.critBody}>
+        <span className={status === "satisfied" ? styles.critTextDone : styles.critText}>{item.check}</span>
+        {settled && item.evidence && <span className={styles.critEvidence}>{item.evidence}</span>}
+      </span>
+      {status !== "satisfied" && item.verify_via && item.verify_via !== "confirmed" && (
+        <span className={[styles.verifyTag, item.verify_via === "ask_seller" ? styles.tagAsk : styles.tagPickup].join(" ")}>
+          {item.verify_via === "ask_seller" ? "ask seller" : "at pickup"}
+        </span>
+      )}
+    </button>
   );
 }
 

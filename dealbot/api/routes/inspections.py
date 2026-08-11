@@ -1127,7 +1127,7 @@ Output JSON: {"at_pickup": [str], "walk_if": [str]}
 
 
 class RundownRequest(BaseModel):
-    watchlist_id: int
+    watchlist_id: int | None = None
 
 
 class RundownVerified(BaseModel):
@@ -1168,20 +1168,23 @@ async def pickup_rundown(
     deterministically; the LLM only writes the how-to-test imperatives."""
     async with get_async_session() as session:
         listing = await session.get(Listing, listing_id)
-        watchlist = await session.get(Watchlist, body.watchlist_id)
+        watchlist = (
+            await session.get(Watchlist, body.watchlist_id)
+            if body.watchlist_id is not None else None
+        )
         row = await session.get(InspectionChecklist, (current_user.id, listing_id))
     if listing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found.")
-    if watchlist is None or watchlist.user_id != current_user.id:
+    if body.watchlist_id is not None and (watchlist is None or watchlist.user_id != current_user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     if row is None or not row.items:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No checklist to run down yet.")
 
     context = (
         WatchlistContext.model_validate_json(watchlist.context)
-        if watchlist.context else None
+        if watchlist is not None and watchlist.context else None
     )
-    market = await _watchlist_market(watchlist, context)
+    market = await _watchlist_market(watchlist, context) if watchlist is not None else None
     negotiation = (market or {}).get("negotiation") if market else None
     typical = (market or {}).get("typical") if market else None
 

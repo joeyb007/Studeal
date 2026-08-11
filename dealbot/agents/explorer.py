@@ -402,6 +402,12 @@ class Explorer:
                 and snap.url == prev_url
             ):
                 if len(snap.text) - len(prev_snap.text) < self.SCROLL_YIELD_MIN_CHARS:
+                    # Lazy-load grace: slow sites (kijiji) render the next
+                    # chunk a beat after the scroll — re-look once before
+                    # calling the scroll dry.
+                    await asyncio.sleep(_SETTLE_DELAY_S)
+                    snap = await _settled_snapshot(session.page, image_spec, marketplace)
+                if len(snap.text) - len(prev_snap.text) < self.SCROLL_YIELD_MIN_CHARS:
                     low_yield_scrolls += 1
                 else:
                     low_yield_scrolls = 0

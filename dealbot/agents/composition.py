@@ -286,10 +286,12 @@ async def _run_one_lane(
 
     pages = 0
     done_reason = "error"
+    session_opened = False
 
     async def _lane_work() -> None:
-        nonlocal pages, done_reason
+        nonlocal pages, done_reason, session_opened
         async with build_session_from_env() as session:
+            session_opened = True
             explorer = Explorer(nav_llm, trace=trace, escalation_llm=nav_full_llm)
             result = await explorer.explore(
                 entry_url=target.entry_url,
@@ -357,7 +359,10 @@ async def _run_one_lane(
                 timeout=float(os.environ.get("AGENT_LANE_DEADLINE_S", "420")),
             )
     except asyncio.TimeoutError:
-        done_reason = "timed out waiting for a browser" if pages == 0 else "timed out"
+        # pages only lands when explore() returns, so it can't distinguish
+        # "never got a browser" from "deadline hit mid-browse" — the session
+        # flag can. Mid-browse lanes already sank their pages incrementally.
+        done_reason = "timed out mid-browse" if session_opened else "timed out waiting for a browser"
         logger.warning(
             "run_hunt[%s]: lane deadline hit on %s (%s)",
             query, target.marketplace, done_reason,

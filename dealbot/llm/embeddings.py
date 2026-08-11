@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # Backend-derived: Titan V2 is 1024-d, OpenAI text-embedding-3-small is
 # 1536-d. Read at import time — the process must start with the backend it
 # will write with, and mixed-dimension writes fail loudly at pgvector.
-EMBED_DIM = 1024 if os.environ.get("EMBEDDING_BACKEND") == "bedrock" else 1536
+EMBED_DIM = 1024 if os.environ.get("EMBEDDING_BACKEND") in ("bedrock", "bedrock-mm") else 1536
 
 
 class EmbeddingClient(ABC):
@@ -92,6 +92,11 @@ class OllamaEmbeddingClient(EmbeddingClient):
 
 def _get_client() -> EmbeddingClient:
     backend = os.environ.get("EMBEDDING_BACKEND", "openai")
+    if backend == "bedrock-mm":
+        # Titan Multimodal G1: same 1024-d space for text-only queries and
+        # fused text+image listing vectors.
+        from dealbot.llm.bedrock_client import BedrockMultimodalEmbeddingClient
+        return BedrockMultimodalEmbeddingClient()
     if backend == "bedrock":
         # Titan V2, 1024-dim. Selecting this before migration 0025 fails
         # loudly at the pgvector write (EMBED_DIM is still 1536) — intended.
@@ -123,3 +128,45 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     for slot, vec in zip(idx, vectors):
         out[slot] = vec
     return out
+
+
+async def _fetch_image(url: str) -> bytes | None:
+    """Listing photo bytes for fused embedding; None quietly on any failure."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            if response.is_success and 0 < len(response.content) < 5 * 1024 * 1024:
+                return response.content
+    except Exception:
+        logger.debug("embed: image fetch failed for %s", url[:80])
+    return None
+
+
+async def embed_listing(text: str, image_url: str | None) -> list[float]:
+    """One listing → one vector. On the multimodal backend the photo fuses
+    with the text (a golf club whose title never says golf still embeds as
+    golf); every other backend, and any image failure, falls back to text."""
+    if os.environ.get("EMBEDDING_BACKEND") == "bedrock-mm" and image_url:
+        from dealbot.llm.bedrock_client import BedrockMultimodalEmbeddingClient
+
+        image = await _fetch_image(image_url)
+        if image is not None:
+            vector = await BedrockMultimodalEmbeddingClient().embed_with_image(text, image)
+            if vector:
+                return vector
+    return await embed_text(text)
+
+
+async def embed_listings(items: list[tuple[str, str | None]]) -> list[list[float]]:
+    """Bounded fan-out of embed_listing; positionally aligned, [] on failure."""
+    import asyncio
+
+    if not items:
+        return []
+    semaphore = asyncio.Semaphore(6)
+
+    async def _one(text: str, image_url: str | None) -> list[float]:
+        async with semaphore:
+            return await embed_listing(text, image_url)
+
+    return list(await asyncio.gather(*(_one(t, u) for t, u in items)))

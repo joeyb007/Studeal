@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from dealbot.agents.workers.extractor import Offer
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Hunt, HuntListing, Listing
-from dealbot.llm.embeddings import embed_texts
+from dealbot.llm.embeddings import embed_listings
 from dealbot.persistence.canonicalize import canonicalize_url
 
 logger = logging.getLogger(__name__)
@@ -36,10 +36,13 @@ def listing_embed_text(offer: Offer) -> str:
 
 
 async def _embeddings_for(offers: list[Offer]) -> list[list[float]]:
-    """One batched call. Never raises — a hunt must not lose its listings
-    because the embedding service is down."""
+    """Bounded fan-out. On the multimodal backend each listing's photo fuses
+    into its vector. Never raises — a hunt must not lose its listings because
+    the embedding service is down."""
     try:
-        return await embed_texts([listing_embed_text(o) for o in offers])
+        return await embed_listings([
+            (listing_embed_text(o), o.image_url) for o in offers
+        ])
     except Exception:
         logger.warning("persist_offers: embedding batch failed", exc_info=True)
         return [[] for _ in offers]

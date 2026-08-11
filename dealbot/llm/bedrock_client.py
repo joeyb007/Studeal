@@ -242,6 +242,69 @@ class BedrockClient(LLMClient):
         return LLMResponse(content=content, tool_calls=tool_calls)
 
 
+_DEFAULT_MM_EMBED_MODEL = "amazon.titan-embed-image-v1"
+
+
+def build_mm_embed_payload(text: str | None, image_b64: str | None, dimensions: int = 1024) -> dict:
+    """Titan Multimodal G1 request body: text, image, or both fuse into ONE
+    vector. Pure so the shape is testable without the network."""
+    payload: dict = {"embeddingConfig": {"outputEmbeddingLength": dimensions}}
+    if text and text.strip():
+        payload["inputText"] = text.strip()[:2000]
+    if image_b64:
+        payload["inputImage"] = image_b64
+    return payload
+
+
+class BedrockMultimodalEmbeddingClient(EmbeddingClient):
+    """Titan Multimodal Embeddings G1 — 1024 dims, text + image fused into a
+    single vector. Text-only inputs embed into the same space, so queries and
+    intent documents stay comparable with photo-carrying listings."""
+
+    _DIMENSIONS = 1024
+    _CONCURRENCY = 8
+
+    def __init__(self, model: str | None = None, region: str | None = None) -> None:
+        self.model = model or os.environ.get("BEDROCK_MM_EMBED_MODEL", _DEFAULT_MM_EMBED_MODEL)
+        self._region = region or os.environ.get("AWS_REGION", "us-east-1")
+
+    def _client_factory(self):
+        import aioboto3
+
+        return aioboto3.Session().client("bedrock-runtime", region_name=self._region)
+
+    async def _invoke(self, payload: dict) -> list[float]:
+        try:
+            async with self._client_factory() as client:
+                response = await client.invoke_model(
+                    modelId=self.model, body=json.dumps(payload),
+                )
+                data = json.loads(await response["body"].read())
+                embedding = data.get("embedding")
+                return embedding if isinstance(embedding, list) else []
+        except Exception:
+            logger.warning("BedrockMultimodalEmbeddingClient: invoke failed", exc_info=True)
+            return []
+
+    async def embed(self, text: str) -> list[float]:
+        return await self._invoke(build_mm_embed_payload(text, None, self._DIMENSIONS))
+
+    async def embed_with_image(self, text: str, image: bytes) -> list[float]:
+        b64 = base64.b64encode(image).decode("ascii")
+        return await self._invoke(build_mm_embed_payload(text, b64, self._DIMENSIONS))
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        semaphore = asyncio.Semaphore(self._CONCURRENCY)
+
+        async def _one(t: str) -> list[float]:
+            async with semaphore:
+                return await self.embed(t)
+
+        return list(await asyncio.gather(*(_one(t) for t in texts)))
+
+
 class BedrockEmbeddingClient(EmbeddingClient):
     """Titan Text Embeddings V2 — 1024 dims.
 

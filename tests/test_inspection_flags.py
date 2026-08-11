@@ -138,3 +138,14 @@ def test_image_mime_sniffing():
     assert _sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBP" + b"x" * 8) == "image/webp"
     assert _sniff_image_mime(b"GIF89a" + b"x" * 8) == "image/gif"
     assert _sniff_image_mime(b"unknown-bytes") == "image/jpeg"
+
+
+def test_mm_embed_payload_shape():
+    from dealbot.llm.bedrock_client import build_mm_embed_payload
+    both = build_mm_embed_payload("golf driver", "aGVsbG8=")
+    assert both == {"embeddingConfig": {"outputEmbeddingLength": 1024},
+                    "inputText": "golf driver", "inputImage": "aGVsbG8="}
+    text_only = build_mm_embed_payload("golf driver", None)
+    assert "inputImage" not in text_only
+    image_only = build_mm_embed_payload("  ", "aGVsbG8=")
+    assert "inputText" not in image_only

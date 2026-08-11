@@ -27,7 +27,7 @@ from sqlalchemy import func, select, text  # noqa: E402
 
 from dealbot.db.database import get_async_session  # noqa: E402
 from dealbot.db.models import Listing  # noqa: E402
-from dealbot.llm.embeddings import embed_texts  # noqa: E402
+from dealbot.llm.embeddings import embed_listings, embed_texts  # noqa: E402
 
 _INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS ix_listings_embedding "
@@ -41,7 +41,15 @@ def _embed_text_for(row: Listing) -> str:
     return f"{row.title} | {row.condition} | {row.marketplace} | {row.location or ''}"
 
 
-async def run(batch_size: int, dry_run: bool) -> None:
+async def run(batch_size: int, dry_run: bool, re_embed_all: bool = False) -> None:
+    if re_embed_all:
+        # Space swap (e.g. text → multimodal): every vector is stale. NULL
+        # them first so the idempotent NULL-only loop below does the rest —
+        # interrupting and re-running stays safe.
+        async with get_async_session() as session:
+            await session.execute(text("UPDATE listings SET embedding = NULL"))
+            await session.commit()
+        print("re-embed: cleared all vectors")
     async with get_async_session() as session:
         pending = (await session.execute(
             select(func.count()).select_from(Listing).where(Listing.embedding.is_(None))
@@ -59,7 +67,11 @@ async def run(batch_size: int, dry_run: bool) -> None:
             )).scalars().all()
             if not rows:
                 break
-            vectors = await embed_texts([_embed_text_for(r) for r in rows])
+            # embed_listings fuses each row's photo on the multimodal
+            # backend and degrades to text everywhere else.
+            vectors = await embed_listings([
+                (_embed_text_for(r), r.image_url) for r in rows
+            ])
             embedded = 0
             for row, vector in zip(rows, vectors):
                 if vector:
@@ -83,8 +95,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch", type=int, default=100)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--re-embed-all", action="store_true",
+                        help="NULL every vector first: full space swap")
     args = parser.parse_args()
-    asyncio.run(run(args.batch, args.dry_run))
+    asyncio.run(run(args.batch, args.dry_run, args.re_embed_all))
 
 
 if __name__ == "__main__":

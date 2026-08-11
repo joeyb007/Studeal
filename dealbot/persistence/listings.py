@@ -35,6 +35,15 @@ def listing_embed_text(offer: Offer) -> str:
     return f"{offer.title} | {offer.condition} | {offer.marketplace} | {offer.location or ''}"
 
 
+def listing_row_embed_text(listing: Listing) -> str:
+    """Same composition as listing_embed_text, from a persisted row — the
+    consumer embed path must produce vectors in the identical space."""
+    return (
+        f"{listing.title} | {listing.condition} | "
+        f"{listing.marketplace} | {listing.location or ''}"
+    )
+
+
 async def _embeddings_for(offers: list[Offer]) -> list[list[float]]:
     """Bounded fan-out. On the multimodal backend each listing's photo fuses
     into its vector. Never raises — a hunt must not lose its listings because
@@ -101,15 +110,25 @@ class PersistResult:
     new_global_ids: list[int] = field(default_factory=list)
 
 
-async def persist_offers(offers: list[Offer], hunt_id: int | None = None) -> PersistResult:
+async def persist_offers(
+    offers: list[Offer],
+    hunt_id: int | None = None,
+    *,
+    embed: bool = True,
+) -> PersistResult:
     """Upsert Offers → listings table. Returns the written count plus listing
     identities; rows whose `first_seen_at` was set by this call are globally new.
+
+    embed=False persists with NULL embeddings — the hunt path uses this so the
+    browse result lands immediately and the embed consumer task fills vectors
+    afterwards. The link-in/fetch path keeps the default synchronous embed
+    because its caller needs the vector for gating right away.
     """
     if not offers:
         return PersistResult()
 
     now = datetime.now(timezone.utc)
-    embeddings = await _embeddings_for(offers)
+    embeddings = await _embeddings_for(offers) if embed else [[] for _ in offers]
     result = PersistResult()
     async with get_async_session() as session:
         for offer, vector in zip(offers, embeddings):
@@ -140,7 +159,10 @@ async def persist_offers(offers: list[Offer], hunt_id: int | None = None) -> Per
                         "currency": offer.currency,
                         "location": offer.location,
                         "condition": offer.condition,
-                        "embedding": embedding,
+                        # Never null out an existing vector: a re-sighted
+                        # listing keeps its embedding when this call didn't
+                        # compute one (embed=False or embedding failure).
+                        **({"embedding": embedding} if embedding is not None else {}),
                         "last_seen_at": now,
                         # A null image on re-sight means capture didn't run or
                         # failed, not that the listing lost its photo — keep
@@ -186,6 +208,66 @@ async def persist_offers(offers: list[Offer], hunt_id: int | None = None) -> Per
 
         await session.commit()
     return result
+
+
+async def _embed_rows(session, rows: list[Listing]) -> int:
+    """Embed the given rows in place (bounded fan-out inside embed_listings).
+    Best-effort: failures leave embeddings NULL for the healer sweep."""
+    if not rows:
+        return 0
+    try:
+        vectors = await embed_listings([
+            (listing_row_embed_text(r), r.image_url) for r in rows
+        ])
+    except Exception:
+        logger.warning("embed consumer: batch failed", exc_info=True)
+        return 0
+    embedded = 0
+    for row, vector in zip(rows, vectors):
+        if vector:
+            row.embedding = vector
+            embedded += 1
+    return embedded
+
+
+async def embed_pending_for_hunt(hunt_id: int) -> int:
+    """Consumer half of the embed pipeline: fill NULL embeddings for this
+    hunt's listings. Returns how many rows got vectors."""
+    async with get_async_session() as session:
+        rows = (await session.execute(
+            select(Listing)
+            .join(HuntListing, HuntListing.listing_id == Listing.id)
+            .where(HuntListing.hunt_id == hunt_id)
+            .where(Listing.embedding.is_(None))
+        )).scalars().all()
+        embedded = await _embed_rows(session, rows)
+        await session.commit()
+    if rows:
+        logger.info(
+            "embed consumer: hunt=%d embedded %d/%d pending listings",
+            hunt_id, embedded, len(rows),
+        )
+    return embedded
+
+
+async def embed_orphan_listings(limit: int = 200) -> int:
+    """Healer sweep: embed any live listing still missing its vector (a crashed
+    consumer task, a transient Bedrock outage). Oldest first, bounded batch."""
+    async with get_async_session() as session:
+        rows = (await session.execute(
+            select(Listing)
+            .where(Listing.embedding.is_(None))
+            .where(Listing.sold_at.is_(None))
+            .order_by(Listing.first_seen_at)
+            .limit(limit)
+        )).scalars().all()
+        embedded = await _embed_rows(session, rows)
+        await session.commit()
+    if rows:
+        logger.info(
+            "embed healer: embedded %d/%d orphan listings", embedded, len(rows),
+        )
+    return embedded
 
 
 async def mark_new_for_watchlist(hunt_id: int) -> list[int]:

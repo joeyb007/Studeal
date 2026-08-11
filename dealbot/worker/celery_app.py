@@ -77,6 +77,12 @@ app.conf.update(
             "task": "dealbot.worker.celery_app.cleanup_stale_watchlists",
             "schedule": crontab(hour=5, minute=10),
         },
+        # Every 10 min — backfill vectors for listings the embed consumer
+        # missed (crashed task, transient Bedrock outage)
+        "heal-missing-embeddings": {
+            "task": "dealbot.worker.tasks.embed_orphan_listings_task",
+            "schedule": crontab(minute="*/10"),
+        },
         # 05:20 UTC — hard-delete listings unseen for LISTING_PURGE_DAYS.
         # Reads already stopped serving them at LISTING_STALE_DAYS; this is
         # capacity management, deliberately far behind so price history

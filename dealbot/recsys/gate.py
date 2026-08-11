@@ -43,6 +43,11 @@ async def pool_candidates(watchlist_id: int, *, limit: int = 50) -> list[Listing
     become alert candidates, and the ranker must never see what it cannot
     have. Returns [] when the watchlist has no intent vector: no vector, no
     gate — the caller falls through to a full hunt.
+
+    Embed lag: hunts persist with NULL vectors and a consumer task fills them
+    minutes later, so this count briefly undercounts a just-finished hunt.
+    That failure direction is safe — undercounting triggers a hunt, never a
+    stale cache serve.
     """
     async with get_async_session() as session:
         watchlist = await session.get(Watchlist, watchlist_id)

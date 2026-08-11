@@ -63,6 +63,15 @@ async def rig(monkeypatch):
     monkeypatch.setattr(tasks_mod, "_maybe_governor", lambda: None)
     monkeypatch.setattr(tasks_mod, "_maybe_dispatch_alerts", lambda hunt_id: None)
     monkeypatch.setattr(tasks_mod, "_maybe_recompute_rankings", lambda watchlist_id: None)
+    # The embed consumer enqueues a Celery task; in tests, short-circuit it to
+    # the direct chain so the seams above (re-patchable per test) observe calls.
+    monkeypatch.setattr(
+        tasks_mod, "_maybe_embed_then_chain",
+        lambda hunt_id, watchlist_id, *, has_new: (
+            tasks_mod._maybe_dispatch_alerts(hunt_id) if has_new else None,
+            tasks_mod._maybe_recompute_rankings(watchlist_id),
+        ),
+    )
 
     async with factory() as s:
         user = User(email="w@t.com", hashed_password="x")
@@ -89,7 +98,7 @@ async def test_successful_hunt_writes_hunt_row_and_events(rig):
     async def fake_run_hunt(spec, events=None):
         return [object(), object()]
 
-    async def fake_persist(offers, hunt_id=None):
+    async def fake_persist(offers, hunt_id=None, embed=True):
         assert hunt_id is not None
         return PersistResult(written=2, listing_ids=[1, 2], new_global_ids=[2])
 
@@ -191,7 +200,7 @@ async def test_flaky_governor_fails_open(rig):
     async def fake_run_hunt(spec, events=None):
         return [object()]
 
-    async def fake_persist(offers, hunt_id=None):
+    async def fake_persist(offers, hunt_id=None, embed=True):
         return PersistResult(written=1, listing_ids=[1], new_global_ids=[1])
 
     async def fake_mark_new(hunt_id):
@@ -301,7 +310,7 @@ async def test_insufficient_pool_runs_the_full_hunt_and_merges(rig):
         browsed["called"] = True
         return []
 
-    async def _persist(offers, hunt_id=None):
+    async def _persist(offers, hunt_id=None, embed=True):
         return PersistResult(written=0)
 
     monkeypatch.setattr(tasks_mod, "pool_candidates", _thin_candidates)
@@ -342,7 +351,7 @@ async def test_pro_user_always_hunts_live(rig):
     async def _browse(context, events=None):
         return []
 
-    async def _persist(offers, hunt_id=None):
+    async def _persist(offers, hunt_id=None, embed=True):
         return PersistResult(written=0)
 
     monkeypatch.setattr(tasks_mod, "pool_candidates", _candidates)

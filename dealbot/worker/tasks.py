@@ -126,7 +126,9 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         offers = await run_hunt(context, events=events)
 
         # 5. Persist offers with hunt provenance; flag alert candidates.
-        result = await persist_offers(offers, hunt_id=hunt_id)
+        # embed=False: vectors are filled by the embed consumer task below,
+        # so the browse result lands without a serial embedding tail.
+        result = await persist_offers(offers, hunt_id=hunt_id, embed=False)
         # Pool-first alerts, both branches: even below k, matches from other
         # agents' finds ride along as alert candidates.
         if candidates:
@@ -168,10 +170,10 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         hunt_id=hunt_id, watchlist_id=watchlist_id,
         status="succeeded", duration_s=_elapsed_s(started_at),
     ))
-    if new_ids:
-        _maybe_dispatch_alerts(hunt_id)
-    _maybe_recompute_rankings(watchlist_id)
-    _maybe_post_hunt_inspections(hunt_id, watchlist_id)
+    # Alerts and rankings both gate on cosine similarity, so the whole chain
+    # rides behind the embed consumer — it fires the same three hooks once
+    # this hunt's vectors exist.
+    _maybe_embed_then_chain(hunt_id, watchlist_id, has_new=bool(new_ids))
 
     logger.info(
         "research_for_agent: wl=%d hunt=%d offers=%d persisted=%d new=%d",
@@ -273,6 +275,47 @@ def _maybe_governor():
     from dealbot.worker.governor import build_governor
 
     return build_governor()
+
+
+@app.task(name="dealbot.worker.tasks.embed_hunt_listings_task")
+def embed_hunt_listings_task(hunt_id: int, watchlist_id: int, has_new: bool) -> dict:
+    """Embed consumer: fill this hunt's NULL vectors, then fire the post-hunt
+    chain (alerts / rankings / inspections) that depends on them. The chain
+    fires even if embedding partially fails — the healer sweep backfills."""
+    from dealbot.persistence.listings import embed_pending_for_hunt
+
+    try:
+        embedded = asyncio.run(embed_pending_for_hunt(hunt_id))
+    except Exception:
+        logger.exception("embed consumer failed for hunt %d", hunt_id)
+        embedded = 0
+    if has_new:
+        _maybe_dispatch_alerts(hunt_id)
+    _maybe_recompute_rankings(watchlist_id)
+    _maybe_post_hunt_inspections(hunt_id, watchlist_id)
+    return {"hunt_id": hunt_id, "embedded": embedded}
+
+
+def _maybe_embed_then_chain(hunt_id: int, watchlist_id: int, *, has_new: bool) -> None:
+    """Fire-and-forget; a dead broker must not fail the hunt. Falls back to
+    chaining directly so alerts/rankings never silently stall."""
+    try:
+        embed_hunt_listings_task.delay(hunt_id, watchlist_id, has_new)
+    except Exception:
+        logger.warning("embed consumer enqueue failed for hunt %d", hunt_id)
+        if has_new:
+            _maybe_dispatch_alerts(hunt_id)
+        _maybe_recompute_rankings(watchlist_id)
+        _maybe_post_hunt_inspections(hunt_id, watchlist_id)
+
+
+@app.task(name="dealbot.worker.tasks.embed_orphan_listings_task")
+def embed_orphan_listings_task() -> dict:
+    """Beat healer: backfill vectors for any live listing that missed the
+    consumer pass (crashed task, transient embedding outage)."""
+    from dealbot.persistence.listings import embed_orphan_listings
+
+    return {"embedded": asyncio.run(embed_orphan_listings())}
 
 
 @app.task(name="dealbot.worker.tasks.recompute_rankings_task")

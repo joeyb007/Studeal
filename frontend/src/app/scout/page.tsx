@@ -358,10 +358,7 @@ export default function ScoutPage() {
         <div className={styles.overlay} onClick={() => setConfirmDelete(null)}>
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
             <p className={styles.modalTitle}>Delete this conversation?</p>
-            <p className={styles.modalSub}>
-              &quot;{confirmDelete.title.slice(0, 60)}&quot; and everything you and Scout
-              worked out about it goes. The listing itself stays in the pool.
-            </p>
+            <p className={styles.modalSub}>&quot;{confirmDelete.title.slice(0, 60)}&quot;</p>
             <div className={styles.modalActions}>
               <button className={styles.modalGhost} onClick={() => setConfirmDelete(null)}>Keep it</button>
               <button className={styles.modalDanger} onClick={deleteThread} disabled={deleting}>

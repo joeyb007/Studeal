@@ -106,7 +106,6 @@ export default function InspectorPanel({
   const [rundownBusy, setRundownBusy] = useState(false);
   const [rundownDone, setRundownDone] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [showNotes, setShowNotes] = useState(false);
   const [stage, setStage] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -542,12 +541,9 @@ export default function InspectorPanel({
                   </div>
                 )}
               </div>
-              <button type="button" className={styles.notesToggle} onClick={() => setShowNotes(v => !v)}>
-                {showNotes ? "Hide Scout's full notes" : "Scout's full notes"}
-              </button>
-              {showNotes && (
-                <div className={styles.scoutBubble}><FullNotes report={report} /></div>
-              )}
+              <div className={styles.scoutBubble}>
+                <FullNotes report={report} />
+              </div>
             </div>
           )}
 

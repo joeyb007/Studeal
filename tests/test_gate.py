@@ -46,7 +46,7 @@ def _listing(n: int) -> Listing:
 def test_constants_default_to_measured_values():
     from dealbot.recsys.gate import GATE_SIMILARITY_TAU, GATE_SUFFICIENCY_K
 
-    assert GATE_SIMILARITY_TAU == 0.40, "measured in Titan space 2026-08-01 — change via env only"
+    assert GATE_SIMILARITY_TAU == 0.50, "measured in Titan MM space 2026-08-11 — change via env only"
     assert GATE_SUFFICIENCY_K == 10
 
 

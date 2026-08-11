@@ -71,6 +71,18 @@ interface Market {
   going_rate_prose: string | null;
 }
 
+interface PoolItem {
+  id: number;
+  title: string;
+  price: number;
+  currency: string;
+  marketplace: string;
+  url: string;
+  image_url: string | null;
+  location: string | null;
+  first_seen_at: string;
+}
+
 interface SweepListing {
   id: number;
   title: string;
@@ -192,6 +204,95 @@ function trustChips(
   return chips;
 }
 
+const ASK_EXAMPLES = [
+  "any green ones under $250?",
+  "which ones mention the original box?",
+  "cheapest one in good condition?",
+  "anything with barely any wear?",
+];
+
+function useAskPlaceholder(active: boolean) {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    if (!active) return;
+    let example = 0;
+    let i = 0;
+    let deleting = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const full = ASK_EXAMPLES[example];
+      if (!deleting) {
+        i++;
+        setText(full.slice(0, i));
+        if (i >= full.length) {
+          deleting = true;
+          timer = setTimeout(tick, 1600);
+          return;
+        }
+        timer = setTimeout(tick, 42);
+      } else {
+        i--;
+        setText(full.slice(0, i));
+        if (i <= 0) {
+          deleting = false;
+          example = (example + 1) % ASK_EXAMPLES.length;
+          timer = setTimeout(tick, 450);
+          return;
+        }
+        timer = setTimeout(tick, 22);
+      }
+    };
+    timer = setTimeout(tick, 600);
+    return () => clearTimeout(timer);
+  }, [active]);
+  return text ? `Ask Scout: ${text}` : "Ask Scout anything about these listings…";
+}
+
+function SortSelect<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: [T, string][];
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const label = options.find(([v]) => v === value)?.[1] ?? "";
+  return (
+    <div className={styles.selWrap} ref={wrapRef}>
+      <button type="button" className={[styles.selBtn, open ? styles.selBtnOpen : ""].join(" ")} onClick={() => setOpen(o => !o)}>
+        {label}
+        <svg className={[styles.selChevron, open ? styles.selChevronUp : ""].join(" ")} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      {open && (
+        <div className={styles.selMenu}>
+          {options.map(([v, text]) => (
+            <button
+              key={v}
+              type="button"
+              className={[styles.selItem, v === value ? styles.selItemOn : ""].join(" ")}
+              onClick={() => { onChange(v); setOpen(false); }}
+            >
+              {text}
+              {v === value && <span className={styles.selCheck}>✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function priceChip(price: number, median: number | null): { tone: string; text: string } | null {
   if (median == null) return null;
   const delta = price - median;
@@ -248,6 +349,7 @@ export default function AgentPanel({
   const [listings, setListings] = useState<RankedListing[] | null>(null);
   const [market, setMarket] = useState<Market | null>(null);
   const [sweep, setSweep] = useState<SweepListing[] | null>(null);
+  const [pool, setPool] = useState<PoolItem[] | null>(null);
   const [inspecting, setInspecting] = useState<InspectListing | null>(null);
   const [showSweepModal, setShowSweepModal] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -263,6 +365,7 @@ export default function AgentPanel({
   // Scout's NL filter / semantic search: an id-overlay on the same list.
   const [aiFilter, setAiFilter] = useState<{ ids: Set<number>; note: string; kind: "scout" | "semantic" } | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const askPlaceholder = useAskPlaceholder(tab === "all" && !searchAll);
 
   const askScoutFilter = async () => {
     const query = searchAll.trim();
@@ -287,39 +390,9 @@ export default function AgentPanel({
     }
   };
 
-  const semanticSearch = async () => {
-    const query = searchAll.trim();
-    if (!query || aiBusy) return;
-    setAiBusy(true);
-    try {
-      const res = await fetch(`/api/watchlists/${agent.id}/semantic-search`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const data = await res.json();
-      setAiFilter({
-        ids: new Set<number>(data.listing_ids),
-        note: data.listing_ids.length > 0
-          ? `closest by meaning to "${query.slice(0, 40)}"`
-          : "Nothing close by meaning either.",
-        kind: "semantic",
-      });
-    } catch {
-      setAiFilter({ ids: new Set(), note: "Meaning search is unavailable right now.", kind: "semantic" });
-    } finally {
-      setAiBusy(false);
-    }
-  };
   function filterSort<T extends { id: number; title: string; price: number; marketplace: string; first_seen_at?: string }>(items: T[]): T[] {
     let out = items;
-    if (aiFilter) {
-      out = out.filter(l => aiFilter.ids.has(l.id));
-    } else {
-      const q = searchAll.trim().toLowerCase();
-      if (q) out = out.filter(l => l.title.toLowerCase().includes(q));
-    }
+    if (aiFilter) out = out.filter(l => aiFilter.ids.has(l.id));
     if (mpFilter) out = out.filter(l => l.marketplace === mpFilter);
     const cap = parseFloat(maxPriceFilter);
     if (!Number.isNaN(cap)) out = out.filter(l => l.price <= cap);
@@ -379,6 +452,24 @@ export default function AgentPanel({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [market, agent.id]);
+
+  useEffect(() => {
+    if (tab !== "all" || pool) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/watchlists/${agent.id}/pool`, { headers: authHeaders });
+        if (res.ok) {
+          const data = await res.json();
+          setPool(data.listings ?? []);
+        } else {
+          setPool([]);
+        }
+      } catch {
+        setPool([]);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, pool, agent.id]);
 
   const loadSweep = useCallback(async () => {
     if (sweep) return;
@@ -481,7 +572,7 @@ export default function AgentPanel({
             onClick={() => setTab(key)}
           >
             {label}
-            {key === "all" && ranked.length > 5 && <span className={styles.tabCount}> {rest.length + weak.length}</span>}
+            {key === "all" && pool !== null && <span className={styles.tabCount}> {pool.length}</span>}
           </button>
         ))}
         {indicator && (
@@ -569,7 +660,7 @@ export default function AgentPanel({
                         <div className={styles.miniFoot}>
                           <span className={styles.miniPrice}>${l.price.toFixed(0)}</span>
                           <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
-                          <button className={styles.askBtn} onClick={() => setInspecting(l)}>Ask Scout</button>
+                          <button className={styles.askBtn} onClick={() => setInspecting(l)}><ScoutGlyph size={10} /> Ask Scout</button>
                         </div>
                       </div>
                     </div>
@@ -604,27 +695,28 @@ export default function AgentPanel({
       {/* ================= ALL MATCHES ================= */}
       {tab === "all" && (
         <div className={styles.view}>
-          {rest.length > 0
-            ? <SayLine lead={`${rest.length} more cleared your bar. `} dim="Beyond your top five:" />
-            : <SayLine lead="Everything that cleared your bar is in your top picks. " dim="The deeper layers:" />}
-
-          {(() => {
-            const fRest = filterSort(rest);
-            const fWeak = filterSort(weak);
-            const fSweep = filterSort((sweep ?? []).filter(l => !l.matched));
-            const markets = Array.from(new Set(
-              [...rest, ...weak, ...(sweep ?? [])].map(l => l.marketplace),
-            )).sort();
+          {pool === null && <p className={styles.loading}>Pulling everything I&apos;ve seen…</p>}
+          {pool !== null && (() => {
+            const shown = filterSort(pool);
+            const markets = Array.from(new Set(pool.map(l => l.marketplace))).sort();
+            const minis = shown.slice(0, 12);
+            const dense = shown.slice(12);
             return (
               <>
+                <SayLine
+                  lead={`Everything I've seen for you · ${pool.length} listings. `}
+                  dim="Closest to your brief first."
+                />
+
                 <div className={styles.cardSearchWrap}>
-                  <svg className={styles.cardSearchIcon} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  <span className={styles.cardSearchIcon} aria-hidden><ScoutGlyph size={13} /></span>
                   <input
                     className={styles.cardSearchInput}
                     type="text"
                     value={searchAll}
-                    onChange={e => { setSearchAll(e.target.value); if (aiFilter) setAiFilter(null); }}
-                    placeholder="Search, or describe what you want and ask Scout…"
+                    onChange={e => setSearchAll(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") askScoutFilter(); }}
+                    placeholder={askPlaceholder}
                   />
                   {searchAll && (
                     <button className={styles.cardSearchClear} onClick={() => { setSearchAll(""); setAiFilter(null); }}>✕</button>
@@ -635,7 +727,7 @@ export default function AgentPanel({
                     title="Ask Scout to filter these listings"
                     onClick={askScoutFilter}
                   >
-                    {aiBusy ? "…" : "✦ Ask Scout"}
+                    {aiBusy ? "…" : <><ScoutGlyph size={10} /> Ask Scout</>}
                   </button>
                 </div>
 
@@ -644,16 +736,6 @@ export default function AgentPanel({
                     <span className={styles.aiNoteIcon}>✦</span>
                     <span className={styles.aiNoteText}>{aiFilter.note}</span>
                     <button className={styles.cardSearchClear} style={{ position: "static", transform: "none" }} onClick={() => setAiFilter(null)}>✕</button>
-                  </div>
-                )}
-
-                {!aiFilter && searchAll.trim().length >= 3
-                  && fRest.length + fWeak.length + fSweep.length === 0 && (
-                  <div className={styles.aiNote}>
-                    <span className={styles.aiNoteText}>No literal matches.</span>
-                    <button className={styles.semanticBtn} disabled={aiBusy} onClick={semanticSearch}>
-                      {aiBusy ? "searching…" : "Search by meaning ✦"}
-                    </button>
                   </div>
                 )}
 
@@ -680,24 +762,25 @@ export default function AgentPanel({
                     value={maxPriceFilter}
                     onChange={e => setMaxPriceFilter(e.target.value)}
                   />
-                  <select
-                    className={styles.filterSelect}
+                  <SortSelect
                     value={sortAll}
-                    onChange={e => setSortAll(e.target.value as typeof sortAll)}
-                  >
-                    <option value="best">Best match</option>
-                    <option value="price_asc">Price: low to high</option>
-                    <option value="price_desc">Price: high to low</option>
-                    <option value="newest">Newest first</option>
-                  </select>
+                    onChange={v => setSortAll(v)}
+                    options={[
+                      ["best", "Best match"],
+                      ["price_asc", "Price: low to high"],
+                      ["price_desc", "Price: high to low"],
+                      ["newest", "Newest first"],
+                    ]}
+                  />
                 </div>
 
-                {rest.length > 0 && fRest.length === 0 && (
-                  <p className={styles.loading}>Nothing here fits those filters.</p>
+                {shown.length === 0 && (
+                  <p className={styles.loading}>Nothing fits those filters.</p>
                 )}
-                {fRest.length > 0 && (
+
+                {minis.length > 0 && (
                   <div className={styles.miniRow}>
-                    {fRest.map((l, i) => (
+                    {minis.map((l, i) => (
                       <div key={l.id} className={styles.mini} style={{ animationDelay: `${70 + Math.min(i, 12) * 45}ms` }}>
                         {l.image_url ? (
                           <img src={l.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.miniThumb} />
@@ -717,7 +800,7 @@ export default function AgentPanel({
                           <div className={styles.miniFoot}>
                             <span className={styles.miniPrice}>${l.price.toFixed(0)}</span>
                             <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
-                            <button className={styles.askBtn} onClick={() => setInspecting(l)}>Ask Scout</button>
+                            <button className={styles.askBtn} onClick={() => setInspecting(l)}><ScoutGlyph size={10} /> Ask Scout</button>
                           </div>
                         </div>
                       </div>
@@ -725,39 +808,19 @@ export default function AgentPanel({
                   </div>
                 )}
 
-                {weak.length > 0 && (
-                  <details className={styles.layer}>
-                    <summary><span className={styles.twist}>▶</span> Close calls <span className={styles.tabCount}>{fWeak.length}</span> <span className={styles.layerHint}>almost cleared your bar; kept in case one clicks</span></summary>
-                    <div className={styles.denseList}>
-                      {fWeak.length === 0 && <p className={styles.loading}>Nothing here fits those filters.</p>}
-                      {fWeak.map(l => (
-                        <div key={l.id} className={styles.denseRow}>
-                          <span className={styles.denseTitle}>{l.title}</span>
-                          <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
-                          <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
-                          <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                )}
-
-                <details className={styles.layer} onToggle={e => { if ((e.target as HTMLDetailsElement).open) loadSweep(); }}>
-                  <summary><span className={styles.twist}>▶</span> The long tail{sweep ? <span className={styles.tabCount}> {fSweep.length}</span> : null} <span className={styles.layerHint}>everything the last sweep saw, filtered or not</span></summary>
+                {dense.length > 0 && (
                   <div className={styles.denseList}>
-                    {sweep === null && <p className={styles.loading}>Pulling the sweep…</p>}
-                    {sweep !== null && sweep.length === 0 && <p className={styles.loading}>No sweep on record yet.</p>}
-                    {sweep !== null && sweep.length > 0 && fSweep.length === 0 && <p className={styles.loading}>Nothing here fits those filters.</p>}
-                    {fSweep.map(l => (
+                    {dense.map(l => (
                       <div key={l.id} className={styles.denseRow}>
                         <span className={styles.denseTitle}>{l.title}</span>
                         <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
                         <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
                         <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+                        <button className={styles.askBtn} onClick={() => setInspecting(l)}><ScoutGlyph size={10} /> Ask Scout</button>
                       </div>
                     ))}
                   </div>
-                </details>
+                )}
               </>
             );
           })()}
@@ -1010,7 +1073,7 @@ function MarketPlaybookView({
                       <span className={styles.chartPopTitle}>{l.title}</span>
                       <span className={styles.chartPopPrice}>${l.price.toFixed(0)} · {MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
                       <span className={styles.chartPopActions}>
-                        <button className={styles.askBtn} onClick={() => onInspect(l)}>Ask Scout</button>
+                        <button className={styles.askBtn} onClick={() => onInspect(l)}><ScoutGlyph size={10} /> Ask Scout</button>
                         <a className={styles.viewBtn} style={{ marginLeft: 0 }} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
                       </span>
                     </span>

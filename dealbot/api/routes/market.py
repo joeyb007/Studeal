@@ -517,3 +517,55 @@ async def semantic_search(
             .limit(40)
         )).scalars().all())
     return SemanticSearchResponse(listing_ids=ordered)
+
+
+class PoolListingResponse(BaseModel):
+    id: int
+    title: str
+    price: float
+    currency: str
+    marketplace: str
+    url: str
+    image_url: str | None
+    location: str | None
+    first_seen_at: str
+
+
+class AgentPoolResponse(BaseModel):
+    listings: list[PoolListingResponse]   # closest to the brief first
+    total: int
+
+
+@router.get("/{watchlist_id}/pool", response_model=AgentPoolResponse)
+async def agent_pool(
+    watchlist_id: int,
+    current_user: User = Depends(get_current_user),
+) -> AgentPoolResponse:
+    """The flattened All matches view: everything the agent has seen, live,
+    ordered by cosine similarity to the intent embedding. No bands."""
+    watchlist = await _owned_watchlist(watchlist_id, current_user)
+    listings = await _tab_listings(watchlist_id)
+    ids = [l.id for l in listings]
+    if ids and watchlist.intent_embedding is not None:
+        async with get_async_session() as session:
+            ordered_ids = list((await session.execute(
+                select(Listing.id)
+                .where(Listing.id.in_(ids))
+                .where(Listing.embedding.isnot(None))
+                .order_by(Listing.embedding.cosine_distance(watchlist.intent_embedding))
+            )).scalars().all())
+        by_id = {l.id: l for l in listings}
+        tail = [l for l in listings if l.id not in set(ordered_ids)]
+        listings = [by_id[i] for i in ordered_ids] + tail
+
+    return AgentPoolResponse(
+        listings=[
+            PoolListingResponse(
+                id=l.id, title=l.title, price=l.price, currency=l.currency,
+                marketplace=l.marketplace, url=l.raw_url, image_url=l.image_url,
+                location=l.location, first_seen_at=l.first_seen_at.isoformat(),
+            )
+            for l in listings
+        ],
+        total=len(listings),
+    )

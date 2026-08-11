@@ -247,6 +247,7 @@
 }
 .viewBtn:active { transform: translate(2px, -2px) scale(0.96); }
 .askBtn {
+  display: inline-flex; align-items: center; gap: 6px;
   font-size: 11.5px; font-weight: 600; color: var(--accent);
   background: var(--accent-soft); border: none; cursor: pointer;
   padding: 5px 12px; border-radius: 8px; font-family: inherit;
@@ -540,7 +541,8 @@
 .cardSearchWrap { position: relative; margin-left: 40px; }
 .cardSearchIcon {
   position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
-  color: var(--text-faint); pointer-events: none;
+  color: var(--accent); pointer-events: none; opacity: 0.8;
+  display: inline-flex;
 }
 .cardSearchInput {
   width: 100%; padding: 9px 34px 9px 36px; border-radius: 11px;
@@ -751,6 +753,7 @@
 /* scout nl filter + semantic fallback */
 .askFilterBtn {
   position: absolute; right: 34px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: 6px;
   font-size: 11px; font-weight: 650; color: var(--accent);
   background: var(--accent-soft); border: none; border-radius: 8px;
   padding: 5px 11px; cursor: pointer; font-family: inherit;
@@ -774,3 +777,42 @@
   padding: 4px 12px; cursor: pointer; font-family: inherit;
 }
 .semanticBtn:hover:not(:disabled) { background: var(--accent-soft); }
+
+/* styled sort dropdown */
+.selWrap { position: relative; margin-left: auto; }
+.selBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11.5px; font-weight: 600; padding: 5px 13px; border-radius: 20px;
+  border: 1px solid rgba(47, 46, 43, 0.9); background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-family: inherit;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.selBtn:hover { border-color: rgba(168, 188, 232, 0.3); color: var(--text-primary); }
+.selBtnOpen { border-color: rgba(168, 188, 232, 0.45); background: var(--accent-soft); color: var(--accent); }
+.selChevron { transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.25, 1); }
+.selChevronUp { transform: rotate(180deg); }
+.selMenu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  min-width: 185px; padding: 5px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 11px; box-shadow: var(--shadow-pop);
+  display: flex; flex-direction: column; gap: 1px;
+  animation: selIn 0.16s cubic-bezier(0.2, 0.8, 0.25, 1);
+  transform-origin: top right;
+}
+@keyframes selIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.selItem {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-size: 12px; font-weight: 550; text-align: left;
+  padding: 7px 11px; border-radius: 7px;
+  background: none; border: none; color: var(--text-secondary);
+  cursor: pointer; font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.selItem:hover { background: rgba(168, 188, 232, 0.08); color: var(--text-primary); }
+.selItemOn { color: var(--text-primary); }
+.selCheck { color: var(--accent); font-size: 11px; }
+@media (prefers-reduced-motion: reduce) { .selMenu { animation: none; } }

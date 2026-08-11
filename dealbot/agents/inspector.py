@@ -132,7 +132,8 @@ async def _comps(listing: Listing) -> list[dict[str, Any]]:
             )
             rows = list((await session.execute(stmt)).scalars().all())
         return [
-            {"id": r.id, "title": r.title, "price": r.price, "marketplace": r.marketplace}
+            {"id": r.id, "title": r.title, "price": r.price,
+             "marketplace": r.marketplace, "url": r.raw_url}
             for r in rows
         ]
     except Exception:

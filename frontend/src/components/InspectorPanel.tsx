@@ -26,6 +26,7 @@ interface Comp {
   title: string;
   price: number;
   marketplace: string;
+  url?: string | null;
 }
 
 interface Report {
@@ -327,9 +328,10 @@ export default function InspectorPanel({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, inspection, replying, verdict]);
+  }, [messages, inspection, replying, verdict, checklist, openStage]);
 
   const attachFiles = async (files: FileList | null) => {
     if (!files || uploading) return;
@@ -423,6 +425,20 @@ export default function InspectorPanel({
     || messages.some(m => m.role === "assistant" && m.content.startsWith("PICKUP RUNDOWN"));
   const gone = inspection?.status === "listing_gone";
   const chatOpen = inspection?.status === "ok" && !concluded;
+
+  // Paste screenshots from anywhere in the panel, not just the input.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const files = e.clipboardData?.files;
+      if (files && files.length > 0 && chatOpen) {
+        e.preventDefault();
+        attachFiles(files);
+      }
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOpen, uploading, pendingImages.length]);
 
   return createPortal(
     <div className={styles.overlay} onClick={onClose}>
@@ -796,13 +812,6 @@ export default function InspectorPanel({
             value={draft}
             disabled={!chatOpen || replying}
             onChange={e => setDraft(e.target.value)}
-            onPaste={e => {
-              const files = e.clipboardData?.files;
-              if (files && files.length > 0) {
-                e.preventDefault();
-                attachFiles(files);
-              }
-            }}
             onKeyDown={e => { if (e.key === "Enter") send(); }}
           />
           <button
@@ -994,6 +1003,9 @@ function CompStrip({ comps }: { comps: Comp[] }) {
           <span className={styles.compMeta}>
             ${c.price.toFixed(0)} · {MARKETPLACE_LABELS[c.marketplace] ?? c.marketplace}
           </span>
+          {c.url && (
+            <a className={styles.compView} href={c.url} target="_blank" rel="noopener noreferrer">View ↗</a>
+          )}
         </div>
       ))}
     </div>

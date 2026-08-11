@@ -201,11 +201,15 @@
 .laneGrid {
   display: grid;
   /* auto-fit + centered: a few lanes sit as a centered group instead of
-     hugging the left edge with phantom columns beside them. */
+     hugging the left edge with phantom columns beside them. Capped at three
+     columns so the standard 6-lane hunt (2 queries x 3 marketplaces) always
+     reads as a clean 3x2, never a ragged 4+2. */
   grid-template-columns: repeat(auto-fit, minmax(220px, 300px));
   justify-content: center;
   gap: 10px;
   margin-bottom: 12px;
+  max-width: calc(3 * 300px + 2 * 10px);
+  margin-inline: auto;
 }
 
 .lane {

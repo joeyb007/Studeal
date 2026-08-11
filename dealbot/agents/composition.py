@@ -250,10 +250,10 @@ async def _run_one_lane(
 
     pages = 0
     done_reason = "error"
-    try:
-        async with lane_semaphore:
-            await _record_lane(events, query, target.marketplace, status="running")
-            async with build_session_from_env() as session:
+
+    async def _lane_work() -> None:
+        nonlocal pages, done_reason
+        async with build_session_from_env() as session:
                 explorer = Explorer(nav_llm, trace=trace)
                 result = await explorer.explore(
                     entry_url=target.entry_url,
@@ -306,6 +306,25 @@ async def _run_one_lane(
                         )
                         pages += retry_result.turns_used
                         done_reason = retry_result.done_reason or retry_result.stop_reason
+
+    try:
+        async with lane_semaphore:
+            await _record_lane(events, query, target.marketplace, status="running")
+            # Hard deadline: a lane that can't get a browser (session pool
+            # exhausted) or wedges mid-explore must FAIL VISIBLY — without
+            # this, session creation hangs forever, the tile reads
+            # "connecting…" indefinitely, and the held semaphore slot starves
+            # every lane behind it.
+            await asyncio.wait_for(
+                _lane_work(),
+                timeout=float(os.environ.get("AGENT_LANE_DEADLINE_S", "420")),
+            )
+    except asyncio.TimeoutError:
+        done_reason = "timed out waiting for a browser" if pages == 0 else "timed out"
+        logger.warning(
+            "run_hunt[%s]: lane deadline hit on %s (%s)",
+            query, target.marketplace, done_reason,
+        )
     except Exception:
         logger.exception(
             "run_hunt[%s]: lane failed on %s", query, target.marketplace,
@@ -320,7 +339,7 @@ async def _run_one_lane(
             ))
             await _record_lane(
                 events, query, target.marketplace,
-                status="error" if done_reason == "error" else "done",
+                status="error" if done_reason == "error" or "timed out" in done_reason else "done",
                 pages=pages, done_reason=done_reason,
             )
 

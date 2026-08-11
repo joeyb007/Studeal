@@ -304,7 +304,7 @@ export default function AgentCard({
                 ) : l.queued && !l.action ? (
                   <div className={styles.laneQueued}>queued</div>
                 ) : (
-                  <div className={styles.laneWaiting}>connecting…</div>
+                  <div className={styles.laneWaiting}>waiting for a browser…</div>
                 )}
               </div>
               {!l.done && (

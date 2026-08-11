@@ -36,7 +36,7 @@ async def test_navigation_failure_is_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unavailable_page_is_none(monkeypatch):
-    _stub_visit(monkeypatch, ("This ad is no longer available.", None))
+    _stub_visit(monkeypatch, ("This ad is no longer available.", None, None))
     monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
         {"available": False, "title": "", "price": None, "currency": "CAD",
          "condition": "unknown", "location": None}
@@ -46,7 +46,7 @@ async def test_unavailable_page_is_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_live_page_without_price_asks_for_it(monkeypatch):
-    _stub_visit(monkeypatch, ("page text", "https://img.example/d.jpg"))
+    _stub_visit(monkeypatch, ("page text", "https://img.example/d.jpg", None))
     monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
         {"available": True, "title": "TaylorMade M3 Driver 8.5", "price": None,
          "currency": "CAD", "condition": "used", "location": "Burlington"}
@@ -76,7 +76,7 @@ async def test_good_extraction_persists(monkeypatch, db_factory):
         return [[] for _ in offers]
     monkeypatch.setattr("dealbot.persistence.listings._embeddings_for", _no_embeddings)
 
-    _stub_visit(monkeypatch, ("page text", "https://img.example/1.jpg"))
+    _stub_visit(monkeypatch, ("page text", "https://img.example/1.jpg", None))
     monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
         {"available": True, "title": "Nintendo Switch OLED", "price": 249,
          "currency": "CAD", "condition": "used", "location": "Markham"}
@@ -108,7 +108,7 @@ async def test_manual_price_completes_the_fetch(monkeypatch, db_factory):
         return [[] for _ in offers]
     monkeypatch.setattr("dealbot.persistence.listings._embeddings_for", _no_embeddings)
 
-    _stub_visit(monkeypatch, ("page text", None))
+    _stub_visit(monkeypatch, ("page text", None, None))
     monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
         {"available": True, "title": "TaylorMade M3 Driver 8.5", "price": None,
          "currency": "CAD", "condition": "used", "location": "Burlington"}
@@ -118,3 +118,42 @@ async def test_manual_price_completes_the_fetch(monkeypatch, db_factory):
     )
     assert partial is None
     assert listing is not None and listing.price == 220.0
+
+
+@pytest.mark.asyncio
+async def test_embedded_price_beats_extractor(monkeypatch, db_factory):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _s():
+        async with db_factory() as session:
+            yield session
+
+    monkeypatch.setattr("dealbot.db.database.get_async_session", _s)
+    monkeypatch.setattr("dealbot.persistence.listings.get_async_session", _s)
+
+    async def _no_embeddings(offers):
+        return [[] for _ in offers]
+    monkeypatch.setattr("dealbot.persistence.listings._embeddings_for", _no_embeddings)
+
+    # Extractor grabbed 200 from description prose; the id-keyed JSON says 140.
+    _stub_visit(monkeypatch, ("page text", None, (140.0, "CAD")))
+    monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
+        {"available": True, "title": "TaylorMade M6 Driver Left", "price": 200,
+         "currency": "USD", "condition": "used", "location": "Oakville"}
+    ))
+    listing, partial = await fetch_listing.fetch_and_persist(
+        "https://facebook.com/marketplace/item/2", "fb_marketplace",
+    )
+    assert partial is None
+    assert listing is not None
+    assert listing.price == 140.0
+    assert listing.currency == "CAD"
+
+
+def test_walk_finds_id_keyed_price():
+    blob = {"data": [{"id": "999", "listing_price": {"amount": "50.00", "currency": "CAD"}},
+                     {"nested": {"id": "123", "listing_price": {"amount": "140.00", "currency": "CAD"},
+                                 "marketplace_listing_title": "M3"}}]}
+    assert fetch_listing._walk_for_price(blob, "123") == (140.0, "CAD")
+    assert fetch_listing._walk_for_price(blob, "777") is None

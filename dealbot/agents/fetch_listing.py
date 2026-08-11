@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from dealbot.agents.marketplace_router import CONFIG_BY_KEY
@@ -51,9 +52,63 @@ def _extract_llm() -> LLMClient:
     return OpenAIClient()
 
 
-async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None] | None:
-    """(extraction_text, og_image_url) for a listing page; None on navigation
-    failure. Same session + referer discipline as the inspector's visit.
+def _walk_for_price(node: Any, target_id: str) -> tuple[float, str] | None:
+    """Depth-first hunt through FB's embedded relay JSON for the price object
+    tied to THIS listing id. Exact and deterministic when present."""
+    if isinstance(node, dict):
+        if (
+            str(node.get("id") or node.get("listing_id") or "") == target_id
+            and isinstance(node.get("listing_price"), dict)
+        ):
+            price = node["listing_price"]
+            try:
+                amount = float(price.get("amount"))
+                if amount > 0:
+                    return amount, str(price.get("currency") or "CAD")[:8]
+            except (TypeError, ValueError):
+                pass
+        for value in node.values():
+            found = _walk_for_price(value, target_id)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _walk_for_price(value, target_id)
+            if found:
+                return found
+    return None
+
+
+async def _embedded_price(page: Any, url: str) -> tuple[float, str] | None:
+    """FB hides the price from og tags on some listings while still shipping
+    it in the page's JSON payloads, keyed by listing id. Best-effort."""
+    match = re.search(r"/item/(\d+)", url)
+    if not match:
+        return None
+    target_id = match.group(1)
+    try:
+        blobs = await page.evaluate(
+            """() => Array.from(document.querySelectorAll('script[type="application/json"]'))
+                     .map(s => s.textContent)"""
+        )
+        for blob in blobs or []:
+            if not isinstance(blob, str) or target_id not in blob or '"listing_price"' not in blob:
+                continue
+            try:
+                found = _walk_for_price(json.loads(blob), target_id)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if found:
+                return found
+    except Exception:
+        logger.warning("embedded price probe failed for %s", url, exc_info=True)
+    return None
+
+
+async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None, tuple[float, str] | None] | None:
+    """(extraction_text, og_image_url, embedded_price) for a listing page;
+    None on navigation failure. Same session + referer discipline as the
+    inspector's visit.
 
     Page metadata rides ahead of the body: FB serves a login wall in the body
     while og:title/og:description still carry the listing's title, price, and
@@ -92,7 +147,10 @@ async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None] | Non
             )
             text = (f"Page metadata:\n{head}\n\nPage body:\n" if head else "") + snap.text
             og_image = metas.get("og_image")
-            return text, og_image if isinstance(og_image, str) and og_image else None
+            embedded = None
+            if marketplace == "fb_marketplace":
+                embedded = await _embedded_price(page, url)
+            return text, og_image if isinstance(og_image, str) and og_image else None, embedded
     except Exception as exc:
         logger.warning("fetch_listing: visit failed for %s: %s", url, exc)
         return None
@@ -119,7 +177,7 @@ async def fetch_and_persist(
     visited = await _visit_url(url, marketplace)
     if visited is None:
         return None, None
-    snapshot_text, og_image = visited
+    snapshot_text, og_image, embedded = visited
 
     try:
         response = await _extract_llm().complete(
@@ -135,9 +193,19 @@ async def fetch_and_persist(
         return None, None
 
     title = str(data.get("title") or "").strip()
-    price = data.get("price")
-    if not isinstance(price, (int, float)) or price <= 0:
-        price = manual_price if isinstance(manual_price, (int, float)) and manual_price > 0 else None
+    # Price precedence: the id-keyed embedded JSON beats the text extractor
+    # (which can grab a number from the description), then the buyer's manual
+    # entry as the last resort.
+    price = None
+    currency_override = None
+    if embedded is not None:
+        price, currency_override = embedded
+    if price is None:
+        extracted = data.get("price")
+        if isinstance(extracted, (int, float)) and extracted > 0:
+            price = float(extracted)
+    if price is None and isinstance(manual_price, (int, float)) and manual_price > 0:
+        price = float(manual_price)
     if not data.get("available") or not title:
         return None, None
     if price is None:
@@ -151,7 +219,7 @@ async def fetch_and_persist(
     offer = Offer(
         title=title[:300],
         price=float(price),
-        currency=str(data.get("currency") or "CAD")[:8],
+        currency=currency_override or str(data.get("currency") or "CAD")[:8],
         url=url,
         image_url=og_image,
         location=(str(data["location"])[:200] if data.get("location") else None),

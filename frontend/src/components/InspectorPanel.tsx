@@ -541,9 +541,24 @@ export default function InspectorPanel({
                   </div>
                 )}
               </div>
-              <div className={styles.scoutBubble}>
-                <FullNotes report={report} />
-              </div>
+              {(report.identification || report.condition) && (
+                <div className={styles.scoutBubble}>
+                  <p className={styles.sectionText}>
+                    {[report.identification, report.condition].filter(Boolean).join(" ")}
+                  </p>
+                </div>
+              )}
+              {(report.market_position || report.comps.length > 0) && (
+                <div className={styles.scoutBubble}>
+                  {report.market_position && <p className={styles.sectionText}>{report.market_position}</p>}
+                  {report.comps.length > 0 && (
+                    <>
+                      <p className={styles.compLead}>What similar ones are going for:</p>
+                      <CompStrip comps={report.comps} />
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -795,53 +810,6 @@ function badgeTone(level: string): string {
   if (["fair", "under", "good", "fine"].includes(level)) return styles.badgeGood;
   if (["over", "worn", "likely_scam"].includes(level)) return styles.badgeBad;
   return styles.badgeWarn;
-}
-
-function FullNotes({ report }: { report: Report }) {
-  return (
-    <>
-      <ReportSection label="What it is" text={report.identification} />
-      <ReportSection label="Condition" text={report.condition} />
-      {report.red_flags.length > 0 && (
-        <div className={styles.section}>
-          <span className={styles.sectionLabel}>Red flags</span>
-          <ul className={styles.list}>
-            {report.red_flags.map((f, i) => <li key={i}>{f}</li>)}
-          </ul>
-        </div>
-      )}
-      <ReportSection label="What I can't tell from here" text={report.cant_tell} />
-      {report.seller_questions.length > 0 && (
-        <div className={styles.section}>
-          <span className={styles.sectionLabel}>Ask the seller</span>
-          <ul className={styles.list}>
-            {report.seller_questions.map((q, i) => <li key={i}>{q}</li>)}
-          </ul>
-        </div>
-      )}
-      {report.legitimacy.level !== "fine" && (
-        <div className={[styles.section, styles.legit].join(" ")}>
-          <span className={styles.sectionLabel}>
-            {report.legitimacy.level === "likely_scam" ? "Likely scam" : "Caution"}
-          </span>
-          <p className={styles.sectionText}>{report.legitimacy.reason}</p>
-        </div>
-      )}
-      <ReportSection label="Price check" text={report.market_position} />
-      {report.comps.length > 0 && <CompStrip comps={report.comps} />}
-      <ReportSection label="Bottom line" text={report.summary} />
-    </>
-  );
-}
-
-function ReportSection({ label, text }: { label: string; text: string }) {
-  if (!text) return null;
-  return (
-    <div className={styles.section}>
-      <span className={styles.sectionLabel}>{label}</span>
-      <p className={styles.sectionText}>{text}</p>
-    </div>
-  );
 }
 
 function CompStrip({ comps }: { comps: Comp[] }) {

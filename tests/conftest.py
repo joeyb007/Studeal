@@ -15,6 +15,15 @@ os.environ.setdefault("RATELIMIT_STORAGE_URI", "memory://")
 os.environ["LLM_BACKEND"] = "openai"
 os.environ["EMBEDDING_BACKEND"] = "openai"
 
+# Hermetic database: the suite must NEVER share a database with the live dev
+# stack (API + workers mutate rows mid-run and cause one-off flakes). Any
+# DATABASE_URL passed in is overridden; use TEST_DATABASE_URL to point the
+# suite somewhere else deliberately.
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/dealbot_test",
+)
+
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 

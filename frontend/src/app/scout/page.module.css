@@ -210,18 +210,44 @@
   border: 1px solid rgba(47, 46, 43, 0.9);
 }
 
-.checkMissRow {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  margin: -6px 0 16px;
+/* Scout's invite: slides down under the check bar, breathes, types, offers */
+.scoutInvite {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 12px 15px; margin: -6px 0 16px;
+  background: var(--bg-card); border: 1px solid rgba(168, 188, 232, 0.14);
+  border-radius: 12px;
+  animation: inviteIn 0.32s cubic-bezier(0.2, 0.8, 0.25, 1);
 }
-.checkMissRow .checkMiss { margin: 0; }
-.fetchBtn {
-  font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px;
-  background: var(--accent-soft); color: var(--accent); border: none;
-  cursor: pointer; font-family: inherit; transition: background 0.15s ease;
+@keyframes inviteIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.fetchBtn:hover:not(:disabled) { background: rgba(168, 188, 232, 0.18); }
-.fetchBtn:disabled { opacity: 0.6; cursor: default; }
+.inviteAvatar {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid rgba(168, 188, 232, 0.3); color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(168, 188, 232, 0.06);
+  box-shadow: 0 0 0 3px rgba(168, 188, 232, 0.08), 0 0 12px rgba(168, 188, 232, 0.25);
+  animation: inviteBreath 1.4s ease-in-out infinite;
+}
+@keyframes inviteBreath {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+.inviteText { flex: 1; margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-primary); min-width: 0; }
+.inviteCursor { margin-left: 2px; color: var(--accent); animation: inviteBlink 0.9s steps(2, start) infinite; }
+@keyframes inviteBlink { to { visibility: hidden; } }
+.inviteBtn {
+  flex-shrink: 0; font-size: 12px; font-weight: 650; padding: 8px 16px;
+  border-radius: 9px; background: var(--accent); color: var(--on-accent);
+  border: none; cursor: pointer; font-family: inherit;
+  transition: opacity 0.15s ease, transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+.inviteBtn:hover:not(:disabled) { opacity: 0.95; transform: translateY(-1px); }
+.inviteBtn:disabled { opacity: 0.55; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .scoutInvite, .inviteAvatar, .inviteCursor { animation: none; }
+}
 
 .rowPriceSold {
   text-decoration: line-through;

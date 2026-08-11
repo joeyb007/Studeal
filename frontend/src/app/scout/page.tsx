@@ -1,6 +1,32 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
+// Same typing treatment Scout has everywhere else: interval-sliced text with
+// a blinking cursor until done.
+function useTyped(text: string, speed = 16, delay = 250) {
+  const [shown, setShown] = useState("");
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    setShown("");
+    setDone(false);
+    if (!text) { setDone(true); return; }
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const starter = setTimeout(() => {
+      let i = 0;
+      interval = setInterval(() => {
+        i++;
+        setShown(text.slice(0, i));
+        if (i >= text.length) {
+          if (interval) clearInterval(interval);
+          setDone(true);
+        }
+      }, speed);
+    }, delay);
+    return () => { clearTimeout(starter); if (interval) clearInterval(interval); };
+  }, [text, speed, delay]);
+  return { shown, done };
+}
 import Link from "next/link";
 import InspectorPanel, { InspectListing } from "@/components/InspectorPanel";
 import { MARKETPLACE_LABELS, timeAgo } from "@/components/PoolCard";
@@ -185,15 +211,11 @@ export default function ScoutPage() {
       )}
 
       {resolved === "nomatch" && !needsPrice && (
-        <div className={styles.checkMissRow}>
-          <span className={styles.checkMiss}>
-            Scout hasn&apos;t seen this one before.
-          </span>
-          <button className={styles.fetchBtn} onClick={() => fetchLink()} disabled={fetching}>
-            {fetching ? "Scout is grabbing it…" : "Send Scout to grab it · ~20s"}
-          </button>
-          {fetchNote && <span className={styles.checkMiss}>{fetchNote}</span>}
-        </div>
+        <ScoutInvite
+          fetching={fetching}
+          note={fetchNote}
+          onSend={() => fetchLink()}
+        />
       )}
 
       {resolved !== null && resolved !== "nomatch" && resolved.listing && (
@@ -309,5 +331,38 @@ export default function ScoutPage() {
         />
       )}
     </main>
+  );
+}
+
+function ScoutInvite({
+  fetching,
+  note,
+  onSend,
+}: {
+  fetching: boolean;
+  note: string | null;
+  onSend: () => void;
+}) {
+  const text = note
+    ?? (fetching
+      ? "On my way. Give me twenty seconds or so…"
+      : "New one on me. Want me to go check it out? Takes about twenty seconds.");
+  const { shown, done } = useTyped(text);
+  return (
+    <div className={styles.scoutInvite}>
+      <span className={styles.inviteAvatar} aria-hidden>
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <path d="M12 3 L14 12 L12 21 L10 12 Z" />
+          <path d="M3 12 L12 10 L21 12 L12 14 Z" />
+        </svg>
+      </span>
+      <p className={styles.inviteText}>
+        {shown}
+        {!done && <span className={styles.inviteCursor}>▍</span>}
+      </p>
+      <button className={styles.inviteBtn} onClick={onSend} disabled={fetching}>
+        {fetching ? "On it…" : note ? "Try again" : "Send Scout"}
+      </button>
+    </div>
   );
 }

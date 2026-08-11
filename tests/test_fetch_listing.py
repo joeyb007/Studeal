@@ -25,13 +25,13 @@ def _stub_visit(monkeypatch, result):
 
 @pytest.mark.asyncio
 async def test_unsupported_marketplace_is_none(monkeypatch):
-    assert await fetch_listing.fetch_and_persist("https://x.com/a", "craigslist") is None
+    assert await fetch_listing.fetch_and_persist("https://x.com/a", "craigslist") == (None, None)
 
 
 @pytest.mark.asyncio
 async def test_navigation_failure_is_none(monkeypatch):
     _stub_visit(monkeypatch, None)
-    assert await fetch_listing.fetch_and_persist("https://www.kijiji.ca/v-x/1", "kijiji") is None
+    assert await fetch_listing.fetch_and_persist("https://www.kijiji.ca/v-x/1", "kijiji") == (None, None)
 
 
 @pytest.mark.asyncio
@@ -41,17 +41,23 @@ async def test_unavailable_page_is_none(monkeypatch):
         {"available": False, "title": "", "price": None, "currency": "CAD",
          "condition": "unknown", "location": None}
     ))
-    assert await fetch_listing.fetch_and_persist("https://www.kijiji.ca/v-x/1", "kijiji") is None
+    assert await fetch_listing.fetch_and_persist("https://www.kijiji.ca/v-x/1", "kijiji") == (None, None)
 
 
 @pytest.mark.asyncio
-async def test_bad_price_is_none(monkeypatch):
-    _stub_visit(monkeypatch, ("page text", None))
+async def test_live_page_without_price_asks_for_it(monkeypatch):
+    _stub_visit(monkeypatch, ("page text", "https://img.example/d.jpg"))
     monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
-        {"available": True, "title": "Nintendo Switch", "price": 0,
-         "currency": "CAD", "condition": "used", "location": "Toronto"}
+        {"available": True, "title": "TaylorMade M3 Driver 8.5", "price": None,
+         "currency": "CAD", "condition": "used", "location": "Burlington"}
     ))
-    assert await fetch_listing.fetch_and_persist("https://www.kijiji.ca/v-x/1", "kijiji") is None
+    listing, partial = await fetch_listing.fetch_and_persist("https://facebook.com/marketplace/item/1", "fb_marketplace")
+    assert listing is None
+    assert partial == {
+        "title": "TaylorMade M3 Driver 8.5",
+        "image_url": "https://img.example/d.jpg",
+        "location": "Burlington",
+    }
 
 
 @pytest.mark.asyncio
@@ -75,11 +81,40 @@ async def test_good_extraction_persists(monkeypatch, db_factory):
         {"available": True, "title": "Nintendo Switch OLED", "price": 249,
          "currency": "CAD", "condition": "used", "location": "Markham"}
     ))
-    listing = await fetch_listing.fetch_and_persist(
+    listing, partial = await fetch_listing.fetch_and_persist(
         "https://www.kijiji.ca/v-x/1741643675", "kijiji",
     )
+    assert partial is None
     assert listing is not None
     assert listing.title == "Nintendo Switch OLED"
     assert listing.price == 249.0
     assert listing.image_url == "https://img.example/1.jpg"
     assert listing.marketplace == "kijiji"
+
+
+@pytest.mark.asyncio
+async def test_manual_price_completes_the_fetch(monkeypatch, db_factory):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _s():
+        async with db_factory() as session:
+            yield session
+
+    monkeypatch.setattr("dealbot.db.database.get_async_session", _s)
+    monkeypatch.setattr("dealbot.persistence.listings.get_async_session", _s)
+
+    async def _no_embeddings(offers):
+        return [[] for _ in offers]
+    monkeypatch.setattr("dealbot.persistence.listings._embeddings_for", _no_embeddings)
+
+    _stub_visit(monkeypatch, ("page text", None))
+    monkeypatch.setattr(fetch_listing, "_extract_llm", lambda: _FakeLLM(
+        {"available": True, "title": "TaylorMade M3 Driver 8.5", "price": None,
+         "currency": "CAD", "condition": "used", "location": "Burlington"}
+    ))
+    listing, partial = await fetch_listing.fetch_and_persist(
+        "https://facebook.com/marketplace/item/1", "fb_marketplace", manual_price=220.0,
+    )
+    assert partial is None
+    assert listing is not None and listing.price == 220.0

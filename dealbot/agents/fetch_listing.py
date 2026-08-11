@@ -31,10 +31,12 @@ Output JSON:
 - available: false when the page says the listing is gone, sold, or
   unavailable, or when this is not a single listing's page at all.
 - Some sites hide the page body behind a login wall while the page METADATA
-  still fully describes the listing. When the metadata names a specific item
-  with a price, extract from the metadata and set available=true; a login
-  form in the body does not make the listing unavailable.
-- price: the asking price as a number. Genuinely absent means available=false.
+  still fully describes the listing. When the metadata names a specific item,
+  extract from the metadata and set available=true; a login form in the body
+  does not make the listing unavailable.
+- price: the asking price as a number. When the page clearly describes a live
+  listing but shows NO price anywhere, set available=true with price=null;
+  never invent one.
 - currency: the listed currency code (CAD, USD, ...). Infer from the site's
   country only when the page shows a bare $.
 - Never invent values. JSON only."""
@@ -96,18 +98,27 @@ async def _visit_url(url: str, marketplace: str) -> tuple[str, str | None] | Non
         return None
 
 
-async def fetch_and_persist(url: str, marketplace: str) -> Listing | None:
-    """Visit, extract, upsert. None on any failure or an unavailable page."""
+async def fetch_and_persist(
+    url: str, marketplace: str, manual_price: float | None = None,
+) -> tuple[Listing | None, dict | None]:
+    """Visit, extract, upsert → (listing, partial).
+
+    (listing, None): fetched and persisted.
+    (None, partial): the page is a real live listing but shows no price
+      (FB sometimes omits it for logged-out visitors) — partial carries what
+      we saw so the caller can ask the buyer for the price and retry with
+      manual_price.
+    (None, None): failure or a genuinely unavailable page."""
     from dealbot.db.database import get_async_session
     from dealbot.persistence.canonicalize import canonicalize_url
     from dealbot.persistence.listings import persist_offers
 
     if marketplace not in FETCHABLE_MARKETPLACES:
-        return None
+        return None, None
 
     visited = await _visit_url(url, marketplace)
     if visited is None:
-        return None
+        return None, None
     snapshot_text, og_image = visited
 
     try:
@@ -121,12 +132,20 @@ async def fetch_and_persist(url: str, marketplace: str) -> Listing | None:
         data = json.loads(response.content or "{}")
     except Exception:
         logger.warning("fetch_listing: extraction failed for %s", url, exc_info=True)
-        return None
+        return None, None
 
     title = str(data.get("title") or "").strip()
     price = data.get("price")
-    if not data.get("available") or not title or not isinstance(price, (int, float)) or price <= 0:
-        return None
+    if not isinstance(price, (int, float)) or price <= 0:
+        price = manual_price if isinstance(manual_price, (int, float)) and manual_price > 0 else None
+    if not data.get("available") or not title:
+        return None, None
+    if price is None:
+        return None, {
+            "title": title[:300],
+            "image_url": og_image,
+            "location": (str(data["location"])[:200] if data.get("location") else None),
+        }
 
     condition = data.get("condition")
     offer = Offer(
@@ -141,7 +160,7 @@ async def fetch_and_persist(url: str, marketplace: str) -> Listing | None:
     )
     result = await persist_offers([offer])
     if result.written == 0:
-        return None
+        return None, None
 
     canonical = canonicalize_url(url, marketplace)
     async with get_async_session() as session:
@@ -149,4 +168,4 @@ async def fetch_and_persist(url: str, marketplace: str) -> Listing | None:
 
         return (await session.execute(
             select(Listing).where(Listing.canonical_url == canonical).limit(1)
-        )).scalars().first()
+        )).scalars().first(), None

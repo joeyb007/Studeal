@@ -207,12 +207,20 @@ async def resolve_listing(
 
 class FetchRequest(BaseModel):
     url: str
+    manual_price: float | None = None  # buyer-supplied when the page hides it
+
+
+class FetchPartial(BaseModel):
+    title: str
+    image_url: str | None = None
+    location: str | None = None
 
 
 class FetchResponse(BaseModel):
-    status: str                        # fetched | failed | unsupported
+    status: str                        # fetched | needs_price | failed | unsupported
     listing: ResolveListing | None = None
     watchlist: ResolveWatchlist | None = None
+    partial: FetchPartial | None = None
 
 
 @router.post("/fetch", response_model=FetchResponse)
@@ -241,7 +249,9 @@ async def fetch_listing_by_url(
                    "and it is used up. Upgrade to Pro for unlimited looks.",
         )
 
-    listing = await fetch_and_persist(url, marketplace)
+    listing, partial = await fetch_and_persist(url, marketplace, body.manual_price)
+    if listing is None and partial is not None:
+        return FetchResponse(status="needs_price", partial=FetchPartial(**partial))
     if listing is None:
         return FetchResponse(status="failed")
 

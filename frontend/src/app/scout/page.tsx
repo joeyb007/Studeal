@@ -42,9 +42,11 @@ export default function ScoutPage() {
   const [resolved, setResolved] = useState<ResolveResult | "nomatch" | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetchNote, setFetchNote] = useState<string | null>(null);
+  const [needsPrice, setNeedsPrice] = useState<{ title: string; image_url: string | null; location: string | null } | null>(null);
+  const [priceDraft, setPriceDraft] = useState("");
   const [linkOpen, setLinkOpen] = useState<{ listing: InspectListing; watchlistId?: number } | null>(null);
 
-  const fetchLink = async () => {
+  const fetchLink = async (manualPrice?: number) => {
     const url = linkDraft.trim();
     if (!url || fetching) return;
     setFetching(true);
@@ -53,7 +55,7 @@ export default function ScoutPage() {
       const res = await fetch("/api/listings/fetch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, manual_price: manualPrice ?? null }),
       });
       if (res.status === 403) {
         const data = await res.json();
@@ -64,6 +66,9 @@ export default function ScoutPage() {
       const data = await res.json();
       if (data.status === "fetched" && data.listing) {
         setResolved({ listing: data.listing, watchlist: data.watchlist ?? null });
+        setNeedsPrice(null);
+      } else if (data.status === "needs_price" && data.partial) {
+        setNeedsPrice(data.partial);
       } else if (data.status === "unsupported") {
         setFetchNote("Scout can only grab listings from Kijiji, eBay, and Facebook Marketplace right now.");
       } else {
@@ -135,7 +140,7 @@ export default function ScoutPage() {
           className={styles.checkInput}
           type="text"
           value={linkDraft}
-          onChange={e => { setLinkDraft(e.target.value); setResolved(null); }}
+          onChange={e => { setLinkDraft(e.target.value); setResolved(null); setNeedsPrice(null); setFetchNote(null); }}
           onKeyDown={e => { if (e.key === "Enter") checkLink(); }}
           placeholder="Paste a listing link and Scout will check it out…"
         />
@@ -144,12 +149,47 @@ export default function ScoutPage() {
         </button>
       </div>
 
-      {resolved === "nomatch" && (
+      {needsPrice && (
+        <div className={styles.resolveCard}>
+          {needsPrice.image_url && (
+            <img src={needsPrice.image_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={styles.resolveThumb} />
+          )}
+          <div className={styles.resolveBody}>
+            <span className={styles.resolveTitle}>{needsPrice.title}</span>
+            <span className={styles.resolveMeta}>
+              {needsPrice.location ? `${needsPrice.location} · ` : ""}Facebook hides the price on this one.
+              What&apos;s it listed at?
+            </span>
+            <div className={styles.resolveActions}>
+              <input
+                className={styles.priceInput}
+                type="number"
+                placeholder="$"
+                value={priceDraft}
+                onChange={e => setPriceDraft(e.target.value)}
+                onKeyDown={e => {
+                  const parsed = parseFloat(priceDraft);
+                  if (e.key === "Enter" && !isNaN(parsed) && parsed > 0) fetchLink(parsed);
+                }}
+              />
+              <button
+                className={styles.resolveGo}
+                disabled={fetching || !(parseFloat(priceDraft) > 0)}
+                onClick={() => fetchLink(parseFloat(priceDraft))}
+              >
+                {fetching ? "Grabbing it…" : "Add price & fetch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resolved === "nomatch" && !needsPrice && (
         <div className={styles.checkMissRow}>
           <span className={styles.checkMiss}>
             Scout hasn&apos;t seen this one before.
           </span>
-          <button className={styles.fetchBtn} onClick={fetchLink} disabled={fetching}>
+          <button className={styles.fetchBtn} onClick={() => fetchLink()} disabled={fetching}>
             {fetching ? "Scout is grabbing it…" : "Send Scout to grab it · ~20s"}
           </button>
           {fetchNote && <span className={styles.checkMiss}>{fetchNote}</span>}

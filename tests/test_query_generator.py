@@ -35,24 +35,25 @@ def _spec() -> WatchlistContext:
 
 
 @pytest.mark.asyncio
-async def test_returns_parsed_queries():
+async def test_core_query_always_runs_first():
     llm = _MockLLM([json.dumps({"queries": [
         "Herman Miller Aeron", "Aeron chair used", "Aeron office chair",
     ]})])
     gen = QueryGenerator(llm=llm)
     queries = await gen.generate(_spec())
-    assert queries == ["Herman Miller Aeron", "Aeron chair used", "Aeron office chair"]
+    # Core is deterministic slot 1; LLM's echo of it dedupes away.
+    assert queries == ["Herman Miller Aeron", "Aeron chair used"]
 
 
 @pytest.mark.asyncio
 async def test_dedupes_case_insensitively_and_strips():
     llm = _MockLLM([json.dumps({"queries": [
-        "Aeron", "aeron", " Aeron ", "Herman Miller Aeron",
+        "herman miller aeron", " Herman Miller Aeron ", "Aeron chair used",
     ]})])
     gen = QueryGenerator(llm=llm)
     queries = await gen.generate(_spec())
-    # "Aeron", "aeron", " Aeron " all normalize to "aeron" — one entry only.
-    assert queries == ["Aeron", "Herman Miller Aeron"]
+    # Case/whitespace variants of the core collapse into it.
+    assert queries == ["Herman Miller Aeron", "Aeron chair used"]
 
 
 @pytest.mark.asyncio
@@ -60,7 +61,14 @@ async def test_caps_at_configured_count():
     llm = _MockLLM([json.dumps({"queries": ["a", "b", "c", "d", "e"]})])
     gen = QueryGenerator(llm=llm, count=3)
     queries = await gen.generate(_spec())
-    assert len(queries) == 3
+    assert queries == ["Herman Miller Aeron", "a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_count_one_skips_the_llm():
+    gen = QueryGenerator(llm=_RaisingLLM(), count=1)
+    queries = await gen.generate(_spec())
+    assert queries == ["Herman Miller Aeron"]
 
 
 @pytest.mark.asyncio
@@ -79,7 +87,7 @@ async def test_malformed_json_falls_back_to_original_query():
 
 
 @pytest.mark.asyncio
-async def test_empty_llm_output_falls_back_to_original_query():
+async def test_empty_llm_output_still_runs_core_query():
     llm = _MockLLM([json.dumps({"queries": []})])
     gen = QueryGenerator(llm=llm)
     queries = await gen.generate(_spec())

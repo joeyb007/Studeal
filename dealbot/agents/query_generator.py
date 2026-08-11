@@ -1,9 +1,11 @@
 """QueryGenerator
 
-Given a WatchlistContext, produces N distinct search phrasings for the hunt.
-Multiple queries expand marketplace coverage: 'Herman Miller Aeron chair',
-'Aeron desk chair', 'used office chair Herman Miller' all surface different
-listing sets even on the same site.
+Given a WatchlistContext, produces the hunt's search queries. The user's own
+product_query always runs verbatim; the LLM adds complementary phrasings that
+cover inventory the core query misses (brand/model angles, seller-title
+vocabulary). Synonym rephrases are explicitly not wanted — marketplace search
+engines already fuzzy-match those, so they return the same listings and just
+burn browser lanes.
 
 Single LLM call. Fresh context per invocation.
 """
@@ -21,21 +23,24 @@ from dealbot.schemas import WatchlistContext
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_QUERY_COUNT = 3
+DEFAULT_QUERY_COUNT = 2
 
 
 class _QueriesJSON(BaseModel):
     queries: list[str]
 
 
-QUERY_GENERATOR_SYSTEM = """You produce diverse search query phrasings for a
-marketplace deal-hunter. Given a user's product spec, emit 3-4 distinct
-query strings that a human would plausibly type into a marketplace search
-bar. Diversity is the goal — vary synonyms, word order, and specificity.
+QUERY_GENERATOR_SYSTEM = """You produce complementary search queries for a
+marketplace deal-hunter. The user's own query already runs verbatim — your
+job is to add coverage it misses, not to rephrase it.
 
-Return: {"queries": ["...", "...", "..."]}
+Return: {"queries": ["..."]}
 
 Rules:
+  - Each query must be meaningfully different from the user's own phrasing:
+    a specific brand or model the spec implies, or a distinct angle sellers
+    actually put in listing titles. Synonym shuffles and word-order swaps
+    are worthless — marketplace search engines already match those.
   - Every query must be a plausible marketplace search string (short, no
     filler words like "please find").
   - No duplicate queries.
@@ -54,11 +59,19 @@ class QueryGenerator:
         self.count = count
 
     async def generate(self, spec: WatchlistContext) -> list[str]:
-        """Emit `count` distinct query phrasings. Falls back to [product_query]
-        on LLM/parse failure — always returns at least one query."""
+        """Return `count` queries: the user's product_query first, then
+        LLM-generated complements. Falls back to [product_query] on LLM/parse
+        failure — always returns at least one query."""
+        core = spec.product_query.strip()
+        result: list[str] = [core]
+        seen: set[str] = {core.lower()}
+        if self.count <= 1:
+            return result
+
         user = (
             f"Product spec: {spec.model_dump_json(indent=2)}\n\n"
-            f"Emit exactly {self.count} distinct query strings as JSON."
+            f"The query {core!r} already runs as-is. Emit exactly "
+            f"{self.count - 1} complementary query strings as JSON."
         )
         messages = [
             {"role": "system", "content": QUERY_GENERATOR_SYSTEM},
@@ -71,18 +84,16 @@ class QueryGenerator:
             )
         except Exception as exc:
             logger.warning("QueryGenerator: LLM call failed: %s", exc)
-            return [spec.product_query]
+            return result
 
         try:
             data = json.loads(response.content)
             parsed = _QueriesJSON.model_validate(data)
         except (json.JSONDecodeError, ValidationError) as exc:
             logger.warning("QueryGenerator: parse failed: %s", exc)
-            return [spec.product_query]
+            return result
 
-        # Dedup + strip + cap at self.count.
-        seen: set[str] = set()
-        result: list[str] = []
+        # Dedup + strip + cap at self.count total (core included).
         for q in parsed.queries:
             q = q.strip()
             if not q:
@@ -95,7 +106,4 @@ class QueryGenerator:
             if len(result) >= self.count:
                 break
 
-        # Always include original as fallback if LLM emitted nothing usable.
-        if not result:
-            result.append(spec.product_query)
         return result

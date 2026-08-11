@@ -465,14 +465,25 @@
   max-height: 340px; overflow-y: auto;
   padding: 2px 8px 2px 2px; overscroll-behavior: contain;
 }
-.thread .scoutMsgRow, .thread .userMsg { margin-left: 0; flex-shrink: 0; }
+.thread .scoutGroup, .thread .userMsg { margin-left: 0; flex-shrink: 0; }
 .thread .userMsg { margin-left: auto; }
-.scoutMsgRow { margin-left: 40px; display: flex; gap: 10px; align-items: flex-end; }
-.scoutMsg { max-width: 720px; }
-.scoutMsg {
-  background: rgba(168, 188, 232, 0.05); border: 1px solid rgba(168, 188, 232, 0.08);
-  border-radius: 14px 14px 14px 4px; padding: 10px 14px;
+/* C1 chat grammar (send-to-scout v2): eyebrow + grouped gradient bubbles,
+   matching the Inspector's thread voice. */
+.scoutGroup { display: flex; flex-direction: column; align-items: flex-start; }
+.whoLine {
+  display: flex; align-items: center; gap: 7px; margin: 6px 0 5px 2px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--text-faint);
 }
+.avatarTiny { width: 17px; height: 17px; border-width: 1px; }
+.scoutBubble {
+  max-width: 86%;
+  background: linear-gradient(180deg, rgba(168, 188, 232, 0.055), rgba(168, 188, 232, 0.028));
+  border: 1px solid rgba(168, 188, 232, 0.12);
+  border-radius: 15px; padding: 11px 14px;
+  margin-top: 4px;
+}
+.scoutBubbleFirst { border-radius: 4px 15px 15px 15px; margin-top: 0; }
 .userMsg {
   margin-left: auto; max-width: 480px; background: rgba(168, 188, 232, 0.12);
   border-radius: 14px 14px 4px 14px; padding: 9px 13px;
@@ -722,7 +733,6 @@
 .negCards .negCard { flex: 1; align-items: center; }
 .negRight .negCards { margin-left: 0; max-width: none; }
 .negRight .copyLine { margin-left: 0; max-width: none; }
-.negRight .scoutMsgRow { margin-left: 0; max-width: none; }
 .negRight .thread, .view .thread { margin-left: 40px; }
 .negRight .composer { margin-left: 0; max-width: none; }
 

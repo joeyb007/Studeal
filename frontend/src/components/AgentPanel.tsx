@@ -1088,18 +1088,32 @@ function MarketPlaybookView({
       {(messages.length > 0 || asking) && (
       <div className={styles.thread}>
       {messages.map((m, i) => (
-        <div key={i} className={m.role === "user" ? styles.userMsg : styles.scoutMsgRow}>
-          <div className={m.role === "user" ? undefined : styles.scoutMsg}>
-            {m.role === "assistant" && i === messages.length - 1 ? (
-              <TypedReply text={m.content} />
-            ) : (
-              <p className={styles.msgText}>{m.content}</p>
-            )}
+        m.role === "user" ? (
+          <div key={i} className={styles.userMsg}>
+            <p className={styles.msgText}>{m.content}</p>
           </div>
-        </div>
+        ) : (
+          <div key={i} className={styles.scoutGroup}>
+            {messages[i - 1]?.role !== "assistant" && (
+              <div className={styles.whoLine}>
+                <span className={[styles.avatar, styles.avatarTiny].join(" ")}><ScoutGlyph size={9} /></span> scout
+              </div>
+            )}
+            <div className={[styles.scoutBubble, messages[i - 1]?.role !== "assistant" ? styles.scoutBubbleFirst : ""].join(" ")}>
+              {i === messages.length - 1 ? (
+                <TypedReply text={m.content} />
+              ) : (
+                <p className={styles.msgText}>{m.content}</p>
+              )}
+            </div>
+          </div>
+        )
       ))}
       {asking && (
-        <div className={styles.scoutMsgRow}>
+        <div className={styles.scoutGroup}>
+          <div className={styles.whoLine}>
+            <span className={[styles.avatar, styles.avatarTiny].join(" ")}><ScoutGlyph size={9} /></span> scout
+          </div>
           <div className={styles.typingBubble} aria-hidden><span /><span /><span /></div>
         </div>
       )}

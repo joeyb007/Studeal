@@ -18,6 +18,7 @@ Trust boundaries:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -424,14 +425,27 @@ async def get_cached_inspection(listing_id: int) -> dict[str, Any] | None:
     )
 
 
+# One inspection per listing at a time (in-process): a panel double-fire or
+# an auto-inspect landing on a user-triggered look must not race two browser
+# visits whose conflicting verdicts last-write-win the cache. The second
+# caller waits, then reads the first's cache. Cross-process races (API vs
+# worker) remain possible and are bounded to duplicate spend, not bad state.
+_inspection_locks: dict[int, asyncio.Lock] = {}
+
+
 async def get_or_create_inspection(listing_id: int, force: bool = False) -> dict[str, Any]:
     """The whole Tier A flow. Statuses: ok | listing_gone | error.
     Errors are never cached; gone and ok are."""
-    if not force:
-        cached = await get_cached_inspection(listing_id)
-        if cached is not None:
-            return cached
+    lock = _inspection_locks.setdefault(listing_id, asyncio.Lock())
+    async with lock:
+        if not force:
+            cached = await get_cached_inspection(listing_id)
+            if cached is not None:
+                return cached
+        return await _run_inspection(listing_id, force)
 
+
+async def _run_inspection(listing_id: int, force: bool) -> dict[str, Any]:
     async with get_async_session() as session:
         listing = await session.get(Listing, listing_id)
     if listing is None:

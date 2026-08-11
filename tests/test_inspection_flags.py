@@ -64,3 +64,68 @@ def test_context_roundtrips_appearance_notes():
     ctx = WatchlistContext(product_query="x", appearance_notes="no dents on the cups")
     again = WatchlistContext.model_validate_json(ctx.model_dump_json())
     assert again.appearance_notes == "no dents on the cups"
+
+
+# ---- concurrency: one visit per listing, second caller reads the cache ----
+
+import asyncio
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_concurrent_inspections_deduplicate(monkeypatch):
+    from dealbot.agents import inspector
+
+    runs = {"count": 0}
+    cache: dict[int, dict] = {}
+
+    async def fake_cached(listing_id):
+        return cache.get(listing_id)
+
+    async def fake_run(listing_id, force):
+        runs["count"] += 1
+        await asyncio.sleep(0.05)          # a slow browser visit
+        result = {"status": "ok", "run": runs["count"]}
+        cache[listing_id] = result
+        return result
+
+    monkeypatch.setattr(inspector, "get_cached_inspection", fake_cached)
+    monkeypatch.setattr(inspector, "_run_inspection", fake_run)
+    inspector._inspection_locks.clear()
+
+    first, second = await asyncio.gather(
+        inspector.get_or_create_inspection(42),
+        inspector.get_or_create_inspection(42),
+    )
+    assert runs["count"] == 1               # one visit, not two
+    assert first == second == {"status": "ok", "run": 1}
+
+
+@pytest.mark.asyncio
+async def test_different_listings_do_not_serialize(monkeypatch):
+    from dealbot.agents import inspector
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_cached(listing_id):
+        return None
+
+    async def fake_run(listing_id, force):
+        if listing_id == 1:
+            started.set()
+            await release.wait()
+        return {"status": "ok", "id": listing_id}
+
+    monkeypatch.setattr(inspector, "get_cached_inspection", fake_cached)
+    monkeypatch.setattr(inspector, "_run_inspection", fake_run)
+    inspector._inspection_locks.clear()
+
+    slow = asyncio.create_task(inspector.get_or_create_inspection(1))
+    await started.wait()
+    # Listing 2 completes while listing 1 is still mid-visit.
+    fast = await asyncio.wait_for(inspector.get_or_create_inspection(2), timeout=1.0)
+    assert fast["id"] == 2
+    release.set()
+    assert (await slow)["id"] == 1

@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CHAT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # Nav default — verify against the console; overridden via BEDROCK_NAV_MODEL.
 DEFAULT_NAV_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+# Fast nav tier: routine explore turns (scroll / next page). Lanes escalate
+# to DEFAULT_NAV_MODEL on trouble. Overridden via BEDROCK_NAV_FAST_MODEL.
+DEFAULT_NAV_FAST_MODEL = _DEFAULT_CHAT_MODEL
 _DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
 _MAX_RETRIES = 4
 _BACKOFF_SCHEDULE_S = (8.0, 24.0, 60.0, 120.0)

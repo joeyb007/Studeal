@@ -31,6 +31,29 @@ def test_extract_llm_defaults_to_mini(monkeypatch):
     assert llm.model == "gpt-4o-mini"
 
 
+def test_nav_llms_fast_pair_shares_one_thinking_budget(monkeypatch):
+    from dealbot.agents.composition import build_nav_llms
+    from dealbot.llm.bedrock_client import DEFAULT_NAV_FAST_MODEL, DEFAULT_NAV_MODEL
+
+    monkeypatch.setenv("LLM_BACKEND", "bedrock")
+    monkeypatch.delenv("AGENT_NAV_FAST", raising=False)
+    primary, escalation = build_nav_llms()
+    assert primary.inner.model == DEFAULT_NAV_FAST_MODEL
+    assert escalation.inner.model == DEFAULT_NAV_MODEL
+    assert primary._sem is escalation._sem, "tiers must share one semaphore"
+
+
+def test_nav_llms_rollback_lever_restores_single_frontier(monkeypatch):
+    from dealbot.agents.composition import build_nav_llms
+    from dealbot.llm.bedrock_client import DEFAULT_NAV_MODEL
+
+    monkeypatch.setenv("LLM_BACKEND", "bedrock")
+    monkeypatch.setenv("AGENT_NAV_FAST", "0")
+    primary, escalation = build_nav_llms()
+    assert escalation is None
+    assert primary.inner.model == DEFAULT_NAV_MODEL
+
+
 def test_builders_fall_back_to_groq(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     nav_llm = build_nav_llm()
@@ -159,7 +182,7 @@ class _ScriptedExplorer:
     calls: list[tuple[str, str]] = []       # (query, entry_url)
     results: list[ExplorerResult] = []
 
-    def __init__(self, llm, trace=None):
+    def __init__(self, llm, trace=None, escalation_llm=None):
         pass
 
     async def explore(self, entry_url, marketplace, query, spec, session, sink, entry_referer=None):
@@ -220,3 +243,48 @@ async def test_no_retry_on_normal_done(composition_rig):
     ]
     await _run_one_query("used aeron chair", spec, router, None, _NullPool(), asyncio.Semaphore(6))
     assert len(_ScriptedExplorer.calls) == 1
+
+
+# ---------------------------------------------------------------------
+# Whole-hunt browse deadline: stuck lanes get cancelled, extracted
+# offers are still drained and returned.
+# ---------------------------------------------------------------------
+
+
+@_pytest.mark.asyncio
+async def test_run_hunt_browse_deadline_salvages_offers(composition_rig, monkeypatch):
+    comp = composition_rig
+    monkeypatch.setenv("HUNT_BROWSE_DEADLINE_S", "0")
+
+    async def stuck_query(*args, **kwargs):
+        await asyncio.Event().wait()        # a lane that never finishes
+
+    class _FakeGen:
+        def __init__(self, llm):
+            pass
+
+        async def generate(self, spec):
+            return ["aeron chair"]
+
+    class _DrainPool:
+        def __init__(self, extractor, num_workers=3):
+            pass
+
+        async def start(self):
+            pass
+
+        async def drain(self):
+            return ["salvaged-offer"]
+
+    monkeypatch.setattr(comp, "build_nav_llms", lambda: (None, None))
+    monkeypatch.setattr(comp, "build_extract_llm", lambda: None)
+    monkeypatch.setattr(comp, "Extractor", lambda llm: None)
+    monkeypatch.setattr(comp, "ExtractorPool", _DrainPool)
+    monkeypatch.setattr(comp, "MarketplaceRouter", lambda llm: None)
+    monkeypatch.setattr(comp, "QueryGenerator", _FakeGen)
+    monkeypatch.setattr(comp, "_run_one_query", stuck_query)
+
+    offers = await asyncio.wait_for(
+        comp.run_hunt(WatchlistContext(product_query="aeron chair")), timeout=5,
+    )
+    assert offers == ["salvaged-offer"]

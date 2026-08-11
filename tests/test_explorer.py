@@ -241,8 +241,9 @@ async def test_click_next_transitions_url_and_enqueues_both():
 
 
 @pytest.mark.asyncio
-async def test_max_turns_or_stall_when_llm_never_done():
-    """LLM only scrolls → stall detection or max_turns stops the run."""
+async def test_llm_that_never_says_done_still_terminates():
+    """LLM only scrolls → the run self-terminates well before MAX_TURNS:
+    dry-scroll exit ('scroll_exhausted'), a stall, or the turn budget."""
     llm = _MockLLM([{"action": "scroll"}] * 40)
     explorer = Explorer(llm=llm)
     sink, collected = await _sink_collector()
@@ -258,7 +259,11 @@ async def test_max_turns_or_stall_when_llm_never_done():
             sink=sink,
         )
 
-    assert result.stop_reason in ("max_turns", "stalled")
+    assert (
+        result.stop_reason in ("max_turns", "stalled")
+        or (result.done_reason or "").startswith("scroll_exhausted")
+    )
+    assert result.turns_used < Explorer.MAX_TURNS
     assert any(snap.url == "https://mock.local/home" for snap, _ in collected)
 
 
@@ -282,6 +287,56 @@ async def test_invalid_action_json_does_not_crash():
 
     assert result.stop_reason == "done"
     assert len(collected) == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_output_escalates_to_frontier_tier():
+    """Fast tier emits garbage → the lane hands off permanently to the
+    escalation LLM, which finishes the explore."""
+    fast = _MockLLM([])
+    fast._responses = ["not valid json"]
+    full = _MockLLM([{"action": "done", "reason": "no_results on this page"}])
+    explorer = Explorer(llm=fast, escalation_llm=full)
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/home", _HOME_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/home",
+            marketplace="kijiji",
+            query="aeron",
+            spec=_spec(),
+            session=bs,
+            sink=sink,
+        )
+
+    assert result.stop_reason == "done"
+    assert fast.calls == 1, "fast tier is done after its malformed emit"
+    assert full.calls == 1, "escalation tier takes over the lane"
+
+
+@pytest.mark.asyncio
+async def test_no_escalation_llm_keeps_single_tier_behavior():
+    """Without an escalation client the fast tier keeps the lane (rollback)."""
+    llm = _MockLLM([])
+    llm._responses = ["not valid json", json.dumps({"action": "done",
+                                                    "reason": "no_results"})]
+    explorer = Explorer(llm=llm)
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/home", _HOME_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/home",
+            marketplace="kijiji",
+            query="aeron",
+            spec=_spec(),
+            session=bs,
+            sink=sink,
+        )
+
+    assert result.stop_reason == "done"
+    assert llm.calls == 2
 
 
 @pytest.mark.asyncio
@@ -311,6 +366,31 @@ async def test_scroll_with_new_content_does_not_stall():
             session=bs, sink=sink,
         )
     assert result.stop_reason == "done"
+
+
+@pytest.mark.asyncio
+async def test_dry_scrolls_exit_early_as_content_exhausted():
+    """Scrolling a page that yields no new content stops after
+    SCROLL_YIELD_PATIENCE dry scrolls — before MAX_TURNS or a stall."""
+    llm = _MockLLM([{"action": "scroll"}] * 10)
+    explorer = Explorer(llm=llm)
+    sink, collected = await _sink_collector()
+
+    async with LocalPlaywrightSession() as bs:
+        await _mock_page(bs, "https://mock.local/serp", _SERP_HTML)
+        result = await explorer.explore(
+            entry_url="https://mock.local/serp",
+            marketplace="kijiji",
+            query="aeron",
+            spec=_spec(),
+            session=bs,
+            sink=sink,
+        )
+
+    assert result.stop_reason == "done"
+    assert result.done_reason and "scroll_exhausted" in result.done_reason
+    assert result.turns_used <= Explorer.SCROLL_YIELD_PATIENCE + 2
+    assert collected, "final page state must still reach the sink"
 
 
 @pytest.mark.asyncio

@@ -221,12 +221,23 @@ def _registrable_domain(url: str) -> str:
 class Explorer:
     MAX_TURNS: int = 20
     STALL_THRESHOLD: int = 4   # N consecutive no-effect actions → stop
+    SCROLL_YIELD_MIN_CHARS: int = 400  # a scroll adding less than this is "dry"
+    SCROLL_YIELD_PATIENCE: int = 3     # N consecutive dry scrolls → content exhausted
     MIN_SERP_URLS: int = 2     # minimum distinct SERP URLs (beyond entry) before done is accepted
     MIN_PAGINATION_ATTEMPTS: int = 3  # minimum scroll/click actions before done is accepted
     MAX_NUDGES: int = 2        # maximum rejection nudges before accepting done unconditionally
 
-    def __init__(self, llm: LLMClient, trace: TraceWriter | None = None) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        trace: TraceWriter | None = None,
+        escalation_llm: LLMClient | None = None,
+    ) -> None:
+        # llm drives routine turns (fast tier); escalation_llm, when given,
+        # takes over permanently for this lane the first time it shows signs
+        # of trouble (stalls, failed actions, captcha, malformed output).
         self.llm = llm
+        self.escalation_llm = escalation_llm
         self.trace = trace or NullTraceWriter()
 
     async def explore(
@@ -359,6 +370,9 @@ class Explorer:
         pagination_attempts: int = 0   # scroll + click actions dispatched
         nudges_used: int = 0           # coverage-rejection nudges sent to LLM
         failed_action_streak: int = 0  # consecutive click/type failures
+        escalated: bool = False        # fast tier handed off to escalation_llm
+        last_action_was_scroll: bool = False
+        low_yield_scrolls: int = 0     # consecutive scrolls yielding < min chars
 
         for turn in range(self.MAX_TURNS):
             snap = await _settled_snapshot(session.page, image_spec, marketplace)
@@ -378,6 +392,30 @@ class Explorer:
                 # listings the sink would otherwise never see.
                 await sink(snap, marketplace)
                 sunk_chars = growth_baseline_chars = len(snap.text)
+
+            # Adaptive turn budget: consecutive scrolls that add (almost) no
+            # content mean the page has run dry — stop deterministically
+            # instead of burning LLM turns until MAX_TURNS or a stall.
+            if (
+                last_action_was_scroll
+                and prev_snap is not None
+                and snap.url == prev_url
+            ):
+                if len(snap.text) - len(prev_snap.text) < self.SCROLL_YIELD_MIN_CHARS:
+                    low_yield_scrolls += 1
+                else:
+                    low_yield_scrolls = 0
+                if low_yield_scrolls >= self.SCROLL_YIELD_PATIENCE:
+                    if snap.url and len(snap.text) != sunk_chars:
+                        await sink(snap, marketplace)
+                    return ExplorerResult(
+                        urls_visited=seen_urls,
+                        turns_used=turn,
+                        stop_reason="done",
+                        done_reason=(
+                            "scroll_exhausted: page stopped yielding new content"
+                        ),
+                    )
 
             # Track unique URLs.
             if snap.url and snap.url not in seen_url_set:
@@ -433,8 +471,26 @@ class Explorer:
                         label="live", png_bytes=frame,
                     )
 
+            # Tier escalation: trouble signals mean the fast model is out of
+            # its depth — hand the lane to the frontier model for good.
+            if (
+                self.escalation_llm is not None
+                and not escalated
+                and (
+                    no_effect_streak >= 2
+                    or failed_action_streak >= 2
+                    or snap.captcha_detected
+                )
+            ):
+                escalated = True
+                logger.info(
+                    "Explorer: escalating nav tier on %s (turn %d)",
+                    marketplace, turn,
+                )
+            nav = self.escalation_llm if escalated else self.llm
+
             want_vision = (
-                getattr(self.llm, "supports_vision", False)
+                getattr(nav, "supports_vision", False)
                 and (failed_action_streak >= 2 or snap.captcha_detected)
             )
             if want_vision:
@@ -465,7 +521,7 @@ class Explorer:
 
             # LLM emits an action.
             try:
-                response = await self.llm.complete(
+                response = await nav.complete(
                     messages, response_format={"type": "json_object"},
                 )
             except Exception as exc:
@@ -495,12 +551,17 @@ class Explorer:
 
             action, err = _parse_action(response.content)
             if err is not None:
+                # Malformed output is itself a trouble signal for the fast tier.
+                if self.escalation_llm is not None:
+                    escalated = True
+                last_action_was_scroll = False
                 messages.append({"role": "user", "content": (
                     f"Invalid action JSON: {err}. Re-emit."
                 )})
                 continue
 
             action_type = action.action
+            last_action_was_scroll = action_type == "scroll"
 
             if action_type == "done":
                 reason = (action.reason or "").lower()

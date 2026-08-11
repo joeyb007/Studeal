@@ -74,9 +74,17 @@ class ThrottledLLM(LLMClient):
     zero 429 retry-exhaustion deaths.
     """
 
-    def __init__(self, inner: LLMClient, max_concurrency: int) -> None:
+    def __init__(
+        self,
+        inner: LLMClient,
+        max_concurrency: int | None = None,
+        *,
+        semaphore: asyncio.Semaphore | None = None,
+    ) -> None:
+        # A shared semaphore lets two tiers (fast + escalation) count against
+        # ONE thinking budget instead of doubling it.
         self._inner = inner
-        self._sem = asyncio.Semaphore(max_concurrency)
+        self._sem = semaphore if semaphore is not None else asyncio.Semaphore(max_concurrency)
 
     @property
     def inner(self) -> LLMClient:
@@ -126,6 +134,33 @@ def build_nav_llm() -> LLMClient:
     else:
         inner = GroqClient(model=_GROQ_70B)
     return ThrottledLLM(inner, max_concurrency=limit)
+
+
+def build_nav_llms() -> tuple[LLMClient, LLMClient | None]:
+    """(primary, escalation) navigator pair.
+
+    On the bedrock backend with AGENT_NAV_FAST=1 (default), routine turns run
+    on the fast tier and lanes that hit trouble escalate permanently to the
+    frontier tier — both share one concurrency semaphore so the total nav
+    thinking budget is unchanged. AGENT_NAV_FAST=0 is the rollback lever:
+    single frontier model, exactly the pre-demotion behavior.
+    """
+    fast_on = os.environ.get("AGENT_NAV_FAST", "1").lower() not in ("0", "false", "no")
+    if fast_on and os.environ.get("LLM_BACKEND") == "bedrock":
+        from dealbot.llm.bedrock_client import (
+            DEFAULT_NAV_FAST_MODEL,
+            DEFAULT_NAV_MODEL,
+            BedrockClient,
+        )
+
+        limit = int(os.environ.get("AGENT_NAV_CONCURRENCY", "4"))
+        sem = asyncio.Semaphore(limit)
+        fast = BedrockClient(
+            model=os.environ.get("BEDROCK_NAV_FAST_MODEL", DEFAULT_NAV_FAST_MODEL))
+        full = BedrockClient(
+            model=os.environ.get("BEDROCK_NAV_MODEL", DEFAULT_NAV_MODEL))
+        return ThrottledLLM(fast, semaphore=sem), ThrottledLLM(full, semaphore=sem)
+    return build_nav_llm(), None
 
 
 def build_extract_llm() -> LLMClient:
@@ -212,6 +247,7 @@ async def _run_one_lane(
     events: HuntEventContext | None = None,
     trace_stamp: str | None = None,
     trace_slug: str | None = None,
+    nav_full_llm: LLMClient | None = None,
 ) -> None:
     """One (query, marketplace) browse lane with its own browser session.
 
@@ -254,7 +290,7 @@ async def _run_one_lane(
     async def _lane_work() -> None:
         nonlocal pages, done_reason
         async with build_session_from_env() as session:
-            explorer = Explorer(nav_llm, trace=trace)
+            explorer = Explorer(nav_llm, trace=trace, escalation_llm=nav_full_llm)
             result = await explorer.explore(
                 entry_url=target.entry_url,
                 entry_referer=target.entry_referer,
@@ -294,7 +330,8 @@ async def _run_one_lane(
                         "run_hunt[%s]: %s no_results — retrying with core query %r",
                         query, target.marketplace, retry_query,
                     )
-                    retry_explorer = Explorer(nav_llm, trace=trace)
+                    retry_explorer = Explorer(
+                        nav_llm, trace=trace, escalation_llm=nav_full_llm)
                     retry_result = await retry_explorer.explore(
                         entry_url=retry_target.entry_url,
                         entry_referer=retry_target.entry_referer,
@@ -352,6 +389,7 @@ async def _run_one_query(
     pool: ExtractorPool,
     lane_semaphore: "asyncio.Semaphore",
     events: HuntEventContext | None = None,
+    nav_full_llm: LLMClient | None = None,
 ) -> None:
     """Route the query, then fan out one lane per routed marketplace."""
     try:
@@ -380,6 +418,7 @@ async def _run_one_query(
             _run_one_lane(
                 query, target, spec, router, nav_llm, pool,
                 lane_semaphore, events, trace_stamp, trace_slug,
+                nav_full_llm=nav_full_llm,
             )
             for target in targets
         ),
@@ -401,11 +440,16 @@ async def run_hunt(
     Explorer; all feed a shared ExtractorPool. Extraction happens in parallel
     with continued browsing, bounded by pool worker count.
     """
-    nav_llm = build_nav_llm()
+    nav_llm, nav_full_llm = build_nav_llms()
     extract_llm = build_extract_llm()
     extractor = Extractor(extract_llm)
-    pool = ExtractorPool(extractor, num_workers=3)
-    router = MarketplaceRouter(nav_llm)
+    # Extraction runs in parallel with browsing on the cheap tier; 5 workers
+    # keeps it ahead of 6 lanes' snapshot output.
+    pool = ExtractorPool(
+        extractor, num_workers=int(os.environ.get("AGENT_EXTRACT_WORKERS", "5")))
+    # Routing is one call per query and a wrong route costs a whole lane —
+    # always the frontier tier.
+    router = MarketplaceRouter(nav_full_llm or nav_llm)
     query_gen = QueryGenerator(extract_llm)
 
     queries = await query_gen.generate(spec)
@@ -422,14 +466,31 @@ async def run_hunt(
     # kill the whole hunt. Each worker builds its own Explorer + TraceWriter.
     # Lane budget: concurrent browser sessions across ALL lanes. LLM thinking
     # is bounded separately by the nav ThrottledLLM.
+    # Whole-hunt browse deadline: backstop above the per-lane deadline so a
+    # hunt can never run unbounded. On timeout, cancelled lanes emit their
+    # finished events via their finally blocks, and we still drain the pool
+    # so everything extracted before the cutoff is kept.
     lane_semaphore = asyncio.Semaphore(int(os.environ.get("AGENT_LANE_CONCURRENCY", "6")))
-    await asyncio.gather(
-        *(
-            _run_one_query(q, spec, router, nav_llm, pool, lane_semaphore, events)
-            for q in queries
-        ),
-        return_exceptions=True,
-    )
+    browse_deadline = int(os.environ.get("HUNT_BROWSE_DEADLINE_S", "1200"))
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                *(
+                    _run_one_query(
+                        q, spec, router, nav_llm, pool, lane_semaphore, events,
+                        nav_full_llm=nav_full_llm,
+                    )
+                    for q in queries
+                ),
+                return_exceptions=True,
+            ),
+            timeout=browse_deadline,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "run_hunt: browse deadline of %ss hit; salvaging extracted offers",
+            browse_deadline,
+        )
 
     offers = await pool.drain()
     logger.info(

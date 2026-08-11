@@ -647,7 +647,9 @@
 .overlay {
   position: fixed; inset: 0; z-index: 90;
   background: rgba(10, 12, 18, 0.6); backdrop-filter: blur(6px);
-  display: flex; align-items: center; justify-content: center; padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+  /* the site nav is fixed above this overlay: keep modals clear of it */
+  padding: 96px 24px 24px;
   animation: overlayIn 0.2s ease backwards;
 }
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }

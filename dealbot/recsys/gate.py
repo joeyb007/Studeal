@@ -8,13 +8,14 @@ never a silently frozen pool: degenerate queries thin the pool → insufficiency
 trips more → MORE hunting. A too-loose τ self-corrects — junk matches are
 consumed as hunt_listings rows, the junk supply exhausts, insufficiency trips.
 
-τ=0.40 / k=10 were MEASURED in Titan-V2 space (2026-08-01, 17 intent
-vectors × 104-listing pool, post-0025): exact matches score 0.64-0.71,
-off-topic tops out at 0.306. Titan is more lexical than OpenAI's space —
-category-level matches (desk chairs→Aeron) fall below τ and rely on live
-hunts instead; fails toward hunting. τ is coupled to BOTH the embedding
-backend and compose_intent_document — changing either expires the number
-(OpenAI-space measurement was τ=0.50). See spec §8b.
+τ=0.50 / k=10 RE-MEASURED in Titan MULTIMODAL space (2026-08-11, fused
+photo+text listing vectors, intent docs with the physical brief): same-
+category distances run 0.22-0.49 (similarity 0.51-0.78); cross-category
+starts at distance ~0.51 (similarity ≤0.49). The bands TOUCH near 0.51 —
+title-blind listings with weak photos straddle it and fail toward hunting,
+which is the safe direction. τ is coupled to BOTH the embedding backend and
+compose_intent_document — changing either expires the number (Titan text-V2
+measurement was τ=0.40; OpenAI-space was τ=0.50). See spec §8b.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from dealbot.schemas import WatchlistContext
 
 logger = logging.getLogger(__name__)
 
-GATE_SIMILARITY_TAU = float(os.environ.get("GATE_SIMILARITY_TAU", "0.40"))
+GATE_SIMILARITY_TAU = float(os.environ.get("GATE_SIMILARITY_TAU", "0.50"))
 GATE_SUFFICIENCY_K = int(os.environ.get("GATE_SUFFICIENCY_K", "10"))
 
 

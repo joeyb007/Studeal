@@ -494,6 +494,9 @@ export default function AgentPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id, sweep, token]);
 
+  // A brand-new agent shows its first sweep working, never instant answers
+  // scraped off other agents' pool: picks and market reveal after hunt one.
+  const firstHuntPending = agent.last_hunt_at === null;
   const ranked = (listings ?? []).filter(l => l.relevance_score >= WEAK);
   const weak = (listings ?? []).filter(l => l.relevance_score < WEAK);
   const picks = ranked.slice(0, 5);
@@ -588,7 +591,21 @@ export default function AgentPanel({
       </div>
 
       {/* ================= TOP PICKS ================= */}
-      {tab === "picks" && (
+      {tab === "picks" && firstHuntPending && (
+        <div className={styles.view}>
+          <SayLine
+            lead="Your agent is out on its first sweep. "
+            dim="Top picks land the moment it reports back."
+          />
+          {agent.running_hunt_id && (
+            <button className={styles.showAllBtn} onClick={() => setShowSweepModal(true)}>
+              Watch the sweep live ↗
+            </button>
+          )}
+        </div>
+      )}
+
+      {tab === "picks" && !firstHuntPending && (
         <div className={styles.view}>
           {listings === null && <p className={styles.loading}>Loading Scout's picks…</p>}
           {listings !== null && picks.length === 0 && (
@@ -682,7 +699,16 @@ export default function AgentPanel({
       )}
 
       {/* ================= MARKET PLAYBOOK ================= */}
-      {tab === "market" && (
+      {tab === "market" && firstHuntPending && (
+        <div className={styles.view}>
+          <SayLine
+            lead="Still building your market. "
+            dim="Numbers come from what the first sweep finds."
+          />
+        </div>
+      )}
+
+      {tab === "market" && !firstHuntPending && (
         <MarketPlaybookView
           agent={agent}
           market={market}

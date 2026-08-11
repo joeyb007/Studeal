@@ -164,6 +164,8 @@ export default function InspectorPanel({
   const [uploading, setUploading] = useState(false);
   const [rundownBusy, setRundownBusy] = useState(false);
   const [rundownDone, setRundownDone] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
@@ -328,7 +330,9 @@ export default function InspectorPanel({
   const attachFiles = async (files: FileList | null) => {
     if (!files || uploading) return;
     const room = 4 - pendingImages.length;
-    const picked = Array.from(files).slice(0, Math.max(0, room));
+    const picked = Array.from(files)
+      .filter(f => ["image/jpeg", "image/png", "image/webp"].includes(f.type))
+      .slice(0, Math.max(0, room));
     if (picked.length === 0) return;
     setUploading(true);
     try {
@@ -418,7 +422,33 @@ export default function InspectorPanel({
 
   return createPortal(
     <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.panel} onClick={e => e.stopPropagation()}>
+      <div
+        className={styles.panel}
+        onClick={e => e.stopPropagation()}
+        onDragEnter={e => {
+          if (!chatOpen) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={e => { if (chatOpen) e.preventDefault(); }}
+        onDragLeave={() => {
+          dragDepth.current -= 1;
+          if (dragDepth.current <= 0) { dragDepth.current = 0; setDragging(false); }
+        }}
+        onDrop={e => {
+          if (!chatOpen) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          attachFiles(e.dataTransfer.files);
+        }}
+      >
+        {dragging && (
+          <div className={styles.dropOverlay} aria-hidden>
+            <span className={styles.dropLabel}>Drop screenshots for Scout</span>
+          </div>
+        )}
         <div className={styles.dossier}>
           <div className={styles.dosTop}>
             {listing.image_url ? (
@@ -762,6 +792,13 @@ export default function InspectorPanel({
             value={draft}
             disabled={!chatOpen || replying}
             onChange={e => setDraft(e.target.value)}
+            onPaste={e => {
+              const files = e.clipboardData?.files;
+              if (files && files.length > 0) {
+                e.preventDefault();
+                attachFiles(files);
+              }
+            }}
             onKeyDown={e => { if (e.key === "Enter") send(); }}
           />
           <button

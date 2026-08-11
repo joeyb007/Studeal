@@ -20,6 +20,7 @@
 
 .panel {
   width: min(680px, 100%);
+  position: relative;
   max-height: min(760px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
@@ -752,4 +753,17 @@
 .readyNudgeBtn:disabled { opacity: 0.6; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .tickSettle, .readyNudge { animation: none; }
+}
+
+/* drag-and-drop for screenshots */
+.dropOverlay {
+  position: absolute; inset: 8px; z-index: 30; pointer-events: none;
+  border: 2px dashed rgba(168, 188, 232, 0.5); border-radius: 14px;
+  background: rgba(25, 25, 24, 0.72); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  animation: overlayIn 0.12s ease;
+}
+.dropLabel {
+  font-size: 14px; font-weight: 650; color: var(--accent);
+  display: inline-flex; align-items: center; gap: 9px;
 }

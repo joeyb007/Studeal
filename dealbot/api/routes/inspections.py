@@ -104,6 +104,18 @@ async def _record_watch(user_id: int, listing: Listing) -> None:
                        user_id, listing.id, exc_info=True)
 
 
+def _fast_llm() -> LLMClient:
+    """Extraction-tier model for mechanical JSON work (criteria seeding,
+    evidence assessment, rundown polish): Scout's judgment voice is overkill
+    there, and the latency sits directly on the panel's first open."""
+    backend = os.environ.get("LLM_BACKEND", "openai")
+    if backend == "bedrock":
+        from dealbot.llm.bedrock_client import BedrockClient
+        return BedrockClient(model=os.environ.get("BEDROCK_EXTRACT_MODEL"))
+    from dealbot.llm.openai_client import OpenAIClient
+    return OpenAIClient()
+
+
 def _chat_llm() -> LLMClient:
     backend = os.environ.get("LLM_BACKEND", "openai")
     if backend == "bedrock":
@@ -520,7 +532,7 @@ async def _seed_criteria(
         },
     }
     try:
-        response = await _chat_llm().complete(
+        response = await _fast_llm().complete(
             [
                 {"role": "system", "content": CRITERIA_SEED_SYSTEM},
                 {"role": "user", "content": json.dumps(payload)},
@@ -546,7 +558,7 @@ async def _assess_checklist(items: list[dict], evidence: str) -> list[dict]:
         "evidence": evidence[:4000],
     }
     try:
-        response = await _chat_llm().complete(
+        response = await _fast_llm().complete(
             [
                 {"role": "system", "content": CHECKLIST_ASSESS_SYSTEM},
                 {"role": "user", "content": json.dumps(payload)},
@@ -1192,7 +1204,7 @@ async def pickup_rundown(
     walk_if = list(flagged)
     if open_checks or flagged:
         try:
-            response = await _chat_llm().complete(
+            response = await _fast_llm().complete(
                 [
                     {"role": "system", "content": RUNDOWN_SYSTEM},
                     {"role": "user", "content": json.dumps({

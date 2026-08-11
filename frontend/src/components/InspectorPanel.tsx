@@ -82,16 +82,24 @@ function useTypedText(text: string, speed: number, instant: boolean) {
     setShown("");
     setDone(false);
     if (!text) { setDone(true); return; }
-    let i = 0;
-    const interval = setInterval(() => {
-      i++;
-      setShown(text.slice(0, i));
-      if (i >= text.length) {
-        clearInterval(interval);
-        setDone(true);
-      }
-    }, speed);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = null;
+    // The bubble lands first, then Scout speaks: the pause lets the entrance
+    // finish so the type-out reads as a person starting to talk.
+    const starter = setTimeout(() => {
+      let i = 0;
+      interval = setInterval(() => {
+        i++;
+        setShown(text.slice(0, i));
+        if (i >= text.length) {
+          if (interval) clearInterval(interval);
+          setDone(true);
+        }
+      }, speed);
+    }, 340);
+    return () => {
+      clearTimeout(starter);
+      if (interval) clearInterval(interval);
+    };
   }, [text, speed, instant]);
   return { shown, done };
 }
@@ -99,7 +107,7 @@ function useTypedText(text: string, speed: number, instant: boolean) {
 function Typed({
   text,
   instant = false,
-  speed = 9,
+  speed = 14,
   onDone,
 }: {
   text: string;

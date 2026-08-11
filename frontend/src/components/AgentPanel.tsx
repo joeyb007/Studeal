@@ -591,7 +591,7 @@ export default function AgentPanel({
       </div>
 
       {/* ================= TOP PICKS ================= */}
-      {tab === "picks" && firstHuntPending && (
+      {tab === "picks" && firstHuntPending && ranked.length === 0 && (
         <div className={styles.view}>
           <SayLine
             lead="Your agent is out on its first sweep. "
@@ -605,8 +605,21 @@ export default function AgentPanel({
         </div>
       )}
 
-      {tab === "picks" && !firstHuntPending && (
+      {tab === "picks" && (!firstHuntPending || ranked.length > 0) && (
         <div className={styles.view}>
+          {firstHuntPending && (
+            <div className={styles.aiNote}>
+              <span className={styles.aiNoteIcon}>✦</span>
+              <span className={styles.aiNoteText}>
+                From what the fleet&apos;s already seen. Your own first sweep is out now.
+              </span>
+              {agent.running_hunt_id && (
+                <button className={styles.semanticBtn} onClick={() => setShowSweepModal(true)}>
+                  Watch it live ↗
+                </button>
+              )}
+            </div>
+          )}
           {listings === null && <p className={styles.loading}>Loading Scout's picks…</p>}
           {listings !== null && picks.length === 0 && (
             <SayLine

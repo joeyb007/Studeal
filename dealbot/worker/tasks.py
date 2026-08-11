@@ -46,8 +46,9 @@ def _get_publisher() -> RedisEventPublisher:
 # ---------------------------------------------------------------------------
 
 @app.task(name="dealbot.worker.tasks.research_for_agent", bind=True, max_retries=3)
-def research_for_agent(self, watchlist_id: int) -> dict:
-    """Run the v14 hunt pipeline for a single watchlist; persist listings."""
+def research_for_agent(self, watchlist_id: int, first_hunt: bool = False) -> dict:
+    """Run the v14 hunt pipeline for a single watchlist; persist listings.
+    first_hunt keeps its queue priority through capacity requeues."""
     try:
         return asyncio.run(_run_hunt_and_persist(watchlist_id))
     except FleetAtCapacity:
@@ -55,7 +56,11 @@ def research_for_agent(self, watchlist_id: int) -> dict:
             "research_for_agent: fleet at capacity — requeueing wl=%d in %ds",
             watchlist_id, REQUEUE_DELAY_S,
         )
-        research_for_agent.apply_async(args=[watchlist_id], countdown=REQUEUE_DELAY_S)
+        research_for_agent.apply_async(
+            args=[watchlist_id], kwargs={"first_hunt": first_hunt},
+            countdown=REQUEUE_DELAY_S,
+            priority=0 if first_hunt else None,
+        )
         return {"watchlist_id": watchlist_id, "requeued": True}
     except Exception as exc:
         logger.exception("research_for_agent failed for wl=%d: %s", watchlist_id, exc)

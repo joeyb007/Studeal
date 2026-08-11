@@ -48,6 +48,9 @@ app = Celery(
 )
 
 app.conf.update(
+    # Redis priority queues: first hunts (new users) outrank scheduled
+    # re-hunts — a cron refresh can be minutes late, a first impression can't.
+    broker_transport_options={"queue_order_strategy": "priority"},
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],

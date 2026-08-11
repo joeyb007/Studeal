@@ -170,7 +170,10 @@ async def create_watchlist(
     # Dispatch the research agent + Scout's playbook (background via Celery)
     try:
         from dealbot.worker.tasks import generate_playbook_task, research_for_agent
-        research_for_agent.delay(wl_id)
+        # First hunt: highest priority — new users never wait behind cron.
+        research_for_agent.apply_async(
+            args=[wl_id], kwargs={"first_hunt": True}, priority=0,
+        )
         generate_playbook_task.delay(wl_id)
     except Exception:
         pass  # worker not running in dev — fail silently

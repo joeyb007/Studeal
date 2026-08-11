@@ -350,6 +350,7 @@ export default function AgentPanel({
   const [market, setMarket] = useState<Market | null>(null);
   const [sweep, setSweep] = useState<SweepListing[] | null>(null);
   const [pool, setPool] = useState<PoolItem[] | null>(null);
+  const [poolVisible, setPoolVisible] = useState(24);
   const [inspecting, setInspecting] = useState<InspectListing | null>(null);
   const [showSweepModal, setShowSweepModal] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -699,8 +700,7 @@ export default function AgentPanel({
           {pool !== null && (() => {
             const shown = filterSort(pool);
             const markets = Array.from(new Set(pool.map(l => l.marketplace))).sort();
-            const minis = shown.slice(0, 12);
-            const dense = shown.slice(12);
+            const minis = shown.slice(0, poolVisible);
             return (
               <>
                 <SayLine
@@ -808,18 +808,10 @@ export default function AgentPanel({
                   </div>
                 )}
 
-                {dense.length > 0 && (
-                  <div className={styles.denseList}>
-                    {dense.map(l => (
-                      <div key={l.id} className={styles.denseRow}>
-                        <span className={styles.denseTitle}>{l.title}</span>
-                        <span className={styles.denseMeta}>{MARKETPLACE_LABELS[l.marketplace] ?? l.marketplace}</span>
-                        <span className={styles.densePrice}>${l.price.toFixed(0)}</span>
-                        <a className={styles.viewBtn} href={l.url} target="_blank" rel="noopener noreferrer">View ↗</a>
-                        <button className={styles.askBtn} onClick={() => setInspecting(l)}><ScoutGlyph size={10} /> Ask Scout</button>
-                      </div>
-                    ))}
-                  </div>
+                {shown.length > poolVisible && (
+                  <button className={styles.showAllBtn} style={{ alignSelf: "center" }} onClick={() => setPoolVisible(v => v + 24)}>
+                    Show more · {shown.length - poolVisible} left
+                  </button>
                 )}
               </>
             );

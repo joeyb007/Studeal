@@ -283,6 +283,12 @@ async def auto_inspect_top_matches(hunt_id: int, top_n: int = AUTO_INSPECT_TOP_N
     """Pre-run Tier A on the hunt's best new matches so every agent card's
     top picks open with Scout's read already cached (all users; the card's
     teasers depend on it)."""
+    from dealbot.costs import build_meter
+
+    if not await build_meter().llm_budget_ok():
+        logger.warning("auto-inspect: daily LLM budget reached — skipping hunt %d", hunt_id)
+        return 0
+
     async with get_async_session() as session:
         hunt = await session.get(Hunt, hunt_id)
         if hunt is None:

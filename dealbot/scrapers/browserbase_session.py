@@ -97,7 +97,19 @@ def _session_payload(project_id: str, proxies: bool) -> dict:
 async def create_session(
     api_key: str, project_id: str, proxies: bool = False,
 ) -> tuple[str, str]:
-    """Returns (session_id, connect_url). Retries on 429 with exponential backoff."""
+    """Returns (session_id, connect_url). Retries on 429 with exponential backoff.
+
+    Guarded by the daily session cap: past DAILY_BROWSER_SESSION_CAP the
+    creation fails visibly (lane deadline machinery turns that into an
+    honest lane failure) instead of silently burning more budget.
+    """
+    from dealbot.costs import build_meter
+
+    meter = build_meter()
+    if not await meter.session_cap_ok():
+        raise RuntimeError("daily browser-session cap reached")
+    await meter.record_session()
+
     payload = _session_payload(project_id, proxies)
     for attempt in range(_MAX_SESSION_RETRIES):
         async with httpx.AsyncClient(timeout=15) as client:

@@ -25,6 +25,7 @@ from sqlalchemy import or_, select
 
 from dealbot.agents.playbook import sanitize
 from dealbot.api.auth import get_current_user
+from dealbot.costs import require_interactive_budget
 from dealbot.db.database import get_async_session
 from dealbot.db.models import (
     InspectionChecklist,
@@ -239,6 +240,7 @@ class FetchResponse(BaseModel):
 async def fetch_listing_by_url(
     body: FetchRequest,
     current_user: User = Depends(get_current_user),
+    _budget: None = Depends(require_interactive_budget),
 ) -> FetchResponse:
     """Phase D: Scout goes and grabs a listing it has never seen. One browser
     visit + one cheap extraction call; gated on (but not counted against) the
@@ -919,6 +921,7 @@ async def inspection_chat(
     listing_id: int,
     body: InspectionChatRequest,
     current_user: User = Depends(get_current_user),
+    _budget: None = Depends(require_interactive_budget),
 ) -> InspectionChatResponse:
     from dealbot.agents.inspector import get_cached_inspection
 

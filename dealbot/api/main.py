@@ -83,6 +83,31 @@ app.include_router(stream_router)
 app.include_router(watchlists_router)
 
 
+@app.get("/health/spend")
+async def health_spend() -> dict:
+    """Today's spend ledgers vs budgets — the runaway-cost dashboard."""
+    from dealbot.costs import (
+        DAILY_BROWSER_SESSION_CAP,
+        DAILY_LLM_BUDGET_USD,
+        build_meter,
+        fleet_paused,
+    )
+
+    meter = build_meter()
+    try:
+        llm = round(await meter.llm_spend_today(), 4)
+        sessions = await meter.sessions_today()
+    except Exception:
+        llm, sessions = None, None
+    return {
+        "llm_spend_usd": llm,
+        "llm_budget_usd": DAILY_LLM_BUDGET_USD,
+        "browser_sessions": sessions,
+        "browser_session_cap": DAILY_BROWSER_SESSION_CAP,
+        "fleet_paused": fleet_paused(),
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}

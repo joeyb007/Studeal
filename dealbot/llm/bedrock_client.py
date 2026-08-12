@@ -166,6 +166,10 @@ class BedrockClient(LLMClient):
                 self.total_prompt_tokens += prompt
                 self.total_completion_tokens += completion
                 self.call_count += 1
+                # Daily spend ledger (fire-and-forget; never blocks the call).
+                from dealbot.costs import record_llm_nowait
+
+                record_llm_nowait(self.model, prompt, completion)
         except Exception:
             pass
 

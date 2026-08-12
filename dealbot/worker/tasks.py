@@ -91,6 +91,21 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         if len(candidates) >= GATE_SUFFICIENCY_K:
             return await _serve_from_pool(watchlist_id, candidates)
 
+    # 2a. Spend guards — the break-glass pause and the daily LLM budget both
+    # stop background hunting outright (no requeue: today's budget is spent;
+    # cadence re-enqueues tomorrow). Checks fail open on Redis errors.
+    from dealbot.costs import build_meter, fleet_paused
+
+    if fleet_paused():
+        logger.warning("research_for_agent: FLEET_PAUSED — skipping wl=%d", watchlist_id)
+        return {"watchlist_id": watchlist_id, "skipped": "fleet_paused"}
+    if not await build_meter().llm_budget_ok():
+        logger.error(
+            "research_for_agent: daily LLM budget reached — skipping wl=%d",
+            watchlist_id,
+        )
+        return {"watchlist_id": watchlist_id, "skipped": "budget"}
+
     # 2. Capacity gate — BEFORE any row exists, so a requeue leaves no orphan.
     # Governor errors fail open: a Redis blip must not stop the fleet.
     governor = _maybe_governor()

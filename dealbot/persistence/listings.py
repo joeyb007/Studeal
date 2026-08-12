@@ -253,6 +253,12 @@ async def embed_pending_for_hunt(hunt_id: int) -> int:
 async def embed_orphan_listings(limit: int = 200) -> int:
     """Healer sweep: embed any live listing still missing its vector (a crashed
     consumer task, a transient Bedrock outage). Oldest first, bounded batch."""
+    from dealbot.costs import build_meter
+
+    if not await build_meter().llm_budget_ok():
+        logger.warning("embed healer: daily LLM budget reached — skipping sweep")
+        return 0
+
     async with get_async_session() as session:
         rows = (await session.execute(
             select(Listing)

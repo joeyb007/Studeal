@@ -285,3 +285,99 @@ async def test_alert_result_reports_pool_provenance(rig):
 
     assert result["alerts"] == 2
     assert result["from_pool"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Email cooldown + prefs (2026-08-12 spec, stage 1)
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+
+async def _seed_second_hunt(factory, *, prices: list[float], offset: int = 100) -> int:
+    """Another hunt on the SAME (only) watchlist with fresh listings."""
+    async with factory() as s:
+        wl = (await s.execute(select(Watchlist))).scalars().one()
+        hunt = Hunt(watchlist_id=wl.id)
+        s.add(hunt)
+        await s.flush()
+        for i, price in enumerate(prices):
+            listing = Listing(
+                canonical_url=f"https://k.ca/b{offset + i}",
+                raw_url=f"https://k.ca/b{offset + i}",
+                marketplace="kijiji", title=f"Aeron B{i}", price=price,
+                currency="CAD",
+            )
+            s.add(listing)
+            await s.flush()
+            s.add(HuntListing(hunt_id=hunt.id, listing_id=listing.id,
+                              was_new_for_watchlist=True))
+        hunt_id = hunt.id
+        await s.commit()
+        return hunt_id
+
+
+async def _identity_ranker(context, candidates, top_n=20):
+    from dealbot.recsys.ranker import RankedListing
+
+    return [RankedListing(listing=c, score=0.9, reason="fits") for c in candidates]
+
+
+@pytest.mark.asyncio
+async def test_cooldown_suppresses_second_email_but_keeps_alerts(rig):
+    factory, alerts_mod, fake_redis, publisher, sent_emails = rig
+    hunt_a = await _seed(factory, prices=[100.0])
+    await alerts_mod._dispatch(hunt_a, ranker=_identity_ranker, publisher=publisher)
+    assert len(sent_emails) == 1
+
+    hunt_b = await _seed_second_hunt(factory, prices=[110.0])
+    result = await alerts_mod._dispatch(hunt_b, ranker=_identity_ranker, publisher=publisher)
+
+    assert len(sent_emails) == 1, "second email inside the cooldown must not send"
+    assert result["alerts"] == 1, "alert rows and the in-app feed are unaffected"
+    async with factory() as s:
+        unmailed = [
+            a for a in (await s.execute(select(ListingAlert))).scalars().all()
+            if "email" not in a.channels
+        ]
+        assert len(unmailed) == 1, "the suppressed alert waits as backlog"
+
+
+@pytest.mark.asyncio
+async def test_expired_cooldown_emails_accumulated_backlog(rig):
+    factory, alerts_mod, fake_redis, publisher, sent_emails = rig
+    hunt_a = await _seed(factory, prices=[100.0])
+    await alerts_mod._dispatch(hunt_a, ranker=_identity_ranker, publisher=publisher)
+    hunt_b = await _seed_second_hunt(factory, prices=[110.0])
+    await alerts_mod._dispatch(hunt_b, ranker=_identity_ranker, publisher=publisher)
+    assert len(sent_emails) == 1
+
+    # Cooldown passes; a third hunt lands one more match.
+    async with factory() as s:
+        wl = (await s.execute(select(Watchlist))).scalars().one()
+        wl.last_alert_email_at = datetime.now(timezone.utc) - timedelta(hours=13)
+        await s.commit()
+    hunt_c = await _seed_second_hunt(factory, prices=[120.0], offset=200)
+    await alerts_mod._dispatch(hunt_c, ranker=_identity_ranker, publisher=publisher)
+
+    assert len(sent_emails) == 2
+    _to, subject, _body = sent_emails[-1]
+    assert "2 new matches" in subject, "backlog from the suppressed hunt rides along"
+    async with factory() as s:
+        rows = (await s.execute(select(ListingAlert))).scalars().all()
+        assert all("email" in a.channels for a in rows), "everything is now emailed"
+
+
+@pytest.mark.asyncio
+async def test_alerts_pref_off_skips_email_entirely(rig):
+    factory, alerts_mod, fake_redis, publisher, sent_emails = rig
+    hunt_id = await _seed(factory, prices=[100.0])
+    async with factory() as s:
+        user = (await s.execute(select(User))).scalars().one()
+        user.email_alerts = False
+        await s.commit()
+
+    result = await alerts_mod._dispatch(hunt_id, ranker=_identity_ranker, publisher=publisher)
+
+    assert sent_emails == []
+    assert result["alerts"] == 1, "the in-app feed still gets the alert"

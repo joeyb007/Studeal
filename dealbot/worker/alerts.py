@@ -19,6 +19,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -27,7 +28,7 @@ from dealbot.db.models import Hunt, HuntListing, Listing, ListingAlert, User, Wa
 from dealbot.events.publisher import RedisEventPublisher
 from dealbot.lifecycle import is_internal_user
 from dealbot.events.schema import AlertCreated
-from dealbot.notifications.email import build_alert_email, send_email
+from dealbot.notifications.email import build_alert_email, send_email, unsubscribe_url
 from dealbot.recsys.ranker import RankedListing, rank
 from dealbot.schemas import WatchlistContext
 from dealbot.worker.celery_app import app
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 ALERT_SCORE_THRESHOLD = float(os.environ.get("ALERT_SCORE_THRESHOLD", "0.30"))
 ALERT_MAX_PER_HUNT = int(os.environ.get("ALERT_MAX_PER_HUNT", "5"))
+ALERT_EMAIL_COOLDOWN_H = float(os.environ.get("ALERT_EMAIL_COOLDOWN_H", "12"))
 
 
 @app.task(name="dealbot.worker.alerts.dispatch_alerts")
@@ -121,18 +123,39 @@ async def _dispatch(
                 url=listing.raw_url,
             ))
 
-        # One summary email per hunt — except to system accounts, whose
-        # addresses are undeliverable and would bounce off Resend daily.
+        # Email: pref-gated and cooldown-throttled (12h per watchlist by
+        # default). Matches found inside the window accumulate — the next
+        # email carries every alert not yet emailed, not just this hunt's.
+        # System accounts never receive deliveries. Push and the in-app feed
+        # are unaffected by the email cooldown.
         emailed = False
         pushed = 0
         if not is_internal_user(user.email):
-            subject, body, html_body = build_alert_email(
-                watchlist.name, [(a, r.listing) for a, r in zip(alerts, selected)],
-            )
-            emailed = await send_email(user.email, subject, body, html=html_body)
-            if emailed:
-                for alert in alerts:
-                    alert.channels = f"{alert.channels},email"
+            now = datetime.now(timezone.utc)
+            cooldown = timedelta(hours=ALERT_EMAIL_COOLDOWN_H)
+            last = watchlist.last_alert_email_at
+            if last is not None and last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if user.email_alerts and (last is None or now - last >= cooldown):
+                backlog = [
+                    (a, l) for a, l in (await session.execute(
+                        select(ListingAlert, Listing)
+                        .join(Listing, Listing.id == ListingAlert.listing_id)
+                        .where(ListingAlert.watchlist_id == watchlist.id)
+                        .order_by(ListingAlert.score.desc())
+                    )).all()
+                    if "email" not in a.channels
+                ]
+                if backlog:
+                    subject, body, html_body = build_alert_email(
+                        watchlist.name, backlog,
+                        unsub_url=unsubscribe_url(user.id, "alerts"),
+                    )
+                    emailed = await send_email(user.email, subject, body, html=html_body)
+                    if emailed:
+                        for alert, _listing in backlog:
+                            alert.channels = f"{alert.channels},email"
+                        watchlist.last_alert_email_at = now
 
             pushed = await _try_push(user, watchlist, alerts, selected)
             if pushed:

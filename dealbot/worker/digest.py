@@ -9,13 +9,15 @@ from sqlalchemy import select, text
 from dealbot.db.database import get_async_session
 from dealbot.db.models import Listing, User
 from dealbot.lifecycle import is_internal_user
-from dealbot.notifications.email import build_digest_email, send_email
+from dealbot.notifications.email import build_digest_email, send_email, unsubscribe_url
 from dealbot.worker.celery_app import app
 
 logger = logging.getLogger(__name__)
 
-# pgvector cosine distance threshold — anything <= this is "close enough"
-_SIMILARITY_THRESHOLD = 0.60  # distance; sim>=0.40, aligned to the gate bar in Titan space
+# pgvector cosine distance threshold — anything <= this is "close enough".
+# Recalibrated 2026-08-12 for the Titan MULTIMODAL space: aligned to the gate
+# bar (sim >= 0.50 → distance <= 0.50). Expires with the embedding backend.
+_SIMILARITY_THRESHOLD = 0.50
 # Cap listings-per-user-per-digest so emails stay skim-able
 _MAX_LISTINGS_PER_DIGEST = 20
 
@@ -71,7 +73,10 @@ async def _send_digests() -> dict:
 
     async with get_async_session() as session:
         all_users = (await session.execute(select(User).where(User.is_pro == True))).scalars().all()  # noqa: E712
-        users = [u for u in all_users if u.is_pro and not is_internal_user(u.email)]
+        users = [
+            u for u in all_users
+            if u.is_pro and not is_internal_user(u.email) and u.email_digest
+        ]
 
         for user in users:
             matches = await _matched_listings_for_user(session, user, since)
@@ -79,7 +84,9 @@ async def _send_digests() -> dict:
                 skipped += 1
                 continue
 
-            subject, body, html_body = build_digest_email(matches)
+            subject, body, html_body = build_digest_email(
+                matches, unsub_url=unsubscribe_url(user.id, "digest"),
+            )
             await send_email(to=user.email, subject=subject, body=body, html=html_body)
             sent += 1
 

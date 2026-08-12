@@ -174,9 +174,19 @@ def _listing_card(
     return _card(inner)
 
 
-def _footer(context_line: str) -> str:
-    manage = f'<a href="{_app_url()}/dashboard" style="color:{_INK_SOFT};">Manage agents</a>'
-    return f"{context_line}<br>{manage} &middot; studeal.site"
+def unsubscribe_url(user_id: int, email_type: str) -> str:
+    """One-click unsubscribe link for this user + email type."""
+    from dealbot.api.routes.email_prefs import make_unsubscribe_token
+
+    return f"{_app_url()}/unsubscribe?token={make_unsubscribe_token(user_id, email_type)}"
+
+
+def _footer(context_line: str, unsub_url: str | None = None) -> str:
+    manage = f'<a href="{_app_url()}/settings" style="color:{_INK_SOFT};">Manage emails</a>'
+    links = manage
+    if unsub_url:
+        links += f' &middot; <a href="{_esc(unsub_url)}" style="color:{_INK_SOFT};">Unsubscribe</a>'
+    return f"{context_line}<br>{links} &middot; studeal.site"
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +196,7 @@ def _footer(context_line: str) -> str:
 def build_alert_email(
     watchlist_name: str,
     alerts: list[tuple[ListingAlert, Listing]],
+    unsub_url: str | None = None,
 ) -> tuple[str, str, str]:
     """One hunt's new-match summary. Top rows only — a first hunt can surface
     hundreds of matches, and past ALERT_EMAIL_MAX_ROWS they belong on the
@@ -222,7 +233,8 @@ def build_alert_email(
     cta_label = f"See all {n} matches" if more else "Open your agent"
     inner += f'<tr><td style="padding:18px 0 0;">{_cta(cta_label, f"{_app_url()}/dashboard")}</td></tr>'
     html = email_shell(inner, _footer(
-        f"You're getting this because your agent <b>{_esc(watchlist_name)}</b> is on the hunt."
+        f"You're getting this because your agent <b>{_esc(watchlist_name)}</b> is on the hunt.",
+        unsub_url,
     ))
     return subject, text, html
 
@@ -232,6 +244,7 @@ def build_price_drop_email(
     old_price: float,
     *,
     inspected_on: str | None = None,
+    unsub_url: str | None = None,
 ) -> tuple[str, str, str]:
     """The friend-remembered-you-asked email. One listing; the delta is the
     story."""
@@ -272,12 +285,15 @@ def build_price_drop_email(
         f'{_cta("Ask Scout", f"{_app_url()}/scout", ghost=True)}'
         f"</td></tr>"
     )
-    html = email_shell(inner, _footer("Price watch set when Scout inspected this listing."))
+    html = email_shell(inner, _footer(
+        "Price watch set when Scout inspected this listing.", unsub_url,
+    ))
     return subject, text, html
 
 
 def build_digest_email(
     matches: list[tuple[str, Listing]],
+    unsub_url: str | None = None,
 ) -> tuple[str, str, str]:
     """Daily Pro digest: compact rows grouped per agent, one CTA."""
     n = len(matches)
@@ -324,5 +340,8 @@ def build_digest_email(
             f'cellspacing="0">{rows}</table></td></tr>'
         )
     inner += f'<tr><td style="padding:18px 0 0;">{_cta("Open your dashboard", f"{_app_url()}/dashboard")}</td></tr>'
-    html = email_shell(inner, _footer("Daily digest &middot; sent when your agents found something overnight."))
+    html = email_shell(inner, _footer(
+        "Daily digest &middot; sent when your agents found something overnight.",
+        unsub_url,
+    ))
     return subject, text, html

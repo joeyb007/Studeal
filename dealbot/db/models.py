@@ -110,6 +110,11 @@ class User(Base):
     # Cached-report reads never count; Pro is uncapped.
     inspections_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     inspections_month: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    # Per-type email preferences (2026-08-12 spec): each unsubscribe link and
+    # settings toggle controls exactly one sender.
+    email_alerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    email_price_drops: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    email_digest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -140,6 +145,9 @@ class Watchlist(Base):
     hunting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     hunt_frequency_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_hunt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Alert-email cooldown anchor: matches found inside the window accumulate
+    # into the next email instead of sending one per hunt.
+    last_alert_email_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Scout's category playbook (Layer 1 of the Deal Inspector): generated on
     # creation and profile edits, alongside the ranking recompute.
     playbook: Mapped[str | None] = mapped_column(Text, nullable=True)

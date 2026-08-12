@@ -26,7 +26,7 @@ from dealbot.db.models import (
     WatchlistRanking,
 )
 from dealbot.lifecycle import is_internal_user
-from dealbot.notifications.email import build_price_drop_email, send_email
+from dealbot.notifications.email import build_price_drop_email, send_email, unsubscribe_url
 from dealbot.schemas import WatchlistContext
 
 logger = logging.getLogger(__name__)
@@ -77,9 +77,12 @@ async def check_price_drops() -> int:
             if is_internal_user(user.email):
                 watch.notified_at = datetime.now(timezone.utc)
                 continue
+            if not user.email_price_drops:
+                continue        # watch stays armed in case they re-enable
             inspected_on = f"{watch.created_at:%b} {watch.created_at.day}" if watch.created_at else None
             subject, body, html_body = build_price_drop_email(
                 listing, watch.price_at_inspection, inspected_on=inspected_on,
+                unsub_url=unsubscribe_url(user.id, "price_drops"),
             )
             try:
                 sent = await send_email(user.email, subject, body, html=html_body)

@@ -7,16 +7,7 @@ import styles from "./Nav.module.css";
 
 export default function Nav() {
   const pathname = usePathname();
-  const { data: session } = useSession();
-  const isPro = session?.isPro ?? false;
-
-  async function handleManageBilling() {
-    const res = await fetch("/api/billing/portal", { method: "POST" });
-    if (res.ok) {
-      const { url } = await res.json();
-      window.location.href = url;
-    }
-  }
+  useSession();    // keeps the session fresh while the nav is mounted
 
   return (
     <nav className={styles.nav}>
@@ -34,9 +25,9 @@ export default function Nav() {
         <Link href="/scout" className={[styles.link, pathname === "/scout" ? styles.active : ""].join(" ")}>
           Scout
         </Link>
-        {isPro && (
-          <button className={styles.link} onClick={handleManageBilling}>Manage plan</button>
-        )}
+        <Link href="/settings" className={[styles.link, pathname === "/settings" ? styles.active : ""].join(" ")}>
+          Settings
+        </Link>
         <button className={styles.logoutBtn} onClick={() => signOut({ callbackUrl: "/" })}>Log out</button>
       </div>
     </nav>

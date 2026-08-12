@@ -20,6 +20,7 @@ async def test_digest_skips_free_users():
     pro_user.id = 2
     pro_user.email = "pro@example.com"
     pro_user.is_pro = True
+    pro_user.email_digest = True    # mock objects skip column defaults
 
     with (
         patch("dealbot.worker.digest.get_async_session") as mock_session_ctx,

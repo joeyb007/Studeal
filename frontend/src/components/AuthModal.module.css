@@ -334,3 +334,16 @@
   font-weight: 600;
   font-size: 12px;
 }
+
+.forgotLink {
+  display: block;
+  margin-top: 10px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+.forgotLink:hover {
+  color: var(--accent);
+}

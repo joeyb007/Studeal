@@ -193,6 +193,48 @@ def _footer(context_line: str, unsub_url: str | None = None) -> str:
 # Builders — each returns (subject, text, html); text is the fallback body.
 # ---------------------------------------------------------------------------
 
+def build_password_reset_email(reset_url: str) -> tuple[str, str, str]:
+    """Transactional reset email — no unsubscribe (account security mail)."""
+    subject = "Reset your Studeal password"
+    text = "\n".join([
+        "Someone asked to reset the password for this Studeal account.",
+        "If that was you, use this link within 30 minutes:",
+        "",
+        reset_url,
+        "",
+        "If it wasn't you, ignore this email · your password is unchanged.",
+    ])
+    inner = _headline("Reset your password")
+    inner += _lede(
+        "Someone asked to reset the password for this account. If that was "
+        "you, the link below works for 30 minutes. If not, ignore this "
+        "email &middot; your password is unchanged."
+    )
+    inner += f'<tr><td style="padding:6px 0 0;">{_cta("Choose a new password", reset_url)}</td></tr>'
+    html = email_shell(inner, _footer("Sent because a password reset was requested for this address."))
+    return subject, text, html
+
+
+def build_google_account_notice_email() -> tuple[str, str, str]:
+    """Reset requested for an account that signs in with Google."""
+    subject = "Your Studeal account signs in with Google"
+    text = "\n".join([
+        "A password reset was requested for this account, but it signs in "
+        "with Google · there's no Studeal password to reset.",
+        "",
+        f"Sign in: {_app_url()}",
+    ])
+    inner = _headline("This account signs in with Google")
+    inner += _lede(
+        "A password reset was requested, but this account uses Google "
+        "sign-in &middot; there's no Studeal password to reset. Just sign "
+        "in with Google as usual."
+    )
+    inner += f'<tr><td style="padding:6px 0 0;">{_cta("Go to Studeal", _app_url())}</td></tr>'
+    html = email_shell(inner, _footer("Sent because a password reset was requested for this address."))
+    return subject, text, html
+
+
 def build_alert_email(
     watchlist_name: str,
     alerts: list[tuple[ListingAlert, Listing]],

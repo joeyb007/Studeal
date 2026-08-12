@@ -154,6 +154,12 @@ export default function AuthModal({ isOpen, onClose, defaultTab = "signup", call
                   ? (tab === "signup" ? "Creating account..." : "Logging in...")
                   : (tab === "signup" ? "Create account" : "Log in")}
               </button>
+
+              {tab !== "signup" && (
+                <a href="/reset-password" className={styles.forgotLink}>
+                  Forgot password?
+                </a>
+              )}
             </form>
 
             <div className={styles.divider}>

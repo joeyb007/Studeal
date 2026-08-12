@@ -1,0 +1,172 @@
+.main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 110px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.email {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.prefRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.prefLabel {
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.hint {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.error {
+  font-size: 12.5px;
+  color: #e07a6a;
+  margin: 0;
+}
+
+.toggle {
+  width: 40px;
+  height: 22px;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  transition: background 0.15s ease;
+}
+
+.toggleOn {
+  background: var(--accent);
+  border-color: var(--accent);
+  justify-content: flex-end;
+}
+
+.knob {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  transition: transform 0.15s ease;
+}
+
+.toggleOn .knob {
+  background: var(--on-accent);
+}
+
+.input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.button {
+  align-self: flex-start;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.danger {
+  border-color: rgba(224, 122, 106, 0.35);
+}
+
+.dangerButton {
+  align-self: flex-start;
+  background: transparent;
+  color: #e07a6a;
+  border: 1px solid rgba(224, 122, 106, 0.5);
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dangerButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.confirmBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmRow {
+  display: flex;
+  gap: 10px;
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: none;
+}

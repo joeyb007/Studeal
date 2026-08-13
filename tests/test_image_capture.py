@@ -56,7 +56,8 @@ def test_fbcdn_suffix_match():
 
 def test_spec_for_known_and_unknown():
     assert spec_for("kijiji") is not None
-    assert spec_for("bestbuy_outlet") is None
+    assert spec_for("bestbuy_outlet") is not None    # probed 2026-08-13
+    assert spec_for("canada_computers") is None
     assert spec_for("nonexistent") is None
 
 

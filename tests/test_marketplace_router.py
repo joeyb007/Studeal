@@ -171,6 +171,7 @@ def test_unprobed_marketplaces_have_no_capture_pattern():
     from dealbot.agents.marketplace_router import CONFIG_BY_KEY
 
     for key, cfg in CONFIG_BY_KEY.items():
-        if key not in {"kijiji", "fb_marketplace", "ebay", "craigslist"}:
+        if key not in {"kijiji", "fb_marketplace", "ebay", "craigslist",
+                       "bestbuy_outlet", "visions_openbox", "openbox_ca"}:
             assert cfg.listing_href_pattern is None
             assert cfg.image_cdn_hosts == ()

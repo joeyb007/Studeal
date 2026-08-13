@@ -147,6 +147,10 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://www.bestbuy.ca/en-ca/search?search={quote_plus(q + ' open box')}"
         ),
+        # Probed 2026-08-13 via Browserbase: card hrefs are /en-ca/product/…,
+        # thumbs on multimedia.bbycastatic.ca.
+        listing_href_pattern="/product/",
+        image_cdn_hosts=("multimedia.bbycastatic.ca",),
     ),
     MarketplaceConfig(
         key="canada_computers",
@@ -169,6 +173,10 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://www.visions.ca/catalogsearch/result/?q={quote_plus(q + ' open box')}"
         ),
+        # Probed 2026-08-13: Magento slugs at root ending in -openbox;
+        # thumbs served from visions.ca/media/catalog/….
+        listing_href_pattern="openbox",
+        image_cdn_hosts=("visions.ca",),
     ),
     MarketplaceConfig(
         key="newegg_ca",
@@ -191,6 +199,10 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://openbox.ca/search?q={quote_plus(q)}"
         ),
+        # Probed 2026-08-13: Shopify store — /products/ hrefs, thumbs on
+        # cdn.shopify.com (and openbox.ca/cdn/shop for store assets).
+        listing_href_pattern="/products/",
+        image_cdn_hosts=("cdn.shopify.com", "openbox.ca"),
     ),
     MarketplaceConfig(
         key="refurbio",

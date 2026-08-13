@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import styles from "./Nav.module.css";
@@ -87,7 +88,10 @@ export default function Nav() {
         </div>
       </div>
 
-      {confirmLogout && (
+      {confirmLogout && createPortal(
+        // Portaled to <body>: the nav's backdrop-filter makes it the
+        // containing block for fixed descendants, which pinned this overlay
+        // to the nav strip instead of the viewport.
         <div className={styles.modalOverlay} onClick={() => setConfirmLogout(false)}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <p className={styles.modalTitle}>Log out?</p>
@@ -104,7 +108,8 @@ export default function Nav() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </nav>
   );

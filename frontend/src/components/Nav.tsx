@@ -1,13 +1,38 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import styles from "./Nav.module.css";
 
 export default function Nav() {
   const pathname = usePathname();
-  useSession();    // keeps the session fresh while the nav is mounted
+  const { data: session } = useSession();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const email = session?.user?.email ?? "";
+  const initial = email ? email[0].toUpperCase() : "•";
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   return (
     <nav className={styles.nav}>
@@ -25,11 +50,62 @@ export default function Nav() {
         <Link href="/scout" className={[styles.link, pathname === "/scout" ? styles.active : ""].join(" ")}>
           Scout
         </Link>
-        <Link href="/settings" className={[styles.link, pathname === "/settings" ? styles.active : ""].join(" ")}>
-          Settings
-        </Link>
-        <button className={styles.logoutBtn} onClick={() => signOut({ callbackUrl: "/" })}>Log out</button>
+
+        <div className={styles.profileWrap} ref={menuRef}>
+          <button
+            className={[styles.avatarBtn, menuOpen ? styles.avatarOpen : ""].join(" ")}
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Account"
+          >
+            {initial}
+          </button>
+          {menuOpen && (
+            <div className={styles.menu} role="menu">
+              {email && <div className={styles.menuEmail}>{email}</div>}
+              <Link
+                href="/settings"
+                role="menuitem"
+                className={styles.menuItem}
+                onClick={() => setMenuOpen(false)}
+              >
+                Settings
+              </Link>
+              <button
+                role="menuitem"
+                className={styles.menuItem}
+                onClick={() => {
+                  setMenuOpen(false);
+                  setConfirmLogout(true);
+                }}
+              >
+                Log out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {confirmLogout && (
+        <div className={styles.modalOverlay} onClick={() => setConfirmLogout(false)}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <p className={styles.modalTitle}>Log out?</p>
+            <p className={styles.modalBody}>Your agents keep hunting while you&apos;re gone.</p>
+            <div className={styles.modalRow}>
+              <button className={styles.modalGhost} onClick={() => setConfirmLogout(false)}>
+                Stay
+              </button>
+              <button
+                className={styles.modalPrimary}
+                onClick={() => signOut({ callbackUrl: "/" })}
+              >
+                Log out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </nav>
   );
 }

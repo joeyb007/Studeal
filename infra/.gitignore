@@ -1,0 +1,7 @@
+# Provider plugins (hundreds of MB, re-downloaded by init)
+.terraform/
+# State never enters git: it can contain sensitive values, and the real
+# state lives in S3 anyway. The bootstrap's local state stays laptop-only
+# by the same rule.
+*.tfstate
+*.tfstate.*

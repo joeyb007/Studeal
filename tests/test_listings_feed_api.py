@@ -189,3 +189,33 @@ async def test_stale_listings_are_invisible_even_on_max_window(pool_client):
 
     search = client.get("/listings/search", params={"q": "Probably Sold"})
     assert all(r["title"] != "Probably Sold" for r in search.json()["listings"])
+
+
+@pytest.mark.asyncio
+async def test_feed_shuffles_daily_but_pages_stably(pool_client):
+    """The front page is a daily-seeded shuffle, not recency order — one big
+    hunt's burst can't monopolize it — yet two identical requests agree so
+    offset paging never skips or repeats listings."""
+    client, factory, _ = pool_client
+    now = datetime.now(timezone.utc)
+    async with factory() as s:
+        for i in range(20):
+            s.add(Listing(
+                canonical_url=f"shuf{i}", raw_url=f"https://k.ca/s{i}",
+                marketplace="kijiji", title=f"Item {i}", price=50.0 + i,
+                currency="CAD", condition="used",
+                # Strictly increasing recency: recency order would be 19..0.
+                first_seen_at=now - timedelta(hours=20 - i),
+                last_seen_at=now - timedelta(hours=20 - i),
+            ))
+        await s.commit()
+
+    first = client.get("/listings/feed?limit=20").json()["listings"]
+    second = client.get("/listings/feed?limit=20").json()["listings"]
+
+    ids_first = [l["id"] for l in first]
+    assert ids_first == [l["id"] for l in second], "same-day order must be stable"
+
+    titles = [l["title"] for l in first]
+    newest_first = sorted(titles, key=lambda t: -int(t.split()[1]))
+    assert titles != newest_first, "front page must not be plain recency order"

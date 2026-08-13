@@ -136,6 +136,27 @@ def _interleave(
     return out
 
 
+def _daily_shuffle_key(id_column):
+    """Deterministic per-day shuffle: Knuth multiplicative hash of
+    (id + UTC-day seed).
+
+    The diversify window previously took the NEWEST 1000 rows, so one big
+    hunt (600+ listings) filled the whole window and the interleave had
+    nothing but that hunt's buckets to rotate — the all-golf-clubs front
+    page. Hash order samples the whole fresh pool uniformly instead.
+    Stable within a day so offset paging is consistent; rotates at
+    midnight UTC so the storefront feels fresh. Pure integer arithmetic —
+    identical on postgres and sqlite.
+    """
+    from sqlalchemy import BigInteger, literal
+
+    seed = int(datetime.now(timezone.utc).strftime("%Y%m%d"))
+    # The Knuth multiplier exceeds int32 — bind it as BIGINT explicitly or
+    # asyncpg rejects the parameter.
+    knuth = literal(2654435761, BigInteger)
+    return func.mod((id_column + seed) * knuth, literal(4294967295, BigInteger))
+
+
 @router.get("/feed", response_model=PoolFeedResponse)
 async def pool_feed(
     limit: int = Query(40, ge=1, le=100),
@@ -158,7 +179,7 @@ async def pool_feed(
             .outerjoin(Hunt, Hunt.id == HuntListing.hunt_id)
             .where(Listing.last_seen_at >= cutoff)
             .where(Listing.sold_at.is_(None))
-            .order_by(Listing.last_seen_at.desc())
+            .order_by(_daily_shuffle_key(Listing.id))
             .limit(_DIVERSIFY_POOL_SIZE)
         )
         stmt = _csv_filter(stmt, Listing.marketplace, marketplace)

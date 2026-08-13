@@ -42,6 +42,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    # pgvector must exist before any migration that uses vector columns.
+    # Dev's pgvector/pgvector image pre-enables it; RDS (and any stock
+    # postgres) does not — idempotent, so it costs nothing where enabled.
+    from sqlalchemy import text
+
+    connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

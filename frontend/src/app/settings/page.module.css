@@ -26,6 +26,31 @@
   color: var(--text-faint);
 }
 
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.closeBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.closeBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);

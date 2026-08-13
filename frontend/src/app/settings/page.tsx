@@ -107,7 +107,16 @@ export default function SettingsPage() {
     <main className={styles.main}>
       <header className={styles.header}>
         <h1 className={styles.title}>Settings</h1>
-        {me && <span className={styles.email}>{me.email}</span>}
+        <div className={styles.headerRight}>
+          {me && <span className={styles.email}>{me.email}</span>}
+          <button
+            className={styles.closeBtn}
+            onClick={() => (history.length > 1 ? history.back() : (window.location.href = "/watchlists"))}
+            aria-label="Close settings"
+          >
+            ✕
+          </button>
+        </div>
       </header>
 
       <section className={styles.card}>

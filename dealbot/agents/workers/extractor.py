@@ -71,6 +71,13 @@ image_url, location, posted_at_raw, condition ("new"|"refurbished"|"used"|"unkno
 Rules:
   - Only emit offers grounded in the snapshot. Do not invent fields.
   - Skip cards missing a real URL or a positive price.
+  - price is what the buyer PAYS right now. Retail pages surround it with
+    decoys: "SAVE $200", struck-through was-prices, "$50 off", "$28/month"
+    financing, add-on accessory prices. NEVER emit a savings amount, a
+    was-price, or a per-month figure as the price. When a card shows both a
+    sale price and a save amount, the price is the current total, not the
+    discount. If you can only see a discount and no actual price, skip the
+    card.
   - Do not filter by relevance to the spec — that's someone else's job. Emit
     every listing card you can see."""
 
@@ -151,12 +158,34 @@ class Extractor:
         except Exception as exc:
             logger.warning("extractor: LLM call failed: %s", exc)
             return []
-        return _parse_and_filter(response.content, marketplace, snap.url)
+        parsed = _parse_and_filter(response.content, marketplace, snap.url)
+        kept = [o for o in parsed if not _is_discount_decoy(chunk_text, o.price)]
+        if len(kept) < len(parsed):
+            logger.info(
+                "extractor: dropped %d offer(s) whose price matches a "
+                "SAVE/off amount on the page", len(parsed) - len(kept),
+            )
+        return kept
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _is_discount_decoy(page_text: str, price: float) -> bool:
+    """True when the page explicitly labels this exact amount as a discount
+    ("SAVE $200", "$200 off") — the model grabbed the decoy, not the price
+    (observed 2026-08-13: a $599.99 open-box listing extracted as $200 from
+    Best Buy's "SAVE $200" badge). Deterministic backstop behind the prompt
+    rule; whole-dollar amounts only, with optional .00 and thousands commas.
+    """
+    if price != int(price):
+        return False        # decoy badges are whole-dollar amounts
+    whole = int(price)
+    amount = rf"\$\s*(?:{whole}|{whole:,})(?:\.00)?"
+    pattern = rf"(?:save\s*{amount}|{amount}\s*off\b)"
+    return re.search(pattern, page_text, re.IGNORECASE) is not None
+
 
 _HREF_CLIP_RE = re.compile(r'href="([^"]{200})[^"]*"')
 

@@ -399,3 +399,31 @@ async def test_grounding_skipped_when_snapshot_has_no_hrefs():
     extractor = Extractor(llm=llm)
     offers = await extractor.extract_from_snapshot(_snap(), "kijiji", _spec())
     assert len(offers) == 1
+
+
+# ---------------------------------------------------------------------------
+# Discount-decoy guard (2026-08-13): "SAVE $200" must never become the price.
+# ---------------------------------------------------------------------------
+
+def test_save_badge_price_is_a_decoy():
+    from dealbot.agents.workers.extractor import _is_discount_decoy
+
+    page = 'Open Box AirPods Max SAVE $200 $599.99 Add to cart'
+    assert _is_discount_decoy(page, 200.0) is True
+    assert _is_discount_decoy(page, 599.99) is False
+
+
+def test_off_suffix_and_comma_amounts_are_decoys():
+    from dealbot.agents.workers.extractor import _is_discount_decoy
+
+    assert _is_discount_decoy("MacBook Pro $1,500 off this week", 1500.0) is True
+    assert _is_discount_decoy("save $50.00 on accessories", 50.0) is True
+
+
+def test_legitimate_prices_survive():
+    from dealbot.agents.workers.extractor import _is_discount_decoy
+
+    # A $200 listing on a page with no discount language keeps its price.
+    assert _is_discount_decoy("Golf club set $200 Toronto", 200.0) is False
+    # Cents-precision prices are never treated as decoys.
+    assert _is_discount_decoy("SAVE $199.99 today", 199.99) is False

@@ -502,7 +502,6 @@ export default function AgentPanel({
   const picks = ranked.slice(0, 5);
   const hero = picks[0];
   const minis = picks.slice(1);
-  const rest = ranked.slice(5);
   const median = market?.negotiation?.median ?? market?.typical ?? null;
   const underFor = (id: number) => market?.pick_prices.find(p => p.id === id)?.under_market;
 
@@ -772,11 +771,28 @@ export default function AgentPanel({
                   </button>
                 </div>
 
-                {aiFilter && (
+                {aiBusy && (
+                  <div className={styles.aiNote}>
+                    <span className={styles.aiNoteIcon}>✦</span>
+                    <span className={styles.aiNoteText}>
+                      Looking through {pool.length} listing{pool.length === 1 ? "" : "s"}
+                    </span>
+                    <span className={styles.typingBubble} aria-hidden>
+                      <span /><span /><span />
+                    </span>
+                  </div>
+                )}
+
+                {!aiBusy && aiFilter && (
                   <div className={styles.aiNote}>
                     <span className={styles.aiNoteIcon}>✦</span>
                     <span className={styles.aiNoteText}>{aiFilter.note}</span>
-                    <button className={styles.cardSearchClear} style={{ position: "static", transform: "none" }} onClick={() => setAiFilter(null)}>✕</button>
+                    {aiFilter.ids.size > 0 && (
+                      <span className={styles.aiNoteCount}>
+                        {aiFilter.ids.size} match{aiFilter.ids.size === 1 ? "" : "es"}
+                      </span>
+                    )}
+                    <button className={styles.aiNoteClear} onClick={() => setAiFilter(null)} aria-label="Clear Scout's filter">✕</button>
                   </div>
                 )}
 
@@ -816,11 +832,22 @@ export default function AgentPanel({
                 </div>
 
                 {shown.length === 0 && (
-                  <p className={styles.loading}>Nothing fits those filters.</p>
+                  aiFilter ? (
+                    <div className={styles.aiEmpty}>
+                      <p className={styles.loading}>
+                        None of these match that. Broaden it, or clear my filter to see everything again.
+                      </p>
+                      <button className={styles.semanticBtn} onClick={() => setAiFilter(null)}>
+                        Clear filter
+                      </button>
+                    </div>
+                  ) : (
+                    <p className={styles.loading}>Nothing fits those filters.</p>
+                  )
                 )}
 
                 {minis.length > 0 && (
-                  <div className={styles.miniRow}>
+                  <div className={[styles.miniRow, aiBusy ? styles.gridDim : ""].join(" ")}>
                     {minis.map((l, i) => (
                       <div key={l.id} className={styles.mini} style={{ animationDelay: `${70 + Math.min(i, 12) * 45}ms` }}>
                         {l.image_url ? (

@@ -246,9 +246,14 @@ export default function AgentCard({
         <span className={styles.title}>{hunt.watchlist_name}</span>
         <span className={done ? styles.statusDone : styles.statusHunting}>
           {done
-            ? derived.finished!.status === "cached"
+            // `done` can flip via the polled hunt prop while the finish event
+            // was missed (SSE has no replay after an idle disconnect), so
+            // derived.finished may be null here — fall back to the hunt row.
+            ? (derived.finished?.status ?? hunt.status) === "cached"
               ? `Checked the fleet's latest findings: ${derived.fresh ?? 0} new match${derived.fresh === 1 ? "" : "es"}, no browse needed`
-              : `Done · ${Math.round(derived.finished!.duration)}s`
+              : derived.finished
+                ? `Done · ${Math.round(derived.finished.duration)}s`
+                : "Done"
             : connected
               ? "Hunting"
               : "Connecting"}

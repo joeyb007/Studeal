@@ -1,0 +1,18 @@
+# The build "context" — everything docker sends to the daemon before COPY
+# runs. Without this file, that includes the 1GB+ venv and node_modules on
+# every build. Also keeps secrets (.env) out of the image by construction.
+venv/
+frontend/
+node_modules/
+.git/
+.env
+.env.*
+docs/
+traces/
+tests/
+media/
+celerybeat-schedule*
+__pycache__/
+*.pyc
+.pytest_cache/
+.superpowers/

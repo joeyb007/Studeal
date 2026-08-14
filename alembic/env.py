@@ -48,6 +48,10 @@ def do_run_migrations(connection: Connection) -> None:
     from sqlalchemy import text
 
     connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # Commit now: autobegin has this connection mid-transaction, and alembic's
+    # begin_transaction() no-ops when one is already open — the whole upgrade
+    # then rolls back at connection close (exit 0, full logs, empty schema).
+    connection.commit()
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

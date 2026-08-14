@@ -57,6 +57,17 @@ class MarketplaceConfig:
     # not yet probed, capture skipped entirely.
     listing_href_pattern: str | None = None
     image_cdn_hosts: tuple[str, ...] = ()
+    # Browser backend override (probe 2026-08-14, scripts/probe_agentcore.py):
+    # 7 of 10 sites serve full SERPs to AgentCore's bare AWS IP; bestbuy and
+    # visions return soft-block shells (8 / 19 elems — fingerprint-sensitive,
+    # same pair that failed local Chromium) and FB login-walls datacenter IPs
+    # even with the Google referer. Those pin "browserbase" (stealth
+    # fingerprint + residential proxy); None = the global env default.
+    backend: str | None = None
+    # Residential proxy on browserbase lanes (probed 2026-08-14 proxyless):
+    # bestbuy passes on fingerprint alone (394 elems) — proxy off, zero GB.
+    # visions still shells without it (25 elems) — the one site needing both.
+    browserbase_proxies: bool = True
 
 
 @dataclass
@@ -95,9 +106,11 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
     MarketplaceConfig(
         key="fb_marketplace",
         display_name="Facebook Marketplace",
+        # Logged-out browsing verified deep (2026-08-14: 9 scrolls, 216 cards,
+        # no login wall) under browserbase+proxy+referer — no FB session needed.
         description=(
             "Local secondhand marketplace; strong for large items (furniture, "
-            "vehicles, appliances), casual sales. Requires FB session."
+            "vehicles, appliances), casual sales."
         ),
         # City-scoped: the un-scoped /marketplace/search/ URL geolocates by
         # exit IP and returned Bay Area listings on a Canadian hunt.
@@ -107,6 +120,7 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         entry_referer="https://www.google.com/",
         listing_href_pattern="/marketplace/item/",
         image_cdn_hosts=(".fbcdn.net",),
+        backend="browserbase",
     ),
     MarketplaceConfig(
         key="ebay",
@@ -151,6 +165,8 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         # thumbs on multimedia.bbycastatic.ca.
         listing_href_pattern="/product/",
         image_cdn_hosts=("multimedia.bbycastatic.ca",),
+        backend="browserbase",
+        browserbase_proxies=False,
     ),
     MarketplaceConfig(
         key="canada_computers",
@@ -177,6 +193,7 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         # thumbs served from visions.ca/media/catalog/….
         listing_href_pattern="openbox",
         image_cdn_hosts=("visions.ca",),
+        backend="browserbase",
     ),
     MarketplaceConfig(
         key="newegg_ca",

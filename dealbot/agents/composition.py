@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from dealbot.agents.explorer import Explorer
 from dealbot.agents.extractor_pool import ExtractorPool
-from dealbot.agents.marketplace_router import MarketplaceRouter
+from dealbot.agents.marketplace_router import CONFIG_BY_KEY, MarketplaceRouter
 from dealbot.agents.query_generator import QueryGenerator
 from dealbot.agents.tracing import (
     FilesystemTraceWriter,
@@ -40,6 +40,7 @@ from dealbot.llm.groq_client import GroqClient
 from dealbot.llm.openai_client import OpenAIClient
 from dealbot.schemas import WatchlistContext
 from dealbot.scrapers.browser_session import (
+    AgentCoreBrowserSession,
     BrowserSession,
     BrowserbaseSession,
     LocalPlaywrightSession,
@@ -174,8 +175,15 @@ def build_extract_llm() -> LLMClient:
     return GroqClient(model=_GROQ_70B)
 
 
-def build_session_from_env() -> BrowserSession:
-    backend = os.environ.get("AGENT_BROWSER_BACKEND", "browserbase").lower()
+def build_session_from_env(
+    backend: str | None = None,
+    proxies: bool = True,
+) -> BrowserSession:
+    # Per-marketplace override first (MarketplaceConfig.backend — the probe
+    # split: fingerprint-sensitive sites pin browserbase, the rest ride the
+    # env default), then the fleet-wide env var. `proxies` only matters on
+    # the browserbase backend (MarketplaceConfig.browserbase_proxies).
+    backend = (backend or os.environ.get("AGENT_BROWSER_BACKEND", "browserbase")).lower()
     if backend == "local":
         # FB Marketplace requires an authenticated session. If FB_STATE_PATH
         # is set and the file exists, load it — otherwise the session runs
@@ -187,9 +195,11 @@ def build_session_from_env() -> BrowserSession:
                 storage_state = None
         return LocalPlaywrightSession(storage_state=storage_state)
     if backend == "browserbase":
-        return BrowserbaseSession(proxies=True)
+        return BrowserbaseSession(proxies=proxies)
+    if backend == "agentcore":
+        return AgentCoreBrowserSession()
     raise ValueError(
-        f"Unknown AGENT_BROWSER_BACKEND: {backend!r}. Expected 'browserbase' or 'local'."
+        f"Unknown AGENT_BROWSER_BACKEND: {backend!r}. Expected 'browserbase', 'agentcore', or 'local'."
     )
 
 
@@ -290,7 +300,11 @@ async def _run_one_lane(
 
     async def _lane_work() -> None:
         nonlocal pages, done_reason, session_opened
-        async with build_session_from_env() as session:
+        lane_cfg = CONFIG_BY_KEY.get(target.marketplace)
+        async with build_session_from_env(
+            backend=lane_cfg.backend if lane_cfg else None,
+            proxies=lane_cfg.browserbase_proxies if lane_cfg else True,
+        ) as session:
             session_opened = True
             explorer = Explorer(nav_llm, trace=trace, escalation_llm=nav_full_llm)
             result = await explorer.explore(

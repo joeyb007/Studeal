@@ -200,7 +200,10 @@ def composition_rig(monkeypatch):
     import dealbot.agents.composition as comp
 
     monkeypatch.setattr(comp, "Explorer", _ScriptedExplorer)
-    monkeypatch.setattr(comp, "build_session_from_env", lambda: _FakeSession())
+    monkeypatch.setattr(
+        comp, "build_session_from_env",
+        lambda backend=None, proxies=True: _FakeSession(),
+    )
     _ScriptedExplorer.calls = []
     _ScriptedExplorer.results = []
     return comp

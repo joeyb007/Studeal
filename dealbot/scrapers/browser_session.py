@@ -29,6 +29,11 @@ from abc import ABC, abstractmethod
 
 from playwright.async_api import BrowserContext, Page, async_playwright
 
+from dealbot.scrapers.agentcore_session import (
+    close_browser as _ac_close_browser,
+    get_session_sem as _ac_get_session_sem,
+    open_browser as _ac_open_browser,
+)
 from dealbot.scrapers.browserbase_session import (
     BROWSERBASE_MAX_SESSIONS,
     create_session as _bb_create_session,
@@ -41,6 +46,28 @@ from dealbot.scrapers.dom_settlement import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Media blocking (shared across subclasses)
+#
+# Images dominate metered bandwidth: the 2026-08 Browserbase cycle measured
+# ~100 MB per browser-hour with images loading (9.4 GB over ~94 h), at
+# residential-proxy rates of $12/GB. Aborting image/media/font requests cuts
+# that multiple-fold. CSS and JS stay: layout drives perception's bboxes and
+# SPAs render listings via JS. Thumbnails survive because capture falls back
+# to the img src attribute when naturalWidth is 0 — the same never-loaded
+# path below-fold cards already take. AGENT_BLOCK_MEDIA=0 is the rollback.
+# ---------------------------------------------------------------------------
+_BLOCKED_RESOURCE_TYPES: frozenset[str] = frozenset({"image", "media", "font"})
+
+
+def media_blocking_enabled() -> bool:
+    return os.environ.get("AGENT_BLOCK_MEDIA", "1").lower() not in ("0", "false", "no")
+
+
+def should_abort_request(resource_type: str) -> bool:
+    return resource_type in _BLOCKED_RESOURCE_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +91,29 @@ class BrowserSession(ABC):
     @abstractmethod
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         ...
+
+    async def _apply_media_blocking(self, ctx: BrowserContext) -> None:
+        """Abort image/media/font requests context-wide (covers popups too).
+
+        Best-effort: a routing failure degrades to unblocked bandwidth,
+        never a dead session.
+        """
+        if not media_blocking_enabled():
+            return
+
+        async def _route(route) -> None:
+            try:
+                if should_abort_request(route.request.resource_type):
+                    await route.abort()
+                else:
+                    await route.continue_()
+            except Exception:
+                pass  # page may be mid-navigation; the request is already moot
+
+        try:
+            await ctx.route("**/*", _route)
+        except Exception as exc:
+            logger.warning("media blocking not applied: %s", exc)
 
     # -----------------------------------------------------------------
     # Popup / new-tab handling (shared across subclasses)
@@ -184,6 +234,7 @@ class LocalPlaywrightSession(BrowserSession):
                     "starting fresh context", self._storage_state,
                 )
         ctx = await self._browser.new_context(**ctx_kwargs)
+        await self._apply_media_blocking(ctx)
         self.page = await ctx.new_page()
         # Wire popup handler AFTER the initial page is created — Playwright's
         # "page" event fires for every new_page(), including this first one.
@@ -258,6 +309,7 @@ class BrowserbaseSession(BrowserSession):
             pw = await self._pw_context.__aenter__()
             self._browser = await pw.chromium.connect_over_cdp(connect_url)
             ctx: BrowserContext = self._browser.contexts[0]
+            await self._apply_media_blocking(ctx)
             self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             # Wire popup handler AFTER the initial page is bound — see
             # LocalPlaywrightSession for rationale (avoid handler firing on
@@ -304,6 +356,87 @@ class BrowserbaseSession(BrowserSession):
 
 
 # ---------------------------------------------------------------------------
+# AgentCore (production, credits-billed)
+# ---------------------------------------------------------------------------
+
+class AgentCoreBrowserSession(BrowserSession):
+    """Amazon Bedrock AgentCore managed browser via CDP.
+
+    Same lifecycle shape as BrowserbaseSession: semaphore slot first, remote
+    CDP connect, cleanup that always releases the remote session and the
+    slot. Sessions exit from AWS IPs — no residential reputation, no
+    Browserbase stealth fingerprint; see agentcore_session.py for what that
+    trades away and why.
+    """
+
+    def __init__(self) -> None:
+        self._client = None
+        self._sem: asyncio.Semaphore | None = None
+        self._sem_acquired = False
+        self._pw_context = None
+        self._browser = None
+        self.intercepted_responses = []
+
+    async def __aenter__(self) -> "AgentCoreBrowserSession":
+        self._sem = _ac_get_session_sem()
+        await self._sem.acquire()
+        self._sem_acquired = True
+
+        try:
+            self._client, ws_url, headers = await _ac_open_browser()
+            self._pw_context = async_playwright()
+            pw = await self._pw_context.__aenter__()
+            self._browser = await pw.chromium.connect_over_cdp(ws_url, headers=headers)
+            ctx: BrowserContext = (
+                self._browser.contexts[0] if self._browser.contexts
+                else await self._browser.new_context()
+            )
+            await self._apply_media_blocking(ctx)
+            self.page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            # Wire popup handler AFTER the initial page is bound — see
+            # LocalPlaywrightSession for rationale.
+            self._wire_popup_handler(ctx)
+            self.watchdog = DomSettlementWatchdog(self.page, self.intercepted_responses)
+            try:
+                await self.watchdog.start()
+            except Exception as exc:
+                logger.warning("AgentCoreBrowserSession: watchdog start failed: %s", exc)
+            return self
+        except Exception:
+            await self._cleanup()
+            raise
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self._cleanup()
+
+    async def _cleanup(self) -> None:
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is not None:
+            try:
+                await watchdog.stop()
+            except Exception:
+                pass
+        if self._browser:
+            try:
+                await self._browser.close()
+            except Exception:
+                pass
+            self._browser = None
+        if self._pw_context:
+            try:
+                await self._pw_context.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._pw_context = None
+        if self._client is not None:
+            await _ac_close_browser(self._client)
+            self._client = None
+        if self._sem_acquired and self._sem is not None:
+            self._sem.release()
+            self._sem_acquired = False
+
+
+# ---------------------------------------------------------------------------
 # Composition root
 # ---------------------------------------------------------------------------
 
@@ -318,6 +451,8 @@ def build_browser_session(backend: str | None = None) -> BrowserSession:
         return LocalPlaywrightSession()
     if chosen == "browserbase":
         return BrowserbaseSession()
+    if chosen == "agentcore":
+        return AgentCoreBrowserSession()
     raise ValueError(
-        f"Unknown AGENT_BROWSER_BACKEND: {chosen!r}. Expected 'browserbase' or 'local'."
+        f"Unknown AGENT_BROWSER_BACKEND: {chosen!r}. Expected 'browserbase', 'agentcore', or 'local'."
     )

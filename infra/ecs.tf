@@ -75,6 +75,15 @@ resource "aws_iam_role_policy" "task_bedrock" {
       Action = [
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
+        # AgentCore managed browser: the fleet's default backend. Worker
+        # tasks start/stop sessions and connect to their CDP endpoints.
+        "bedrock-agentcore:StartBrowserSession",
+        "bedrock-agentcore:StopBrowserSession",
+        "bedrock-agentcore:GetBrowserSession",
+        "bedrock-agentcore:ListBrowserSessions",
+        "bedrock-agentcore:UpdateBrowserStream",
+        "bedrock-agentcore:ConnectBrowserAutomationStream",
+        "bedrock-agentcore:GetBrowser",
       ]
       Resource = "*"
     }]

@@ -14,16 +14,22 @@ locals {
     { name = "RESEND_FROM", value = "Studeal <alerts@studeal.site>" },
     { name = "STRIPE_SUCCESS_URL", value = "https://studeal.site/dashboard?upgraded=1" },
     { name = "STRIPE_CANCEL_URL", value = "https://studeal.site/watchlists" },
-    # Capacity model (2026-08-11): 6 lanes x 4 hunts = 24 sessions on the
-    # 25-session Browserbase plan.
+    # Backend split (probe 2026-08-14): AgentCore (credits) is the default;
+    # fingerprint-sensitive sites pin browserbase in MarketplaceConfig.
+    # Media blocking keeps the residential-proxy GB inside the plan's 1 GB.
+    { name = "AGENT_BROWSER_BACKEND", value = "agentcore" },
+    # Capacity model (2026-08-11): 6 lanes x 4 hunts = 24 sessions; the
+    # browserbase cap now only governs the pinned lanes (25-session plan).
     { name = "AGENT_LANE_CONCURRENCY", value = "6" },
     { name = "AGENT_NAV_CONCURRENCY", value = "6" },
     { name = "BROWSERBASE_MAX_SESSIONS", value = "24" },
+    { name = "AGENTCORE_MAX_SESSIONS", value = "24" },
     { name = "FLEET_MAX_CONCURRENT_HUNTS", value = "4" },
     { name = "AGENT_LANE_DEADLINE_S", value = "420" },
     { name = "HUNT_BROWSE_DEADLINE_S", value = "1200" },
-    # Spend guards + freshness + email throttle
-    { name = "DAILY_LLM_BUDGET_USD", value = "25" },
+    # Spend guards + freshness + email throttle. LLM budget raised for launch
+    # week (Bedrock burns AWS credits); drop back to 25 after.
+    { name = "DAILY_LLM_BUDGET_USD", value = "150" },
     { name = "DAILY_BROWSER_SESSION_CAP", value = "300" },
     { name = "LISTING_STALE_DAYS", value = "3" },
     { name = "ALERT_EMAIL_COOLDOWN_H", value = "12" },
@@ -49,10 +55,12 @@ locals {
       count   = 2
     }
     worker = {
-      # The hunts live here: more memory, its own scaling knob.
-      command = ["celery", "-A", "dealbot.worker.celery_app", "worker", "--loglevel=info"]
-      cpu     = 512
-      memory  = 1024
+      # The hunts live here. 4 GB: a hunt is 6 Playwright CDP lanes + chunked
+      # extraction; 1 GB OOM-killed the pool (proof hunt 2026-08-14, SIGKILL).
+      # Concurrency pinned to the fleet's hunt cap so forks stay bounded.
+      command = ["celery", "-A", "dealbot.worker.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+      cpu     = 1024
+      memory  = 4096
       count   = 1
     }
     beat = {
@@ -89,6 +97,8 @@ resource "aws_ecs_task_definition" "service" {
     command     = each.value.command
     environment = local.common_env
     secrets     = local.common_secrets
+    # Only api receives traffic; the ALB attachment requires the port declared.
+    portMappings = each.key == "api" ? [{ containerPort = 8000, protocol = "tcp" }] : []
     logConfiguration = {
       logDriver = "awslogs"
       options = {

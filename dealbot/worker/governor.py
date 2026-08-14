@@ -21,7 +21,9 @@ class FleetGovernor:
     ZSET_KEY = "fleet:active_hunts"
     LAST_START_KEY = "fleet:last_start"
     TICK_LOCK_KEY = "fleet:tick_lock"
-    STALE_S = 900
+    # Must exceed HUNT_BROWSE_DEADLINE_S (1200) plus persist/embed slack, or a
+    # long hunt is evicted (and reaped as failed) while still legally running.
+    STALE_S = 1800
 
     def __init__(
         self,

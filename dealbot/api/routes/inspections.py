@@ -697,7 +697,7 @@ async def toggle_checklist(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such check.")
         items = list(row.items)
         items[body.index] = {
-            "check": items[body.index]["check"],
+            **items[body.index],
             "status": body.status,
             "evidence": "you checked this one off yourself" if body.status == "satisfied" else None,
         }

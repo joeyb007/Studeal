@@ -377,17 +377,18 @@ def check_price_drops_task() -> dict:
 
 
 @app.task(name="dealbot.worker.tasks.auto_inspect_task")
-def auto_inspect_task(hunt_id: int, top_n: int = 2) -> dict:
-    """Pro perk: pre-inspect the hunt's top new matches so alert emails and
-    match rows arrive with Scout's report already cached."""
-    from dealbot.worker.inspections import auto_inspect_top_matches
+def auto_inspect_task(hunt_id: int, top_n: int | None = None) -> dict:
+    """Pre-inspect the hunt's top new matches so alert emails and match rows
+    arrive with Scout's report already cached. None → AUTO_INSPECT_TOP_N."""
+    from dealbot.worker.inspections import AUTO_INSPECT_TOP_N, auto_inspect_top_matches
 
-    return {"inspected": asyncio.run(auto_inspect_top_matches(hunt_id, top_n))}
+    n = AUTO_INSPECT_TOP_N if top_n is None else top_n
+    return {"inspected": asyncio.run(auto_inspect_top_matches(hunt_id, n))}
 
 
 def _maybe_post_hunt_inspections(hunt_id: int, watchlist_id: int) -> None:
-    """Fire-and-forget: price-drop sweep always; auto-inspect only for Pro
-    owners (checked inside the task to keep this seam broker-cheap)."""
+    """Fire-and-forget: price-drop sweep + auto-inspect of top matches, every
+    fruitful hunt, all users."""
     try:
         check_price_drops_task.delay()
         auto_inspect_task.delay(hunt_id)

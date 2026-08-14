@@ -77,8 +77,8 @@ async def test_pending_counts_against_capacity():
 async def test_stale_entries_pruned():
     fake = FakeRedis()
     gov = _governor(fake)
-    # A hunt registered 1000s ago — beyond STALE_S (900) — must not count.
-    await fake.zadd(FleetGovernor.ZSET_KEY, {"42": time.time() - 1000})
+    # A hunt registered beyond STALE_S must not count.
+    await fake.zadd(FleetGovernor.ZSET_KEY, {"42": time.time() - FleetGovernor.STALE_S - 100})
     assert await gov.active_count() == 0
 
 

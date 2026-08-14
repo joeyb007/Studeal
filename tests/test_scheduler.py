@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from dealbot.db.models import Base, Hunt, User, Watchlist
+from dealbot.worker.governor import FleetGovernor
 
 NOW = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
 CONTEXT = '{"product_query": "aeron"}'
@@ -152,7 +153,7 @@ async def test_stale_running_hunts_reaped(rig):
     factory, sched_mod = rig
     wl = await _seed(factory, is_pro=True, last_hunt_at=NOW)  # not due
     async with factory() as s:
-        stale = Hunt(watchlist_id=wl, started_at=NOW - timedelta(seconds=1200))
+        stale = Hunt(watchlist_id=wl, started_at=NOW - timedelta(seconds=FleetGovernor.STALE_S + 100))
         fresh = Hunt(watchlist_id=wl, started_at=NOW - timedelta(seconds=60))
         s.add_all([stale, fresh])
         await s.flush()

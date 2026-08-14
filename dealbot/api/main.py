@@ -87,6 +87,7 @@ app.include_router(watchlists_router)
 async def health_spend() -> dict:
     """Today's spend ledgers vs budgets — the runaway-cost dashboard."""
     from dealbot.costs import (
+        BROWSERBASE_MONTHLY_SESSION_CAP,
         DAILY_BROWSER_SESSION_CAP,
         DAILY_LLM_BUDGET_USD,
         build_meter,
@@ -97,13 +98,16 @@ async def health_spend() -> dict:
     try:
         llm = round(await meter.llm_spend_today(), 4)
         sessions = await meter.sessions_today()
+        bb_month = await meter.bb_sessions_month()
     except Exception:
-        llm, sessions = None, None
+        llm, sessions, bb_month = None, None, None
     return {
         "llm_spend_usd": llm,
         "llm_budget_usd": DAILY_LLM_BUDGET_USD,
         "browser_sessions": sessions,
         "browser_session_cap": DAILY_BROWSER_SESSION_CAP,
+        "browserbase_sessions_month": bb_month,
+        "browserbase_month_cap": BROWSERBASE_MONTHLY_SESSION_CAP,
         "fleet_paused": fleet_paused(),
     }
 

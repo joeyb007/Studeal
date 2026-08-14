@@ -31,6 +31,9 @@ locals {
     # week (Bedrock burns AWS credits); drop back to 25 after.
     { name = "DAILY_LLM_BUDGET_USD", value = "150" },
     { name = "DAILY_BROWSER_SESSION_CAP", value = "300" },
+    # Hard monthly cap on the only metered-dollar backend: 500 sessions fits
+    # inside the plan's included 100 h / 1 GB, so overage is impossible.
+    { name = "BROWSERBASE_MONTHLY_SESSION_CAP", value = "500" },
     { name = "LISTING_STALE_DAYS", value = "3" },
     { name = "ALERT_EMAIL_COOLDOWN_H", value = "12" },
   ]

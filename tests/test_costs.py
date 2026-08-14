@@ -80,6 +80,23 @@ async def test_session_cap(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bb_monthly_cap(monkeypatch):
+    monkeypatch.setattr(costs, "BROWSERBASE_MONTHLY_SESSION_CAP", 2)
+    meter = SpendMeter(_FakeRedis())
+    assert await meter.bb_month_cap_ok() is True
+    await meter.record_bb_session()
+    await meter.record_bb_session()
+    assert await meter.bb_month_cap_ok() is False
+    assert await meter.bb_sessions_month() == 2
+
+
+@pytest.mark.asyncio
+async def test_bb_monthly_cap_fails_open():
+    meter = SpendMeter(_BrokenRedis())
+    assert await meter.bb_month_cap_ok() is True
+
+
+@pytest.mark.asyncio
 async def test_guards_fail_open_on_redis_errors():
     meter = SpendMeter(_BrokenRedis())
     assert await meter.llm_budget_ok() is True

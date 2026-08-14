@@ -108,7 +108,12 @@ async def create_session(
     meter = build_meter()
     if not await meter.session_cap_ok():
         raise RuntimeError("daily browser-session cap reached")
+    # Monthly hard cap on the one metered-dollar backend: sized to the plan's
+    # included quota so the bill can never exceed the flat price.
+    if not await meter.bb_month_cap_ok():
+        raise RuntimeError("monthly browserbase session cap reached")
     await meter.record_session()
+    await meter.record_bb_session()
 
     payload = _session_payload(project_id, proxies)
     for attempt in range(_MAX_SESSION_RETRIES):

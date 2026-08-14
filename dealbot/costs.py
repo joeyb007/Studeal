@@ -31,9 +31,15 @@ logger = logging.getLogger(__name__)
 
 DAILY_LLM_BUDGET_USD = float(os.environ.get("DAILY_LLM_BUDGET_USD", "25"))
 DAILY_BROWSER_SESSION_CAP = int(os.environ.get("DAILY_BROWSER_SESSION_CAP", "300"))
+# Browserbase-only, MONTHLY, sized to the plan's included quota (100 h / 1 GB):
+# 500 sessions × ~6 min × ~2 MB (media-blocked) stays inside both meters, so
+# the bill cannot exceed the flat plan price. Past the cap those lanes fail
+# honestly; agentcore lanes are unaffected.
+BROWSERBASE_MONTHLY_SESSION_CAP = int(os.environ.get("BROWSERBASE_MONTHLY_SESSION_CAP", "500"))
 INTERACTIVE_BUDGET_FACTOR = 1.5
 
 _LEDGER_TTL_S = 2 * 24 * 3600
+_MONTH_LEDGER_TTL_S = 45 * 24 * 3600
 
 # $ per 1M tokens (input, output) — on-demand us-east-1, checked 2026-08.
 # Unknown models fall back to the frontier rate: over-counting an unknown
@@ -62,6 +68,10 @@ def estimate_call_cost(model_id: str, input_tokens: int, output_tokens: int) -> 
 
 def _day_key(prefix: str) -> str:
     return f"{prefix}:{datetime.now(timezone.utc):%Y-%m-%d}"
+
+
+def _month_key(prefix: str) -> str:
+    return f"{prefix}:{datetime.now(timezone.utc):%Y-%m}"
 
 
 def fleet_paused() -> bool:
@@ -118,6 +128,30 @@ class SpendMeter:
             return (await self.sessions_today()) < DAILY_BROWSER_SESSION_CAP
         except Exception:
             logger.warning("spend meter: session check failed — failing open", exc_info=True)
+            return True
+
+    async def record_bb_session(self) -> None:
+        try:
+            key = _month_key("spend:bb_sessions")
+            await self._client.incr(key)
+            await self._client.expire(key, _MONTH_LEDGER_TTL_S)
+        except Exception:
+            logger.warning("spend meter: bb session record failed", exc_info=True)
+
+    async def bb_sessions_month(self) -> int:
+        raw = await self._client.get(_month_key("spend:bb_sessions"))
+        if raw is None:
+            return 0
+        return int(raw.decode() if isinstance(raw, bytes) else raw)
+
+    async def bb_month_cap_ok(self) -> bool:
+        """The only real-dollar meter left: browserbase sessions this month.
+        Fails OPEN like every guard — if Redis is down, hunts are broken
+        anyway (it's also the celery broker)."""
+        try:
+            return (await self.bb_sessions_month()) < BROWSERBASE_MONTHLY_SESSION_CAP
+        except Exception:
+            logger.warning("spend meter: bb month check failed — failing open", exc_info=True)
             return True
 
 

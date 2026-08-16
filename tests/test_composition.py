@@ -202,7 +202,7 @@ def composition_rig(monkeypatch):
     monkeypatch.setattr(comp, "Explorer", _ScriptedExplorer)
     monkeypatch.setattr(
         comp, "build_session_from_env",
-        lambda backend=None, proxies=True: _FakeSession(),
+        lambda backend=None, proxies=True, residential_proxy=False: _FakeSession(),
     )
     _ScriptedExplorer.calls = []
     _ScriptedExplorer.results = []

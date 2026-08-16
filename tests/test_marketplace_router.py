@@ -135,11 +135,11 @@ def test_curated_search_urls_are_https_and_contain_query():
 
 
 def test_fb_target_carries_google_referer():
-    """FB serves its public page to search referrals; the parked config must
-    keep the referer for when its residential lane returns."""
-    from dealbot.agents.marketplace_router import _DISABLED_MARKETPLACES
-    fb = next(m for m in _DISABLED_MARKETPLACES if m.key == "fb_marketplace")
+    """FB serves its public page to search referrals; targets must carry it."""
+    from dealbot.agents.marketplace_router import CURATED_MARKETPLACES
+    fb = next(m for m in CURATED_MARKETPLACES if m.key == "fb_marketplace")
     assert fb.entry_referer == "https://www.google.com/"
+    assert fb.residential_proxy is True
 
 
 def test_targets_propagate_entry_referer():

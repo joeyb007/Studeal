@@ -36,6 +36,13 @@ DAILY_BROWSER_SESSION_CAP = int(os.environ.get("DAILY_BROWSER_SESSION_CAP", "300
 # the bill cannot exceed the flat plan price. Past the cap those lanes fail
 # honestly; agentcore lanes are unaffected.
 BROWSERBASE_MONTHLY_SESSION_CAP = int(os.environ.get("BROWSERBASE_MONTHLY_SESSION_CAP", "500"))
+# Residential-proxy hard caps — the ONLY metered-dollar resource after the
+# Browserbase cancellation. Each proxied (FB) lane is ~25 MB of prepaid
+# DataImpulse traffic at $1/GB. 600/month ≈ 15 GB ≈ $15; the daily cap smooths
+# spikes so one hot day can't drain the month. Past either cap, proxied lanes
+# fail honestly and the free agentcore sites carry the feed.
+PROXY_MONTHLY_SESSION_CAP = int(os.environ.get("PROXY_MONTHLY_SESSION_CAP", "600"))
+PROXY_DAILY_SESSION_CAP = int(os.environ.get("PROXY_DAILY_SESSION_CAP", "30"))
 INTERACTIVE_BUDGET_FACTOR = 1.5
 
 _LEDGER_TTL_S = 2 * 24 * 3600
@@ -152,6 +159,36 @@ class SpendMeter:
             return (await self.bb_sessions_month()) < BROWSERBASE_MONTHLY_SESSION_CAP
         except Exception:
             logger.warning("spend meter: bb month check failed — failing open", exc_info=True)
+            return True
+
+    async def record_proxy_session(self) -> None:
+        try:
+            dk, mk = _day_key("spend:proxy_sessions"), _month_key("spend:proxy_sessions")
+            await self._client.incr(dk)
+            await self._client.expire(dk, _LEDGER_TTL_S)
+            await self._client.incr(mk)
+            await self._client.expire(mk, _MONTH_LEDGER_TTL_S)
+        except Exception:
+            logger.warning("spend meter: proxy session record failed", exc_info=True)
+
+    async def proxy_sessions_today(self) -> int:
+        raw = await self._client.get(_day_key("spend:proxy_sessions"))
+        return 0 if raw is None else int(raw.decode() if isinstance(raw, bytes) else raw)
+
+    async def proxy_sessions_month(self) -> int:
+        raw = await self._client.get(_month_key("spend:proxy_sessions"))
+        return 0 if raw is None else int(raw.decode() if isinstance(raw, bytes) else raw)
+
+    async def proxy_cap_ok(self) -> bool:
+        """Residential-proxy prepaid-dollar guard: under BOTH the daily and
+        monthly session caps. Fails OPEN like every guard."""
+        try:
+            return (
+                (await self.proxy_sessions_today()) < PROXY_DAILY_SESSION_CAP
+                and (await self.proxy_sessions_month()) < PROXY_MONTHLY_SESSION_CAP
+            )
+        except Exception:
+            logger.warning("spend meter: proxy cap check failed — failing open", exc_info=True)
             return True
 
 

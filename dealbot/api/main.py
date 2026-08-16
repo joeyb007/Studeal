@@ -90,6 +90,8 @@ async def health_spend() -> dict:
         BROWSERBASE_MONTHLY_SESSION_CAP,
         DAILY_BROWSER_SESSION_CAP,
         DAILY_LLM_BUDGET_USD,
+        PROXY_DAILY_SESSION_CAP,
+        PROXY_MONTHLY_SESSION_CAP,
         build_meter,
         fleet_paused,
     )
@@ -99,8 +101,10 @@ async def health_spend() -> dict:
         llm = round(await meter.llm_spend_today(), 4)
         sessions = await meter.sessions_today()
         bb_month = await meter.bb_sessions_month()
+        proxy_day = await meter.proxy_sessions_today()
+        proxy_month = await meter.proxy_sessions_month()
     except Exception:
-        llm, sessions, bb_month = None, None, None
+        llm, sessions, bb_month, proxy_day, proxy_month = None, None, None, None, None
     return {
         "llm_spend_usd": llm,
         "llm_budget_usd": DAILY_LLM_BUDGET_USD,
@@ -108,6 +112,10 @@ async def health_spend() -> dict:
         "browser_session_cap": DAILY_BROWSER_SESSION_CAP,
         "browserbase_sessions_month": bb_month,
         "browserbase_month_cap": BROWSERBASE_MONTHLY_SESSION_CAP,
+        "proxy_sessions_today": proxy_day,
+        "proxy_daily_cap": PROXY_DAILY_SESSION_CAP,
+        "proxy_sessions_month": proxy_month,
+        "proxy_monthly_cap": PROXY_MONTHLY_SESSION_CAP,
         "fleet_paused": fleet_paused(),
     }
 

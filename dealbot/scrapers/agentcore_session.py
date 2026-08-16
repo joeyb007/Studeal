@@ -14,11 +14,13 @@ punish either stay on the browserbase backend (MarketplaceConfig.backend).
 Deliberately SDK-free: the official `bedrock-agentcore` package requires
 botocore>=1.43 while every aioboto3 release pins aiobotocore's much older
 botocore ceiling — co-installation is unresolvable (verified 2026-08-14).
-The three calls we need (start/stop session, SigV4 ws headers) run fine on
-the pinned botocore (browser ops verified present in 1.40.61), so we make
-them directly. Mirrors browserbase_session.py's split: this module owns the
-HTTP calls + concurrency cap; the lifecycle class lives in
-browser_session.py as AgentCoreBrowserSession.
+The calls we need (start/stop session, SigV4 ws headers) run fine on the
+pinned botocore. `proxyConfiguration` on StartBrowserSession only exists in
+botocore>=1.43's model, so we vendor that newer service-2.json and prepend
+it to the loader's search path (AWS_DATA_PATH) — the typed client then sends
+the field with standard signing/retries, no hand-rolled REST. Mirrors
+browserbase_session.py's split: this module owns the HTTP calls + concurrency
+cap; the lifecycle class lives in browser_session.py as AgentCoreBrowserSession.
 """
 
 from __future__ import annotations
@@ -28,16 +30,35 @@ import base64
 import datetime
 import logging
 import os
+import random
 import secrets
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Vendored newer bedrock-agentcore service model (carries proxyConfiguration).
+# Prepend to AWS_DATA_PATH at import so botocore's loader prefers it over the
+# pinned version's built-in model for the same api-version.
+_MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "botocore_models")
+_dp = [p for p in os.environ.get("AWS_DATA_PATH", "").split(os.pathsep) if p]
+if os.path.isdir(_MODEL_DIR) and _MODEL_DIR not in _dp:
+    os.environ["AWS_DATA_PATH"] = os.pathsep.join([_MODEL_DIR, *_dp])
+
 AGENTCORE_MAX_SESSIONS = int(os.environ.get("AGENTCORE_MAX_SESSIONS", "24"))
 
 # The account-default managed browser sandbox.
 _BROWSER_IDENTIFIER = os.environ.get("AGENTCORE_BROWSER_ID", "aws.browser.v1")
+
+# Residential proxy (FB lanes only). Credentials live in Secrets Manager as
+# {"username","password"} JSON; AgentCore reads them itself via the ARN, so the
+# password never enters env or code. Sticky IP per lane = a random port in
+# DataImpulse's sticky range (each port pins one residential IP for the
+# session); Canada targeting rides inside the username's __cr.ca suffix.
+_PROXY_SECRET_ARN = os.environ.get("AGENTCORE_PROXY_SECRET_ARN", "")
+_PROXY_SERVER = os.environ.get("PROXY_SERVER", "gw.dataimpulse.com")
+_PROXY_STICKY_MIN = int(os.environ.get("PROXY_STICKY_PORT_MIN", "10000"))
+_PROXY_STICKY_MAX = int(os.environ.get("PROXY_STICKY_PORT_MAX", "20000"))
 
 _session_sem: asyncio.Semaphore | None = None
 
@@ -108,31 +129,57 @@ def _sign_ws_headers(region: str, host: str, path: str, session_id: str) -> dict
     return headers
 
 
-async def open_browser() -> tuple[AgentCoreSession, str, dict[str, str]]:
+def _proxy_configuration() -> dict:
+    """Route all lane traffic through one sticky residential exit for coherence
+    (a mixed residential-doc / datacenter-subresource story is itself a bot
+    signal). No domainPatterns = every request on the lane uses the proxy."""
+    if not _PROXY_SECRET_ARN:
+        raise RuntimeError("AGENTCORE_PROXY_SECRET_ARN not set; cannot open a proxied session")
+    port = random.randint(_PROXY_STICKY_MIN, _PROXY_STICKY_MAX)
+    return {
+        "proxies": [{
+            "externalProxy": {
+                "server": _PROXY_SERVER,
+                "port": port,
+                "credentials": {"basicAuth": {"secretArn": _PROXY_SECRET_ARN}},
+            }
+        }]
+    }
+
+
+async def open_browser(proxy: bool = False) -> tuple[AgentCoreSession, str, dict[str, str]]:
     """Start a session; returns (handle, cdp_ws_url, signed headers).
 
-    Counts against the shared daily session cap — credits are still spend,
-    and the cap keeps a runaway fleet visible either way. boto3 is sync, so
-    calls run in a thread.
+    `proxy=True` routes the session through the residential exit (FB lanes)
+    and counts against the prepaid-dollar proxy caps in addition to the shared
+    session cap. boto3 is sync, so calls run in a thread.
     """
     from dealbot.costs import build_meter
 
     meter = build_meter()
     if not await meter.session_cap_ok():
         raise RuntimeError("daily browser-session cap reached")
+    if proxy and not await meter.proxy_cap_ok():
+        raise RuntimeError("residential-proxy session cap reached")
     await meter.record_session()
+    if proxy:
+        await meter.record_proxy_session()
 
     region = agentcore_region()
     timeout_s = int(os.environ.get("AGENTCORE_SESSION_TIMEOUT_S", "900"))
+    proxy_config = _proxy_configuration() if proxy else None
 
     def _start() -> tuple[AgentCoreSession, str, dict[str, str]]:
         import boto3
 
         client = boto3.client("bedrock-agentcore", region_name=region)
-        resp = client.start_browser_session(
-            browserIdentifier=_BROWSER_IDENTIFIER,
-            sessionTimeoutSeconds=timeout_s,
-        )
+        kwargs: dict[str, Any] = {
+            "browserIdentifier": _BROWSER_IDENTIFIER,
+            "sessionTimeoutSeconds": timeout_s,
+        }
+        if proxy_config is not None:
+            kwargs["proxyConfiguration"] = proxy_config
+        resp = client.start_browser_session(**kwargs)
         handle = AgentCoreSession(
             region=region,
             identifier=resp["browserIdentifier"],

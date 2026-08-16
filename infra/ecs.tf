@@ -90,6 +90,29 @@ resource "aws_iam_role_policy" "task_bedrock" {
   })
 }
 
+# The residential-proxy Basic-Auth secret ({username,password}), created out
+# of band in the console. Looked up by name so its full ARN (with suffix) is
+# resolvable for both the IAM grant and the task env.
+data "aws_secretsmanager_secret" "proxy" {
+  name = "studeal/prod/proxy-credentials"
+}
+
+# AgentCore reads those credentials from Secrets Manager when opening a proxied
+# browser session (FB lanes). Scoped to the one secret; the DataImpulse
+# password never touches env or code.
+resource "aws_iam_role_policy" "task_proxy_secret" {
+  name = "proxy-secret-read"
+  role = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = data.aws_secretsmanager_secret.proxy.arn
+    }]
+  })
+}
+
 data "aws_caller_identity" "current" {}
 
 # ---------------------------------------------------------------------------

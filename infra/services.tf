@@ -31,12 +31,15 @@ locals {
     # week (Bedrock burns AWS credits); drop back to 25 after.
     { name = "DAILY_LLM_BUDGET_USD", value = "150" },
     { name = "DAILY_BROWSER_SESSION_CAP", value = "300" },
-    # Break-glass: fleet hunts OFF while proxy bandwidth per FB lane is
-    # diagnosed (2026-08-16: ~4 GB through browserbase despite media
-    # blocking). Interactive paths unaffected. Remove to resume hunting.
-    { name = "FLEET_PAUSED", value = "1" },
-    # Hard monthly cap on the only metered-dollar backend: 500 sessions fits
-    # inside the plan's included 100 h / 1 GB, so overage is impossible.
+    # Residential proxy for FB lanes (agentcore + prepaid DataImpulse). The
+    # secret holds {username,password}; AgentCore reads it via the ARN so the
+    # password never lands in env. Hard caps below bound the ONLY metered
+    # dollar left: 600/month ≈ 15 GB ≈ $15 prepaid, 30/day smooths spikes.
+    { name = "AGENTCORE_PROXY_SECRET_ARN", value = data.aws_secretsmanager_secret.proxy.arn },
+    { name = "PROXY_MONTHLY_SESSION_CAP", value = "600" },
+    { name = "PROXY_DAILY_SESSION_CAP", value = "30" },
+    # Hard monthly cap on browserbase (cancelled 2026-08-16; kept as a guard
+    # in case a lane is ever re-pinned there). Nothing pins it now.
     { name = "BROWSERBASE_MONTHLY_SESSION_CAP", value = "500" },
     { name = "LISTING_STALE_DAYS", value = "3" },
     { name = "ALERT_EMAIL_COOLDOWN_H", value = "12" },

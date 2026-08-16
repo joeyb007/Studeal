@@ -97,6 +97,26 @@ async def test_bb_monthly_cap_fails_open():
 
 
 @pytest.mark.asyncio
+async def test_proxy_cap_daily_and_monthly(monkeypatch):
+    monkeypatch.setattr(costs, "PROXY_DAILY_SESSION_CAP", 2)
+    monkeypatch.setattr(costs, "PROXY_MONTHLY_SESSION_CAP", 5)
+    meter = SpendMeter(_FakeRedis())
+    assert await meter.proxy_cap_ok() is True
+    await meter.record_proxy_session()
+    await meter.record_proxy_session()
+    # Daily cap (2) binds first even though monthly (5) has room.
+    assert await meter.proxy_cap_ok() is False
+    assert await meter.proxy_sessions_today() == 2
+    assert await meter.proxy_sessions_month() == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_cap_fails_open():
+    meter = SpendMeter(_BrokenRedis())
+    assert await meter.proxy_cap_ok() is True
+
+
+@pytest.mark.asyncio
 async def test_guards_fail_open_on_redis_errors():
     meter = SpendMeter(_BrokenRedis())
     assert await meter.llm_budget_ok() is True

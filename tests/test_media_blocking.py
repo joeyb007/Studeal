@@ -107,7 +107,9 @@ def test_marketplace_backend_split():
 
     assert all(m.backend is None for m in CONFIG_BY_KEY.values())
     parked = {m.key for m in _DISABLED_MARKETPLACES}
-    assert {"fb_marketplace", "bestbuy_outlet", "visions_openbox"} <= parked
+    # Browserbase-only sites stay parked; FB returned on agentcore+residential.
+    assert {"bestbuy_outlet", "visions_openbox"} <= parked
+    assert "fb_marketplace" not in parked
 
 
 def test_session_from_env_honors_override(monkeypatch):
@@ -118,6 +120,28 @@ def test_session_from_env_honors_override(monkeypatch):
     monkeypatch.setenv("BROWSERBASE_PROJECT_ID", "p")
     assert isinstance(build_session_from_env(), AgentCoreBrowserSession)
     assert isinstance(build_session_from_env(backend="browserbase"), BrowserbaseSession)
+
+
+def test_residential_proxy_flag_reaches_agentcore_session(monkeypatch):
+    from dealbot.agents.composition import build_session_from_env
+
+    monkeypatch.setenv("AGENT_BROWSER_BACKEND", "agentcore")
+    plain = build_session_from_env()
+    proxied = build_session_from_env(residential_proxy=True)
+    assert plain._proxy is False
+    assert proxied._proxy is True
+
+
+def test_fb_configured_for_residential_proxy():
+    # FB is the sole residential-proxy user, on agentcore (no browserbase).
+    from dealbot.agents.marketplace_router import CONFIG_BY_KEY
+
+    fb = CONFIG_BY_KEY["fb_marketplace"]
+    assert fb.residential_proxy is True
+    assert fb.backend is None
+    assert all(
+        not m.residential_proxy for k, m in CONFIG_BY_KEY.items() if k != "fb_marketplace"
+    )
 
 
 def test_agentcore_region_resolution(monkeypatch):

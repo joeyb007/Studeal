@@ -178,11 +178,12 @@ def build_extract_llm() -> LLMClient:
 def build_session_from_env(
     backend: str | None = None,
     proxies: bool = True,
+    residential_proxy: bool = False,
 ) -> BrowserSession:
-    # Per-marketplace override first (MarketplaceConfig.backend — the probe
-    # split: fingerprint-sensitive sites pin browserbase, the rest ride the
-    # env default), then the fleet-wide env var. `proxies` only matters on
-    # the browserbase backend (MarketplaceConfig.browserbase_proxies).
+    # Per-marketplace override first (MarketplaceConfig.backend), then the
+    # fleet-wide env var. `proxies` gates the browserbase residential proxy;
+    # `residential_proxy` routes an agentcore session through the prepaid
+    # residential exit (FB lanes — MarketplaceConfig.residential_proxy).
     backend = (backend or os.environ.get("AGENT_BROWSER_BACKEND", "browserbase")).lower()
     if backend == "local":
         # FB Marketplace requires an authenticated session. If FB_STATE_PATH
@@ -197,7 +198,7 @@ def build_session_from_env(
     if backend == "browserbase":
         return BrowserbaseSession(proxies=proxies)
     if backend == "agentcore":
-        return AgentCoreBrowserSession()
+        return AgentCoreBrowserSession(proxy=residential_proxy)
     raise ValueError(
         f"Unknown AGENT_BROWSER_BACKEND: {backend!r}. Expected 'browserbase', 'agentcore', or 'local'."
     )
@@ -304,6 +305,7 @@ async def _run_one_lane(
         async with build_session_from_env(
             backend=lane_cfg.backend if lane_cfg else None,
             proxies=lane_cfg.browserbase_proxies if lane_cfg else True,
+            residential_proxy=lane_cfg.residential_proxy if lane_cfg else False,
         ) as session:
             session_opened = True
             explorer = Explorer(nav_llm, trace=trace, escalation_llm=nav_full_llm)

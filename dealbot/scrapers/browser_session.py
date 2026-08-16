@@ -369,7 +369,8 @@ class AgentCoreBrowserSession(BrowserSession):
     trades away and why.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, proxy: bool = False) -> None:
+        self._proxy = proxy
         self._client = None
         self._sem: asyncio.Semaphore | None = None
         self._sem_acquired = False
@@ -383,7 +384,7 @@ class AgentCoreBrowserSession(BrowserSession):
         self._sem_acquired = True
 
         try:
-            self._client, ws_url, headers = await _ac_open_browser()
+            self._client, ws_url, headers = await _ac_open_browser(proxy=self._proxy)
             self._pw_context = async_playwright()
             pw = await self._pw_context.__aenter__()
             self._browser = await pw.chromium.connect_over_cdp(ws_url, headers=headers)

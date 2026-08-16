@@ -68,6 +68,11 @@ class MarketplaceConfig:
     # bestbuy passes on fingerprint alone (394 elems) — proxy off, zero GB.
     # visions still shells without it (25 elems) — the one site needing both.
     browserbase_proxies: bool = True
+    # Route this site's agentcore lanes through the prepaid residential exit.
+    # FB is the only user: it needs a residential IP (datacenter walls it) but
+    # NO stealth fingerprint (probe T2 2026-08-16: stock headless Chromium
+    # passed from a home IP). Gated by the prepaid-dollar proxy caps.
+    residential_proxy: bool = False
 
 
 @dataclass
@@ -102,6 +107,26 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         ),
         listing_href_pattern="/v-",
         image_cdn_hosts=("media.kijiji.ca",),
+    ),
+    MarketplaceConfig(
+        key="fb_marketplace",
+        display_name="Facebook Marketplace",
+        # Runs logged-out on agentcore + prepaid residential (probe 2026-08-16:
+        # sticky Toronto exit, 6 scrolls no login wall, 62 thumbs). Needs the
+        # residential IP (datacenter walls it) but no stealth fingerprint.
+        description=(
+            "Local secondhand marketplace; strong for large items (furniture, "
+            "vehicles, appliances), casual sales."
+        ),
+        # City-scoped: the un-scoped /marketplace/search/ URL geolocates by
+        # exit IP and returned Bay Area listings on a Canadian hunt.
+        build_search_url=lambda q: (
+            f"https://www.facebook.com/marketplace/{_FB_CITY}/search/?query={quote_plus(q)}"
+        ),
+        entry_referer="https://www.google.com/",
+        listing_href_pattern="/marketplace/item/",
+        image_cdn_hosts=(".fbcdn.net",),
+        residential_proxy=True,
     ),
     MarketplaceConfig(
         key="ebay",
@@ -197,24 +222,9 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
 # a failure.
 # Browserbase cancellation 2026-08-16: the two fingerprint-dependent sites
 # (walled every non-Browserbase probe: home residential, bare AgentCore) are
-# parked with it. FB is parked only until its agentcore + prepaid-residential
-# lane ships — probes show FB needs residential IP alone (fingerprint
-# irrelevant: stock headless Chromium passed from a home IP, T2 2026-08-16).
+# parked with it. FB was un-parked the same day onto agentcore + prepaid
+# residential — probe confirmed sticky Toronto exit, no login wall, 62 thumbs.
 _DISABLED_MARKETPLACES: list[MarketplaceConfig] = [
-    MarketplaceConfig(
-        key="fb_marketplace",
-        display_name="Facebook Marketplace",
-        description=(
-            "Local secondhand marketplace; strong for large items (furniture, "
-            "vehicles, appliances), casual sales. PARKED: needs residential exit."
-        ),
-        build_search_url=lambda q: (
-            f"https://www.facebook.com/marketplace/{_FB_CITY}/search/?query={quote_plus(q)}"
-        ),
-        entry_referer="https://www.google.com/",
-        listing_href_pattern="/marketplace/item/",
-        image_cdn_hosts=(".fbcdn.net",),
-    ),
     MarketplaceConfig(
         key="bestbuy_outlet",
         display_name="Best Buy Canada (open box / refurbished)",

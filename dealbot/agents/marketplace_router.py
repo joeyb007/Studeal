@@ -104,25 +104,6 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         image_cdn_hosts=("media.kijiji.ca",),
     ),
     MarketplaceConfig(
-        key="fb_marketplace",
-        display_name="Facebook Marketplace",
-        # Logged-out browsing verified deep (2026-08-14: 9 scrolls, 216 cards,
-        # no login wall) under browserbase+proxy+referer — no FB session needed.
-        description=(
-            "Local secondhand marketplace; strong for large items (furniture, "
-            "vehicles, appliances), casual sales."
-        ),
-        # City-scoped: the un-scoped /marketplace/search/ URL geolocates by
-        # exit IP and returned Bay Area listings on a Canadian hunt.
-        build_search_url=lambda q: (
-            f"https://www.facebook.com/marketplace/{_FB_CITY}/search/?query={quote_plus(q)}"
-        ),
-        entry_referer="https://www.google.com/",
-        listing_href_pattern="/marketplace/item/",
-        image_cdn_hosts=(".fbcdn.net",),
-        backend="browserbase",
-    ),
-    MarketplaceConfig(
         key="ebay",
         display_name="eBay",
         description=(
@@ -152,23 +133,6 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
     # --- in the 2026-07-30 site expansion; every entry below survived a
     # --- zero-tuning first-exposure eval (docs/evals/results.md expand_* rows).
     MarketplaceConfig(
-        key="bestbuy_outlet",
-        display_name="Best Buy Canada (open box / refurbished)",
-        description=(
-            "Big-box electronics retailer's discounted open-box and certified "
-            "refurbished stock: laptops, TVs, audio, appliances. Ships Canada-wide."
-        ),
-        build_search_url=lambda q: (
-            f"https://www.bestbuy.ca/en-ca/search?search={quote_plus(q + ' open box')}"
-        ),
-        # Probed 2026-08-13 via Browserbase: card hrefs are /en-ca/product/…,
-        # thumbs on multimedia.bbycastatic.ca.
-        listing_href_pattern="/product/",
-        image_cdn_hosts=("multimedia.bbycastatic.ca",),
-        backend="browserbase",
-        browserbase_proxies=False,
-    ),
-    MarketplaceConfig(
         key="canada_computers",
         display_name="Canada Computers (open box)",
         description=(
@@ -178,22 +142,6 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://www.canadacomputers.com/en/search?s={quote_plus(q + ' open box')}"
         ),
-    ),
-    MarketplaceConfig(
-        key="visions_openbox",
-        display_name="Visions Electronics (open box)",
-        description=(
-            "Canadian electronics chain's open-box deals: TVs, home audio, "
-            "headphones, car tech."
-        ),
-        build_search_url=lambda q: (
-            f"https://www.visions.ca/catalogsearch/result/?q={quote_plus(q + ' open box')}"
-        ),
-        # Probed 2026-08-13: Magento slugs at root ending in -openbox;
-        # thumbs served from visions.ca/media/catalog/….
-        listing_href_pattern="openbox",
-        image_cdn_hosts=("visions.ca",),
-        backend="browserbase",
     ),
     MarketplaceConfig(
         key="newegg_ca",
@@ -239,8 +187,6 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
     ),
 ]
 
-CONFIG_BY_KEY: dict[str, MarketplaceConfig] = {m.key: m for m in CURATED_MARKETPLACES}
-
 # First-exposure eval 2026-07-30 (docs/evals/results.md expand_* rows).
 # PARKED, not tuned — re-attempt post-launch:
 #   apple_refurbished — browse-only store; category navigation didn't converge
@@ -249,7 +195,52 @@ CONFIG_BY_KEY: dict[str, MarketplaceConfig] = {m.key: m for m in CURATED_MARKETP
 # Browserbase (841 elems, 5 open-box MacBooks) — backend fingerprint, not a
 # bot wall. Retest parked sites on the production backend before believing
 # a failure.
+# Browserbase cancellation 2026-08-16: the two fingerprint-dependent sites
+# (walled every non-Browserbase probe: home residential, bare AgentCore) are
+# parked with it. FB is parked only until its agentcore + prepaid-residential
+# lane ships — probes show FB needs residential IP alone (fingerprint
+# irrelevant: stock headless Chromium passed from a home IP, T2 2026-08-16).
 _DISABLED_MARKETPLACES: list[MarketplaceConfig] = [
+    MarketplaceConfig(
+        key="fb_marketplace",
+        display_name="Facebook Marketplace",
+        description=(
+            "Local secondhand marketplace; strong for large items (furniture, "
+            "vehicles, appliances), casual sales. PARKED: needs residential exit."
+        ),
+        build_search_url=lambda q: (
+            f"https://www.facebook.com/marketplace/{_FB_CITY}/search/?query={quote_plus(q)}"
+        ),
+        entry_referer="https://www.google.com/",
+        listing_href_pattern="/marketplace/item/",
+        image_cdn_hosts=(".fbcdn.net",),
+    ),
+    MarketplaceConfig(
+        key="bestbuy_outlet",
+        display_name="Best Buy Canada (open box / refurbished)",
+        description=(
+            "Big-box electronics retailer's open-box stock. PARKED: needs "
+            "stealth fingerprint (Browserbase-only)."
+        ),
+        build_search_url=lambda q: (
+            f"https://www.bestbuy.ca/en-ca/search?search={quote_plus(q + ' open box')}"
+        ),
+        listing_href_pattern="/product/",
+        image_cdn_hosts=("multimedia.bbycastatic.ca",),
+    ),
+    MarketplaceConfig(
+        key="visions_openbox",
+        display_name="Visions Electronics (open box)",
+        description=(
+            "Canadian electronics chain's open-box deals. PARKED: needs "
+            "stealth fingerprint + residential proxy."
+        ),
+        build_search_url=lambda q: (
+            f"https://www.visions.ca/catalogsearch/result/?q={quote_plus(q + ' open box')}"
+        ),
+        listing_href_pattern="openbox",
+        image_cdn_hosts=("visions.ca",),
+    ),
     MarketplaceConfig(
         key="apple_refurbished",
         display_name="Apple Certified Refurbished (Canada)",
@@ -265,6 +256,14 @@ _DISABLED_MARKETPLACES: list[MarketplaceConfig] = [
         ),
     ),
 ]
+
+# Config knowledge by key spans ACTIVE and PARKED sites: the rotation is
+# CURATED_MARKETPLACES alone, but capture specs, referers, and backend notes
+# stay resolvable for parked keys so the eval harness can retest them
+# ("retest parked sites before believing a failure").
+CONFIG_BY_KEY: dict[str, MarketplaceConfig] = {
+    m.key: m for m in CURATED_MARKETPLACES + _DISABLED_MARKETPLACES
+}
 
 
 # ---------------------------------------------------------------------------

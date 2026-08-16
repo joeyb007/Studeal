@@ -135,9 +135,10 @@ def test_curated_search_urls_are_https_and_contain_query():
 
 
 def test_fb_target_carries_google_referer():
-    """FB serves its public page to search referrals; targets must carry it."""
-    from dealbot.agents.marketplace_router import CURATED_MARKETPLACES
-    fb = next(m for m in CURATED_MARKETPLACES if m.key == "fb_marketplace")
+    """FB serves its public page to search referrals; the parked config must
+    keep the referer for when its residential lane returns."""
+    from dealbot.agents.marketplace_router import _DISABLED_MARKETPLACES
+    fb = next(m for m in _DISABLED_MARKETPLACES if m.key == "fb_marketplace")
     assert fb.entry_referer == "https://www.google.com/"
 
 
@@ -148,8 +149,9 @@ def test_targets_propagate_entry_referer():
     router = MarketplaceRouter(llm=None)
     targets = router._all_targets("aeron chair")
     by_key = {t.marketplace: t for t in targets}
-    assert by_key["fb_marketplace"].entry_referer == "https://www.google.com/"
-    assert by_key["kijiji"].entry_referer is None
+    # Propagation is 1:1 with config for every curated site.
+    for m in CURATED_MARKETPLACES:
+        assert by_key[m.key].entry_referer == m.entry_referer
 
 
 def test_capture_config_present_for_probed_marketplaces():
@@ -157,7 +159,6 @@ def test_capture_config_present_for_probed_marketplaces():
 
     expected = {
         "kijiji": ("/v-", ("media.kijiji.ca",)),
-        "fb_marketplace": ("/marketplace/item/", (".fbcdn.net",)),
         "ebay": ("/itm/", ("i.ebayimg.com",)),
         "craigslist": ("/d/", ("images.craigslist.org",)),
     }
@@ -171,7 +172,7 @@ def test_unprobed_marketplaces_have_no_capture_pattern():
     from dealbot.agents.marketplace_router import CONFIG_BY_KEY
 
     for key, cfg in CONFIG_BY_KEY.items():
-        if key not in {"kijiji", "fb_marketplace", "ebay", "craigslist",
-                       "bestbuy_outlet", "visions_openbox", "openbox_ca"}:
+        if key not in {"kijiji", "ebay", "craigslist", "openbox_ca", "newegg_ca",
+                       "fb_marketplace", "bestbuy_outlet", "visions_openbox"}:
             assert cfg.listing_href_pattern is None
             assert cfg.image_cdn_hosts == ()

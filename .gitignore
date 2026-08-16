@@ -25,3 +25,4 @@ tests/evals/_fb_state.json
 traces/
 /media/
 celerybeat-schedule*
+.playwright-mcp/

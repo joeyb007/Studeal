@@ -114,9 +114,12 @@ def _resolve_targets(
     home mode:     entry_url = scheme + netloc of the search URL (site root),
                    or override if present in _HOME_URL_OVERRIDES
 
-    Raises ValueError for any name not in CURATED_MARKETPLACES.
+    Resolves ACTIVE and PARKED sites alike — evals are exactly where
+    parked marketplaces get retested.
     """
-    by_key = {m.key: m for m in CURATED_MARKETPLACES}
+    from dealbot.agents.marketplace_router import CONFIG_BY_KEY
+
+    by_key = CONFIG_BY_KEY
     targets: list[MarketplaceSearchTarget] = []
     for name in marketplaces:
         config = by_key.get(name)

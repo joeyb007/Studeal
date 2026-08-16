@@ -101,20 +101,13 @@ def test_backend_selection(monkeypatch):
 
 
 def test_marketplace_backend_split():
-    # Probe 2026-08-14: fingerprint-sensitive sites pin browserbase; the
-    # rest inherit the env default (None).
-    from dealbot.agents.marketplace_router import CONFIG_BY_KEY
+    # Browserbase cancelled 2026-08-16: nothing in the active lineup may
+    # pin it; the fingerprint/residential sites are parked in _DISABLED.
+    from dealbot.agents.marketplace_router import CONFIG_BY_KEY, _DISABLED_MARKETPLACES
 
-    pinned = {k for k, m in CONFIG_BY_KEY.items() if m.backend == "browserbase"}
-    assert pinned == {"fb_marketplace", "bestbuy_outlet", "visions_openbox"}
-    assert all(
-        m.backend is None for k, m in CONFIG_BY_KEY.items() if k not in pinned
-    )
-    # Proxyless probe 2026-08-14: bestbuy passes on fingerprint alone;
-    # visions and FB still need the residential exit.
-    assert CONFIG_BY_KEY["bestbuy_outlet"].browserbase_proxies is False
-    assert CONFIG_BY_KEY["visions_openbox"].browserbase_proxies is True
-    assert CONFIG_BY_KEY["fb_marketplace"].browserbase_proxies is True
+    assert all(m.backend is None for m in CONFIG_BY_KEY.values())
+    parked = {m.key for m in _DISABLED_MARKETPLACES}
+    assert {"fb_marketplace", "bestbuy_outlet", "visions_openbox"} <= parked
 
 
 def test_session_from_env_honors_override(monkeypatch):

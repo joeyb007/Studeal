@@ -276,9 +276,9 @@ export default function ScoutPage() {
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>Nothing here yet.</p>
           <p className={styles.emptySub}>
-            Find something interesting in <Link href="/dashboard">Daily Drops</Link> and
-            hit &quot;Send to Scout&quot;. Your conversations land here and Scout keeps an
-            eye on the price after you ask.
+            Find something interesting in <Link href="/dashboard">Daily Drops</Link>
+            {" "}and hit &quot;Send to Scout&quot;. Your conversations land here and
+            Scout keeps an eye on the price after you ask.
           </p>
         </div>
       )}

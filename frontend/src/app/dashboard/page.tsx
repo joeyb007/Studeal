@@ -57,6 +57,41 @@ function useCountUp(target: number | null, ms = 700): string {
   return value === null ? "–" : value.toLocaleString();
 }
 
+// Same star glyph Scout wears in the inspector panel.
+function ScoutGlyph({ size = 26 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+      <path d="M12 3 L14 12 L12 21 L10 12 Z" />
+      <path d="M3 12 L12 10 L21 12 L12 14 Z" />
+    </svg>
+  );
+}
+
+// Scout narrates the wait: pop in, pulse, and cycle status lines while the
+// pool loads. Pure theater · the fetch is a single request either way.
+const LOADING_LINES = [
+  "waking the fleet",
+  "aggregating deals",
+  "finding fits",
+  "checking prices twice",
+  "dusting off the gems",
+  "sorting the maybes from the yes",
+];
+
+function ScoutLoading() {
+  const [line, setLine] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setLine(l => (l + 1) % LOADING_LINES.length), 2200);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className={styles.scoutLoading} role="status" aria-live="polite">
+      <span className={styles.scoutLoadingStar}><ScoutGlyph /></span>
+      <span key={line} className={styles.scoutLoadingLine}>{LOADING_LINES[line]}…</span>
+    </div>
+  );
+}
+
 function DashboardPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -308,9 +343,7 @@ function DashboardPageInner() {
         </span>
       </div>
 
-      {loading && listings.length === 0 && !inSearchMode && (
-        <p className={styles.searching}>Loading the pool…</p>
-      )}
+      {loading && listings.length === 0 && !inSearchMode && <ScoutLoading />}
 
       {searchLoading && (
         <div className={styles.skeletonGrid} aria-hidden>
@@ -350,6 +383,15 @@ function DashboardPageInner() {
                 onInspect={() => setInspecting(listing)}
               />
             ))}
+            <Link href="/watchlists" className={styles.agentCta}>
+              <span className={styles.agentCtaStar}><ScoutGlyph size={20} /></span>
+              <span className={styles.agentCtaTitle}>Not seeing it?</span>
+              <span className={styles.agentCtaSub}>
+                The pool is what agents already found. Deploy your own to hunt
+                for exactly what you want.
+              </span>
+              <span className={styles.agentCtaGo}>Send an agent hunting →</span>
+            </Link>
           </div>
           {canLoadMore && (
             <button

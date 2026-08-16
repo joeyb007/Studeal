@@ -921,3 +921,86 @@
 .skeletonLineShort { width: 55%; }
 @keyframes skelShimmer { from { background-position: 120% 0; } to { background-position: -60% 0; } }
 @media (prefers-reduced-motion: reduce) { .skeletonCard, .skeletonThumb, .skeletonLine { animation: none; } }
+
+/* Scout narrating the pool load: star pops in, pulses; lines fade through. */
+
+.scoutLoading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 64px 20px;
+  color: var(--text-secondary);
+}
+
+.scoutLoadingStar {
+  display: inline-flex;
+  color: var(--accent);
+  animation: scoutPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    scoutPulse 1.6s ease-in-out 0.45s infinite;
+}
+
+.scoutLoadingLine {
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  animation: scoutLineFade 2.2s ease both;
+}
+
+@keyframes scoutPop {
+  from { transform: scale(0.2); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes scoutPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.18); opacity: 0.75; }
+}
+
+@keyframes scoutLineFade {
+  0% { opacity: 0; transform: translateY(3px); }
+  14%, 82% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scoutLoadingStar, .scoutLoadingLine { animation: none; }
+}
+
+/* Agent CTA: last tile of the grid, native card footprint, quiet until hover. */
+
+.agentCta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  min-height: 220px;
+  border: 1px dashed var(--border, rgba(128, 128, 128, 0.35));
+  border-radius: 12px;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+
+.agentCta:hover { border-color: var(--accent); }
+
+.agentCtaStar { color: var(--accent); }
+
+.agentCtaTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.agentCtaSub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.agentCtaGo {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  margin-top: 4px;
+}

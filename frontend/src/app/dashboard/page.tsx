@@ -272,6 +272,10 @@ function DashboardPageInner() {
   const isEmpty = inSearchMode
     ? searchResults.length === 0 && !searchLoading
     : !loading && listings.length === 0;
+  // First paint has nothing to show yet: isEmpty is false (still loading) but
+  // the grid would render with only the CTA tile in it, orphaned in cell one,
+  // plus a "Load more" for rows that aren't there. Spinner alone until content.
+  const awaitingFirstPage = !inSearchMode && loading && listings.length === 0;
 
   return (
     <main className={`${styles.main} pageEnter`}>
@@ -372,7 +376,7 @@ function DashboardPageInner() {
             </p>
           )}
         </div>
-      ) : (
+      ) : awaitingFirstPage ? null : (
         <>
           <div className={styles.poolGrid} style={searchLoading ? { display: "none" } : undefined}>
             {displayed.map((listing, i) => (

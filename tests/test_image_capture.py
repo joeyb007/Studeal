@@ -133,3 +133,37 @@ async def test_capture_against_fixture_page():
         "https://www.kijiji.ca/v-chair/toronto/aeron/1001":
             "https://media.kijiji.ca/api/v1/x/images/aa?rule=kijijica-400-webp"
     }
+
+
+def test_srcset_fallback_when_src_empty():
+    # openbox probe 2026-08-15: product img has empty src, URL only in srcset.
+    from dealbot.agents.image_capture import pick_image_url
+    cand = {"currentSrc": "", "srcAttr": "", "naturalWidth": 0,
+            "srcset": "//openbox.ca/cdn/shop/files/x_200x.jpg 200w, //openbox.ca/cdn/shop/files/x_400x.jpg 400w"}
+    assert pick_image_url(cand, ("openbox.ca",)) == "https://openbox.ca/cdn/shop/files/x_200x.jpg"
+
+
+def test_largest_area_beats_badge():
+    # The 54px 'refurbished' badge has a src; the 300px product shot only a
+    # srcset. Area ordering must pick the product.
+    from dealbot.agents.image_capture import pick_card_image
+    badge = {"currentSrc": "", "srcAttr": "https://cdn.shopify.com/s/files/badge-refurbished.png",
+             "naturalWidth": 0, "srcset": "", "w": 54, "h": 48}
+    product = {"currentSrc": "", "srcAttr": "",
+               "naturalWidth": 0, "srcset": "//openbox.ca/cdn/shop/files/prod_200x.jpg 200w", "w": 300, "h": 300}
+    hosts = ("cdn.shopify.com", "openbox.ca")
+    assert pick_card_image([badge, product], hosts) == "https://openbox.ca/cdn/shop/files/prod_200x.jpg"
+
+
+def test_pick_card_image_falls_back_in_document_order():
+    from dealbot.agents.image_capture import pick_card_image
+    a = {"currentSrc": "", "srcAttr": "https://media.kijiji.ca/a.jpg", "naturalWidth": 0, "srcset": "", "w": 0, "h": 0}
+    b = {"currentSrc": "", "srcAttr": "https://media.kijiji.ca/b.jpg", "naturalWidth": 0, "srcset": "", "w": 0, "h": 0}
+    assert pick_card_image([a, b], ("media.kijiji.ca",)) == "https://media.kijiji.ca/a.jpg"
+
+
+def test_newegg_spec_present():
+    from dealbot.agents.image_capture import spec_for
+    spec = spec_for("newegg_ca")
+    assert spec is not None and spec.href_pattern == "/p/"
+    assert ".neweggimages.com" in spec.cdn_hosts

@@ -78,27 +78,63 @@ def _usable(url: str, hosts: tuple[str, ...]) -> bool:
     return url.startswith(("http://", "https://")) and _host_allowed(url, hosts)
 
 
-def pick_image_url(candidate: dict, hosts: tuple[str, ...]) -> str | None:
-    """Choose the trustworthy URL from one card's img candidate, or None.
+def _normalize_url(url: str) -> str:
+    # Shopify (openbox) emits protocol-relative srcset URLs (//host/path).
+    return "https:" + url if url.startswith("//") else url
 
-    Priority: a genuinely LOADED image's currentSrc (resolves srcset/lazy),
-    else the raw src attribute. Both must pass the CDN whitelist — that is
-    what rejects eBay's ebaystatic placeholder graphic.
+
+def _first_srcset_url(srcset: str) -> str:
+    # "url1 200w, url2 400w" → url1. Enough for a thumbnail.
+    first = srcset.split(",")[0].strip()
+    return _normalize_url(first.split()[0]) if first else ""
+
+
+def pick_image_url(candidate: dict, hosts: tuple[str, ...]) -> str | None:
+    """Choose the trustworthy URL from one card img candidate, or None.
+
+    Priority per img: a genuinely LOADED currentSrc (resolves srcset/lazy),
+    else the raw src attribute, else the first srcset URL (probe 2026-08-15:
+    openbox product imgs carry empty src and real URLs only in srcset). All
+    must pass the CDN whitelist — that is what rejects eBay's ebaystatic
+    placeholder graphic.
     """
-    current = candidate.get("currentSrc") or ""
-    src = candidate.get("srcAttr") or ""
+    current = _normalize_url(candidate.get("currentSrc") or "")
+    src = _normalize_url(candidate.get("srcAttr") or "")
+    srcset_url = _first_srcset_url(candidate.get("srcset") or "")
     width = candidate.get("naturalWidth") or 0
     if width >= _MIN_LOADED_WIDTH and _usable(current, hosts):
         return current
     if _usable(src, hosts):
         return src
+    if _usable(srcset_url, hosts):
+        return srcset_url
+    return None
+
+
+def pick_card_image(imgs: list[dict], hosts: tuple[str, ...]) -> str | None:
+    """Best image among a card's candidates: largest rendered area first.
+
+    Badges and icons render small (openbox 'refurbished' badge: 54px) while
+    product shots dominate the card (300px) — area ordering keeps the wrong
+    image out even when the badge is the only img with a src attribute.
+    Document order breaks ties, preserving the old first-img behavior.
+    """
+    ordered = sorted(
+        imgs, key=lambda im: -((im.get("w") or 0) * (im.get("h") or 0))
+    )
+    for im in ordered:
+        url = pick_image_url(im, hosts)
+        if url is not None:
+            return url
     return None
 
 
 # Climbs each card anchor to the smallest ancestor still holding exactly ONE
 # distinct card-anchor href (never enters a multi-card region), then reports
-# that container's first img. Mirrors scripts/probe_listing_images.py CARD_JS,
-# which validated this association 94/94.
+# the container's img candidates (up to 4) with attrs + layout size. All
+# policy stays Python-side. Mirrors scripts/probe_listing_images.py CARD_JS
+# (validated 94/94); multi-img + srcset added after the 2026-08-15 probe
+# showed openbox product shots live in srcset with an empty src.
 _CAPTURE_JS = """
 ([sel, maxCards]) => {
   const seen = new Set();
@@ -120,14 +156,16 @@ _CAPTURE_JS = """
       container = p;
     }
 
-    const img = container.querySelector('img');
-    if (img) {
-      out.push({
-        href: abs,
-        currentSrc: img.currentSrc || '',
-        srcAttr: img.getAttribute('src') || '',
-        naturalWidth: img.naturalWidth || 0,
-      });
+    const imgs = [...container.querySelectorAll('img')].slice(0, 4).map(im => ({
+      currentSrc: im.currentSrc || '',
+      srcAttr: im.getAttribute('src') || '',
+      srcset: im.getAttribute('srcset') || '',
+      naturalWidth: im.naturalWidth || 0,
+      w: im.offsetWidth || 0,
+      h: im.offsetHeight || 0,
+    }));
+    if (imgs.length) {
+      out.push({ href: abs, imgs });
     }
     if (out.length >= maxCards) break;
   }
@@ -155,7 +193,7 @@ async def capture_card_images(
 
     image_map: dict[str, str] = {}
     for cand in candidates or []:
-        url = pick_image_url(cand, spec.cdn_hosts)
+        url = pick_card_image(cand.get("imgs") or [], spec.cdn_hosts)
         if url is None:
             continue
         try:

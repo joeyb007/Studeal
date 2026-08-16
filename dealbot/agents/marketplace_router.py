@@ -205,6 +205,11 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         build_search_url=lambda q: (
             f"https://www.newegg.ca/p/pl?d={quote_plus(q + ' refurbished')}"
         ),
+        # Probed 2026-08-15: product cards at /<slug>/p/<sku>, thumbs on
+        # c1.neweggimages.com. "/p/" also matches related-search links, but
+        # their containers hold no imgs so capture skips them.
+        listing_href_pattern="/p/",
+        image_cdn_hosts=(".neweggimages.com",),
     ),
     MarketplaceConfig(
         key="openbox_ca",

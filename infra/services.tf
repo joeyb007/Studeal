@@ -27,8 +27,12 @@ locals {
     { name = "FLEET_MAX_CONCURRENT_HUNTS", value = "4" },
     { name = "AGENT_LANE_DEADLINE_S", value = "420" },
     { name = "HUNT_BROWSE_DEADLINE_S", value = "1200" },
-    # Spend guards + freshness + email throttle. LLM budget raised for launch
-    # week (Bedrock burns AWS credits); drop back to 25 after.
+    # Spend guards + freshness + email throttle. LLM is ~96% of credit burn
+    # (2026-08-16 Cost Explorer: Haiku $198 + Sonnet $93 of $303 total; all
+    # infra ~$23/mo, AgentCore browsers $1.72). Credits expire 2028-08-31, so
+    # $416/mo is the break-even pace and the studeal-gross-burn budget alerts
+    # against it. Raised for launch (headroom for demo + first traffic); drop
+    # to 25 once traffic settles, which lands typical usage under the pace.
     { name = "DAILY_LLM_BUDGET_USD", value = "150" },
     { name = "DAILY_BROWSER_SESSION_CAP", value = "300" },
     # Residential proxy for FB lanes (agentcore + prepaid DataImpulse). The

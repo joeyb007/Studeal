@@ -231,3 +231,41 @@ async def test_llm_spend_is_attributed_by_stage():
     assert by_stage["other:haiku"] == pytest.approx(1.0)
     # Sorted biggest-first so the readout leads with what to cut.
     assert list(by_stage)[0] == "rank:sonnet"
+
+
+@pytest.mark.asyncio
+async def test_user_daily_hunt_cap_blocks_delete_recreate_loop(monkeypatch):
+    """The agent-count limit caps agents, not hunts. Deleting and recreating an
+    agent yields a fresh first hunt, which always runs live — so without a
+    per-user cap one account could loop that and spend the GLOBAL llm budget."""
+    monkeypatch.setattr(costs, "USER_DAILY_HUNT_CAP_FREE", 2)
+    monkeypatch.setattr(costs, "USER_DAILY_HUNT_CAP_PRO", 10)
+    meter = SpendMeter(_FakeRedis())
+
+    assert await meter.user_hunt_cap_ok(7, is_pro=False) is True
+    await meter.record_user_hunt(7)
+    await meter.record_user_hunt(7)
+    assert await meter.user_hunt_cap_ok(7, is_pro=False) is False
+    # Pro gets its own, larger allowance, and caps are per-user.
+    assert await meter.user_hunt_cap_ok(7, is_pro=True) is True
+    assert await meter.user_hunt_cap_ok(8, is_pro=False) is True
+
+
+@pytest.mark.asyncio
+async def test_user_hunt_cap_fails_open():
+    meter = SpendMeter(_BrokenRedis())
+    assert await meter.user_hunt_cap_ok(1, is_pro=False) is True
+
+
+@pytest.mark.asyncio
+async def test_exempt_accounts_bypass_the_hunt_cap(monkeypatch):
+    """The owner/demo account must never be rate-limited by its own product."""
+    monkeypatch.setattr(costs, "USER_DAILY_HUNT_CAP_FREE", 1)
+    monkeypatch.setattr(costs, "HUNT_CAP_EXEMPT_EMAILS", {"owner@studeal.site"})
+    meter = SpendMeter(_FakeRedis())
+
+    await meter.record_user_hunt(3)
+    assert await meter.user_hunt_cap_ok(3, is_pro=False) is False
+    assert await meter.user_hunt_cap_ok(
+        3, is_pro=False, email="Owner@Studeal.site",   # case-insensitive
+    ) is True

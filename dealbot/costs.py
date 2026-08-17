@@ -45,6 +45,18 @@ BROWSERBASE_MONTHLY_SESSION_CAP = int(os.environ.get("BROWSERBASE_MONTHLY_SESSIO
 # fail honestly and the free agentcore sites carry the feed.
 PROXY_MONTHLY_SESSION_CAP = int(os.environ.get("PROXY_MONTHLY_SESSION_CAP", "600"))
 PROXY_DAILY_SESSION_CAP = int(os.environ.get("PROXY_DAILY_SESSION_CAP", "30"))
+# Live hunts per USER per day. The agent-count limit bounds how many agents
+# exist, not how many hunts they cause: deleting and recreating an agent is a
+# fresh "first hunt", which always runs live, so the loop is unbounded without
+# this. The LLM budget is global, so one user could otherwise spend everyone's.
+USER_DAILY_HUNT_CAP_FREE = int(os.environ.get("USER_DAILY_HUNT_CAP_FREE", "3"))
+USER_DAILY_HUNT_CAP_PRO = int(os.environ.get("USER_DAILY_HUNT_CAP_PRO", "40"))
+# Accounts the cap never applies to (owner/demo). Comma-separated emails.
+HUNT_CAP_EXEMPT_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("HUNT_CAP_EXEMPT_EMAILS", "").split(",")
+    if e.strip()
+}
 INTERACTIVE_BUDGET_FACTOR = 1.5
 
 _LEDGER_TTL_S = 2 * 24 * 3600
@@ -207,6 +219,31 @@ class SpendMeter:
             return (await self.bb_sessions_month()) < BROWSERBASE_MONTHLY_SESSION_CAP
         except Exception:
             logger.warning("spend meter: bb month check failed — failing open", exc_info=True)
+            return True
+
+    async def record_user_hunt(self, user_id: int) -> None:
+        try:
+            key = _day_key(f"spend:hunts:user:{user_id}")
+            await self._client.incr(key)
+            await self._client.expire(key, _LEDGER_TTL_S)
+        except Exception:
+            logger.warning("spend meter: user hunt record failed", exc_info=True)
+
+    async def user_hunts_today(self, user_id: int) -> int:
+        raw = await self._client.get(_day_key(f"spend:hunts:user:{user_id}"))
+        return 0 if raw is None else int(raw.decode() if isinstance(raw, bytes) else raw)
+
+    async def user_hunt_cap_ok(
+        self, user_id: int, *, is_pro: bool, email: str | None = None,
+    ) -> bool:
+        """Per-user daily live-hunt budget. Fails OPEN like every guard."""
+        if email and email.strip().lower() in HUNT_CAP_EXEMPT_EMAILS:
+            return True
+        cap = USER_DAILY_HUNT_CAP_PRO if is_pro else USER_DAILY_HUNT_CAP_FREE
+        try:
+            return (await self.user_hunts_today(user_id)) < cap
+        except Exception:
+            logger.warning("spend meter: user hunt check failed — failing open", exc_info=True)
             return True
 
     async def record_proxy_session(self) -> None:

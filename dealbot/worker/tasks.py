@@ -117,6 +117,23 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         )
         return {"watchlist_id": watchlist_id, "skipped": "budget"}
 
+    # Per-user daily hunt budget. The agent-count limit caps how many agents
+    # exist, not how many hunts they cause: delete-and-recreate is a brand-new
+    # agent, whose first hunt always runs live, so one user could loop that
+    # indefinitely and spend the GLOBAL llm budget on their own. Counted here
+    # (not at creation) because this is the only path that actually browses.
+    if user is not None:
+        meter = build_meter()
+        if not await meter.user_hunt_cap_ok(
+            user.id, is_pro=bool(user.is_pro), email=user.email,
+        ):
+            logger.warning(
+                "research_for_agent: user %d hit the daily hunt cap — skipping wl=%d",
+                user.id, watchlist_id,
+            )
+            return {"watchlist_id": watchlist_id, "skipped": "user_hunt_cap"}
+        await meter.record_user_hunt(user.id)
+
     # 2. Capacity gate — BEFORE any row exists, so a requeue leaves no orphan.
     # Governor errors fail open: a Redis blip must not stop the fleet.
     governor = _maybe_governor()

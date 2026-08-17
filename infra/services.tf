@@ -42,6 +42,13 @@ locals {
     { name = "AGENTCORE_PROXY_SECRET_ARN", value = data.aws_secretsmanager_secret.proxy.arn },
     { name = "PROXY_MONTHLY_SESSION_CAP", value = "600" },
     { name = "PROXY_DAILY_SESSION_CAP", value = "30" },
+    # Per-user daily live-hunt cap. Free tier is one: the agent-count limit
+    # bounds agents, not hunts, and delete-and-recreate mints a fresh first
+    # hunt (which always runs live), so without this one account could loop
+    # that and spend the global LLM budget. Owner account is exempt.
+    { name = "USER_DAILY_HUNT_CAP_FREE", value = "3" },
+    { name = "USER_DAILY_HUNT_CAP_PRO", value = "40" },
+    { name = "HUNT_CAP_EXEMPT_EMAILS", value = "josephbarbosa416@gmail.com" },
     # Hard monthly cap on browserbase (cancelled 2026-08-16; kept as a guard
     # in case a lane is ever re-pinned there). Nothing pins it now.
     { name = "BROWSERBASE_MONTHLY_SESSION_CAP", value = "500" },

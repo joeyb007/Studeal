@@ -226,12 +226,27 @@ def _ground_offers(
     if not grounded:
         return offers
 
+    # Grounding alone only proves the URL exists on the page — and a SERP
+    # links to itself through pagination, breadcrumbs and facets, so a search
+    # URL passes and ships as a "listing" whose View button lands the user
+    # back on a result grid (kijiji, 2026-08-17). When the marketplace
+    # declares what a listing href looks like (the same pattern thumbnail
+    # capture keys on), require it: a real item URL matches, navigation does
+    # not. Sites without a pattern keep the old behaviour.
+    from dealbot.agents.marketplace_router import CONFIG_BY_KEY
+
+    cfg = CONFIG_BY_KEY.get(marketplace)
+    item_pattern = cfg.listing_href_pattern if cfg else None
+
     kept: list[Offer] = []
     dropped = 0
     for offer in offers:
         try:
             key = canonicalize_url(offer.url, marketplace)
         except Exception:
+            dropped += 1
+            continue
+        if item_pattern and item_pattern not in offer.url:
             dropped += 1
             continue
         if key in grounded:

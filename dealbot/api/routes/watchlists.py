@@ -161,6 +161,13 @@ async def create_watchlist(
             expires_at=_expiry(),
             context=body.context.model_dump_json(),
             intent_embedding=intent_embedding or None,
+            # Claim the cadence slot NOW, because the first hunt is dispatched
+            # below and the scheduler ticks every 5 minutes treating a NULL
+            # last_hunt_at as due. Without this, every new agent hunted twice
+            # (2026-08-17: hunts 391/392 on wl 19, 393/394 on wl 20, ~5 min
+            # apart, identical work, double the LLM spend). The hunt task
+            # overwrites this with its own started_at when it runs.
+            last_hunt_at=datetime.now(timezone.utc),
         )
         session.add(watchlist)
         await session.commit()

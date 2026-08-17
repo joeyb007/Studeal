@@ -740,7 +740,16 @@ export default function AgentPanel({
       )}
 
       {/* ================= ALL MATCHES ================= */}
-      {tab === "all" && (
+      {tab === "all" && firstHuntPending && (
+        <div className={styles.view}>
+          <SayLine
+            lead="Still out on the first sweep. "
+            dim="Every match lands here once it reports back."
+          />
+        </div>
+      )}
+
+      {tab === "all" && !firstHuntPending && (
         <div className={styles.view}>
           {pool === null && <p className={styles.loading}>Pulling everything I&apos;ve seen…</p>}
           {pool !== null && (() => {

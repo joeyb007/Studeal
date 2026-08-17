@@ -56,6 +56,12 @@ class MarketplaceConfig:
     # the CDN a product image may live on (suffix match). None pattern = site
     # not yet probed, capture skipped entirely.
     listing_href_pattern: str | None = None
+    # Substring that disqualifies an href even when the pattern matches.
+    # Some sites reuse the listing prefix for navigation: newegg products
+    # are /p/<sku> but its related-search links are /p/pl?d=... , and a
+    # plain substring can't say "/p/ but not /p/pl" (2026-08-17: every
+    # /p/ anchor on a newegg SERP was a related search, 3% img coverage).
+    listing_href_exclude: str | None = None
     image_cdn_hosts: tuple[str, ...] = ()
     # Browser backend override (probe 2026-08-14, scripts/probe_agentcore.py):
     # 7 of 10 sites serve full SERPs to AgentCore's bare AWS IP; bestbuy and
@@ -182,6 +188,7 @@ CURATED_MARKETPLACES: list[MarketplaceConfig] = [
         # c1.neweggimages.com. "/p/" also matches related-search links, but
         # their containers hold no imgs so capture skips them.
         listing_href_pattern="/p/",
+        listing_href_exclude="/p/pl",
         image_cdn_hosts=(".neweggimages.com",),
     ),
     MarketplaceConfig(

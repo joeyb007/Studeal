@@ -167,3 +167,20 @@ def test_newegg_spec_present():
     spec = spec_for("newegg_ca")
     assert spec is not None and spec.href_pattern == "/p/"
     assert ".neweggimages.com" in spec.cdn_hosts
+
+
+def test_href_exclude_filters_navigation_links():
+    """Some sites reuse the listing prefix for navigation: newegg products are
+    /p/<sku> while its related-search links are /p/pl?d=... — every /p/ anchor
+    on a newegg SERP was a related search (2026-08-17, 3% image coverage)."""
+    spec = spec_for("newegg_ca")
+    assert spec is not None
+    assert spec.href_pattern == "/p/"
+    assert spec.href_exclude == "/p/pl"
+
+
+def test_marketplaces_without_exclusion_keep_a_plain_selector():
+    for key in ("kijiji", "ebay", "craigslist"):
+        spec = spec_for(key)
+        assert spec is not None
+        assert spec.href_exclude is None

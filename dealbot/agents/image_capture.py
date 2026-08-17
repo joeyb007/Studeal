@@ -47,6 +47,7 @@ _MAX_CARDS = 300
 class ImageCaptureSpec:
     href_pattern: str
     cdn_hosts: tuple[str, ...]
+    href_exclude: str | None = None
 
 
 def spec_for(marketplace: str) -> ImageCaptureSpec | None:
@@ -58,6 +59,7 @@ def spec_for(marketplace: str) -> ImageCaptureSpec | None:
     return ImageCaptureSpec(
         href_pattern=cfg.listing_href_pattern,
         cdn_hosts=cfg.image_cdn_hosts,
+        href_exclude=cfg.listing_href_exclude,
     )
 
 
@@ -185,6 +187,9 @@ async def capture_card_images(
     could not be captured.
     """
     selector = f'a[href*="{spec.href_pattern}"]'
+    if spec.href_exclude:
+        # Excluded up front so navigation links never consume the card budget.
+        selector += f':not([href*="{spec.href_exclude}"])'
     try:
         candidates = await page.evaluate(_CAPTURE_JS, [selector, _MAX_CARDS])
     except Exception as exc:

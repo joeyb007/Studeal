@@ -111,6 +111,28 @@ class Extractor:
         - Malformed LLM output → that chunk yields nothing; others still land.
         """
         chunks = chunk_snapshot_text(_clip_hrefs(snap.text))
+        # Extraction is the single largest line in the LLM bill (51% of tagged
+        # spend, 2026-08-17 per-stage breakdown). A chunk with no price token
+        # anywhere in it cannot yield an Offer — the model is required to skip
+        # cards without a positive price — so sending page chrome (nav, footer,
+        # filter rails) to the LLM buys nothing. Cheap, provably-safe filter:
+        # drop only chunks with ZERO price-shaped text, never a chunk that
+        # might hold a listing.
+        # Self-validating: only trust the price regex on a page where it has
+        # already proved it understands the format. If the WHOLE snapshot has
+        # no price match (prices drawn as images, an unfamiliar currency
+        # layout, a test fixture), the regex knows nothing about this site and
+        # filtering would silently drop real listings — so it filters nothing.
+        if len(chunks) > 1 and _PRICE_TOKEN_RE.search(snap.text):
+            priced = [c for c in chunks if _PRICE_TOKEN_RE.search(c)]
+            if priced:
+                skipped = len(chunks) - len(priced)
+                if skipped:
+                    logger.info(
+                        "extractor: skipped %d/%d priceless chunk(s) on %s",
+                        skipped, len(chunks), marketplace,
+                    )
+                chunks = priced
         results = await asyncio.gather(
             *(self._extract_chunk(chunk, snap, marketplace, spec) for chunk in chunks),
             return_exceptions=True,
@@ -240,6 +262,7 @@ def _ground_offers(
 
     cfg = CONFIG_BY_KEY.get(marketplace)
     item_pattern = cfg.listing_href_pattern if cfg else None
+    item_exclude = cfg.listing_href_exclude if cfg else None
 
     kept: list[Offer] = []
     dropped = 0
@@ -250,6 +273,9 @@ def _ground_offers(
             dropped += 1
             continue
         if item_pattern and item_pattern not in offer.url:
+            dropped += 1
+            continue
+        if item_exclude and item_exclude in offer.url:
             dropped += 1
             continue
         if key in grounded:
@@ -263,6 +289,10 @@ def _ground_offers(
         )
     return kept
 
+
+# Any price-shaped token: $12, 12.99, C $40. Deliberately loose — a false
+# positive costs one LLM call, a false negative silently loses listings.
+_PRICE_TOKEN_RE = re.compile(r"[$€£]\s?\d|\d+\.\d{2}\b|\bC \$")
 
 _PRICE_NUM_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)")
 _CURRENCY_HINTS: tuple[tuple[str, str], ...] = (

@@ -427,3 +427,43 @@ def test_legitimate_prices_survive():
     assert _is_discount_decoy("Golf club set $200 Toronto", 200.0) is False
     # Cents-precision prices are never treated as decoys.
     assert _is_discount_decoy("SAVE $199.99 today", 199.99) is False
+
+
+@pytest.mark.asyncio
+async def test_priceless_chunks_are_skipped_when_the_page_has_prices():
+    """Extraction is the largest LLM line item (51% of tagged spend). A chunk
+    with no price token cannot yield an Offer, so page chrome is not worth a
+    call — but only filter where the regex has proved it reads this site."""
+    from dealbot.agents.workers import extractor as ex
+
+    seen: list[str] = []
+
+    class _LLM:
+        async def complete(self, messages, **kw):
+            seen.append(messages[1]["content"])
+            return type("R", (), {"content": '{"offers": []}'})()
+
+    # Two chunks' worth of text: one priced, one pure chrome.
+    text = ("$19.99 real listing here " * 400) + ("navigation footer help " * 400)
+    snap = _snap(text=text)
+    await ex.Extractor(_LLM()).extract_from_snapshot(snap, "kijiji", _spec())
+    assert seen, "at least the priced chunk must be extracted"
+    assert all("$" in c or "C $" in c for c in seen), "chrome-only chunks skipped"
+
+
+@pytest.mark.asyncio
+async def test_no_filtering_when_the_page_shows_no_recognisable_price():
+    """Prices as images / unfamiliar layout: the regex knows nothing here, so
+    filtering would silently drop real listings. It must filter nothing."""
+    from dealbot.agents.workers import extractor as ex
+
+    calls = {"n": 0}
+
+    class _LLM:
+        async def complete(self, messages, **kw):
+            calls["n"] += 1
+            return type("R", (), {"content": '{"offers": []}'})()
+
+    snap = _snap(text="listing card without any parseable price " * 900)
+    await ex.Extractor(_LLM()).extract_from_snapshot(snap, "kijiji", _spec())
+    assert calls["n"] >= 2, "every chunk still extracted when prices are unreadable"

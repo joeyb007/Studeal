@@ -32,7 +32,15 @@ from dealbot.schemas import WatchlistContext
 
 logger = logging.getLogger(__name__)
 
-GATE_SIMILARITY_TAU = float(os.environ.get("GATE_SIMILARITY_TAU", "0.50"))
+# τ=0.50 (distance < 0.50) admitted anything: measured against prod vectors
+# 2026-08-17, a golf-clubs agent's nearest pool rows were dining tables and
+# patio sets at distance 0.302-0.340, ten of which satisfied the gate and
+# cancelled the hunt. Titan distances sit in a narrow band regardless of
+# relevance (genuine laptops for a laptops agent: 0.234-0.287), so the bands
+# overlap and no cutoff is a clean separator — this one is tightened to sit
+# just under the observed junk floor, and the first hunt of any watchlist now
+# bypasses the gate entirely (see worker/tasks.py).
+GATE_SIMILARITY_TAU = float(os.environ.get("GATE_SIMILARITY_TAU", "0.72"))
 GATE_SUFFICIENCY_K = int(os.environ.get("GATE_SUFFICIENCY_K", "10"))
 
 

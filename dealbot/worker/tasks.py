@@ -85,10 +85,21 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
     # governor slot. Pro always hunts live; freshness is the paid feature.
     # The house user is pro, so house seeds always hunt fully — they are
     # the pump that keeps the pool fed.
+    # A watchlist's FIRST hunt always runs live, whatever the pool holds. The
+    # gate reads pure vector distance, and in this embedding space distance
+    # does not separate relevant from irrelevant well enough to decide "we
+    # already have this": measured 2026-08-17, a golf-clubs agent's nearest
+    # pool rows were dining tables at 0.302-0.340 while a laptops agent's
+    # genuine laptops sat at 0.234-0.287 — overlapping ranges, so ten patio
+    # sets satisfied the gate and the agent never hunted. Beyond being wrong,
+    # it breaks the product's promise: you deploy an agent, it goes hunting.
+    # Cost savings still apply to every REFRESH after that.
     candidates: list = []
     if user is not None and not user.is_pro:
+        # Always gather: a thin pool match still rides along as an alert
+        # candidate below. Only the SKIP is gated on this being a refresh.
         candidates = await pool_candidates(watchlist_id)
-        if len(candidates) >= GATE_SUFFICIENCY_K:
+        if watchlist.last_hunt_at is not None and len(candidates) >= GATE_SUFFICIENCY_K:
             return await _serve_from_pool(watchlist_id, candidates)
 
     # 2a. Spend guards — the break-glass pause and the daily LLM budget both

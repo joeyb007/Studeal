@@ -9,6 +9,7 @@ and the failure path.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
@@ -241,11 +242,50 @@ def _pool_listing(n: int):
 
 
 @pytest.mark.asyncio
+async def test_first_hunt_ignores_a_sufficient_pool(rig):
+    """A brand-new agent always hunts live. Vector distance alone can't tell
+    "we already have this" from "nothing here matches" (golf-clubs agent was
+    handed dining tables at 0.302 and never hunted, 2026-08-17), and skipping
+    breaks the promise: you deploy an agent, it goes hunting."""
+    factory, fake, wl_id, tasks_mod, monkeypatch = rig
+    from dealbot.db.models import Listing as L
+
+    async with factory() as s:
+        listings = [_pool_listing(i) for i in range(10)]   # >= k
+        s.add_all(listings)
+        await s.commit()
+        ids = [l.id for l in listings]
+
+    async def _candidates(watchlist_id, *, limit=50):
+        async with factory() as s:
+            return list((await s.execute(
+                select(L).where(L.id.in_(ids))
+            )).scalars().all())
+
+    browsed = {"called": False}
+
+    async def _browse(context, events=None):
+        browsed["called"] = True
+        return []
+
+    monkeypatch.setattr(tasks_mod, "pool_candidates", _candidates)
+    monkeypatch.setattr(tasks_mod, "run_hunt", _browse)
+    await tasks_mod._run_hunt_and_persist(wl_id)
+    assert browsed["called"] is True, "first hunt must browse despite a full pool"
+
+
 async def test_sufficient_pool_serves_a_cached_hunt(rig):
     """≥ k novel fresh matches → no browsing: run_hunt must not be called,
     the hunt closes as "cached", and alerts still fire on the novel rows."""
     factory, fake, wl_id, tasks_mod, monkeypatch = rig
     from dealbot.db.models import Listing as L
+    from dealbot.db.models import Watchlist as W
+
+    # The gate only governs REFRESHES — a first hunt always runs live.
+    async with factory() as s:
+        wl = await s.get(W, wl_id)
+        wl.last_hunt_at = datetime.now(timezone.utc) - timedelta(days=1)
+        await s.commit()
 
     async with factory() as s:
         listings = [_pool_listing(i) for i in range(10)]

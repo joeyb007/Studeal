@@ -46,7 +46,11 @@ def _listing(n: int) -> Listing:
 def test_constants_default_to_measured_values():
     from dealbot.recsys.gate import GATE_SIMILARITY_TAU, GATE_SUFFICIENCY_K
 
-    assert GATE_SIMILARITY_TAU == 0.50, "measured in Titan MM space 2026-08-11 — change via env only"
+    # Re-measured against prod vectors 2026-08-17: at 0.50 a golf-clubs
+    # agent's nearest pool rows were dining tables (0.302-0.340) and ten of
+    # them cancelled its hunt. Genuine laptops for a laptops agent sat at
+    # 0.234-0.287, so the bands overlap — this sits under the junk floor.
+    assert GATE_SIMILARITY_TAU == 0.72, "measured in Titan MM space — change via env only"
     assert GATE_SUFFICIENCY_K == 10
 
 

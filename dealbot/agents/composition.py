@@ -299,7 +299,7 @@ async def _run_one_lane(
     done_reason = "error"
     session_opened = False
 
-    async def _lane_work() -> None:
+    async def _lane_work(attempt: int = 1) -> None:
         nonlocal pages, done_reason, session_opened
         lane_cfg = CONFIG_BY_KEY.get(target.marketplace)
         async with build_session_from_env(
@@ -326,6 +326,26 @@ async def _run_one_lane(
                 len(result.urls_visited), result.turns_used,
                 result.stop_reason,
             )
+            # Auth-wall retry on a fresh residential exit. Cheap pools carry
+            # some already-flagged IPs, and the exit is chosen per session
+            # (random sticky port), so the same lane can wall on one IP and
+            # browse fine on the next — observed 2026-08-17, FB lanes in one
+            # hunt split between "login required" and 55 extracted offers.
+            # Retrying INSIDE this session would reuse the burnt IP, so the
+            # retry re-enters _lane_work to open a new one.
+            if (
+                attempt == 1
+                and lane_cfg is not None
+                and lane_cfg.residential_proxy
+                and result.done_reason
+                and "auth_wall" in result.done_reason.lower()
+            ):
+                logger.info(
+                    "run_hunt[%s]: %s auth_wall — retrying on a fresh exit IP",
+                    query, target.marketplace,
+                )
+                return await _lane_work(attempt=2)
+
             # No-results broadening: verbose query variants can
             # legitimately match nothing on thin marketplaces (craigslist
             # AND-matches every term). One retry with the spec's core

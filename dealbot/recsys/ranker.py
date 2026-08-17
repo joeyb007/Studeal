@@ -167,9 +167,29 @@ async def _cohere_baseline(
 
 
 def _default_llm() -> LLMClient:
-    from dealbot.llm.openai_client import OpenAIClient
+    """Honour LLM_BACKEND like every other call site.
 
-    return OpenAIClient()
+    This used to hardcode OpenAIClient. On the bedrock backend there is no
+    OPENAI_API_KEY, so every ranking window died on `Illegal header value
+    b'Bearer '` before a request left the process — and because a failed
+    window keeps its listings at score 0 rather than dropping them, total
+    failure was indistinguishable from "nothing matches". Prod ranked actual
+    laptops 0.00 for a Laptops agent (2026-08-17).
+    """
+    backend = os.environ.get("LLM_BACKEND", "openai")
+    if backend == "bedrock":
+        from dealbot.llm.bedrock_client import BedrockClient
+
+        # Ranking is high-volume structured scoring: the cheap tier, same as
+        # extraction (BEDROCK_EXTRACT_MODEL default).
+        return BedrockClient(model=os.environ.get("BEDROCK_EXTRACT_MODEL"))
+    if backend == "openai":
+        from dealbot.llm.openai_client import OpenAIClient
+
+        return OpenAIClient()
+    from dealbot.llm.ollama import OllamaClient
+
+    return OllamaClient()
 
 
 async def rank(

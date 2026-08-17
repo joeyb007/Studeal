@@ -969,6 +969,12 @@
 /* Agent CTA: last tile of the grid, native card footprint, quiet until hover. */
 
 .agentCta {
+  /* Trails the last card, so it usually lands alone on a new row. Span the
+     row and centre it there rather than leaving it stranded in column one. */
+  grid-column: 1 / -1;
+  justify-self: center;
+  max-width: 360px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;

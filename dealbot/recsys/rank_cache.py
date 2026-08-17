@@ -78,6 +78,14 @@ async def recompute_rankings(watchlist_id: int) -> int:
         if candidates and context is not None
         else []
     )
+    # Retrieval always returns SOMETHING: nearest-neighbour has no concept of
+    # "nothing here matches", so an agent whose item is absent from the pool
+    # gets handed the 150 least-unrelated listings. The ranker catches this
+    # correctly and scores them 0, but persisting zeros makes them durable
+    # rows that downstream views treat as results (a golf-clubs agent showed
+    # office chairs and dining tables, 2026-08-17). A zero is the ranker
+    # saying "not a match" — respect it and store an honest empty instead.
+    ranked = [entry for entry in ranked if entry.score > 0]
 
     now = datetime.now(timezone.utc)
     async with get_async_session() as session:

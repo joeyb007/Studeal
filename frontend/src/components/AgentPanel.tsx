@@ -496,7 +496,13 @@ export default function AgentPanel({
 
   // A brand-new agent shows its first sweep working, never instant answers
   // scraped off other agents' pool: picks and market reveal after hunt one.
-  const firstHuntPending = agent.last_hunt_at === null;
+  // last_hunt_at stamps at hunt START (scheduler/tasks set it to started_at),
+  // so it alone flips false the moment a sweep dispatches — the agent would
+  // advertise picks before it had found anything. Stay pending until a sweep
+  // has actually produced rankings.
+  const firstHuntPending =
+    agent.last_hunt_at === null ||
+    (Boolean(agent.running_hunt_id) && (listings?.length ?? 0) === 0);
   const ranked = (listings ?? []).filter(l => l.relevance_score >= WEAK);
   const weak = (listings ?? []).filter(l => l.relevance_score < WEAK);
   const picks = ranked.slice(0, 5);
@@ -604,7 +610,7 @@ export default function AgentPanel({
         </div>
       )}
 
-      {tab === "picks" && (!firstHuntPending || ranked.length > 0) && (
+      {tab === "picks" && !firstHuntPending && (
         <div className={styles.view}>
           {firstHuntPending && (
             <div className={styles.aiNote}>

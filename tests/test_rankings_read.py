@@ -58,3 +58,52 @@ async def test_stale_and_sold_leave_top_picks(authed_client, db_factory, monkeyp
     assert resp.status_code == 200
     ids = [l["id"] for l in resp.json()["listings"]]
     assert ids == [fresh_id]          # gone listings gone from picks too
+
+
+@pytest.mark.asyncio
+async def test_zero_scored_candidates_are_not_persisted(monkeypatch):
+    """Nearest-neighbour always returns something, so an agent whose item is
+    absent from the pool gets handed unrelated listings. The ranker scores
+    those 0; persisting them would make them durable "results" (golf-clubs
+    agent surfaced office chairs, 2026-08-17). Zero means no match."""
+    from dealbot.recsys import rank_cache
+    from dealbot.recsys.ranker import RankedListing
+
+    wl = Watchlist(user_id=1, name="Golf", context='{"product_query": "golf clubs"}')
+    chair = _listing("c-chair")
+
+    async def _fake_candidates(_watchlist, _context):
+        return [chair]
+
+    async def _fake_rank(_spec, candidates, **_kw):
+        # What the real ranker does with an unrelated candidate.
+        return [RankedListing(listing=c, score=0.0, reason="Not a match.") for c in candidates]
+
+    monkeypatch.setattr(rank_cache, "_candidates", _fake_candidates)
+    monkeypatch.setattr(rank_cache, "rank", _fake_rank)
+
+    written: list = []
+
+    class _Session:
+        async def get(self, _model, _pk):
+            return wl
+
+        async def execute(self, _stmt):
+            return None
+
+        def add(self, row):
+            written.append(row)
+
+        async def commit(self):
+            pass
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _session():
+        yield _Session()
+
+    monkeypatch.setattr(rank_cache, "get_async_session", _session)
+    count = await rank_cache.recompute_rankings(1)
+    assert count == 0
+    assert written == []

@@ -239,6 +239,9 @@
   margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--text-faint);
   background: none; border: none; cursor: pointer; padding: 5px 6px;
   font-family: inherit; text-decoration: none;
+  /* Keep "View ↗" on one line — the arrow was wrapping to its own row in
+     narrow cards, which reads as a broken control. */
+  white-space: nowrap; flex-shrink: 0;
   transition: color 0.15s ease, transform 0.18s cubic-bezier(0.2, 0.8, 0.25, 1);
 }
 .viewBtn:hover {

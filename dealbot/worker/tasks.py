@@ -79,6 +79,19 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
             return {"watchlist_id": watchlist_id, "error": "no_context"}
         context = WatchlistContext.model_validate_json(watchlist.context)
         user = await session.get(User, watchlist.user_id)
+        # "Has this agent ever hunted?" must be asked of the hunts table, not
+        # inferred from last_hunt_at: creation now stamps that field to claim
+        # the cadence slot (so the 5-min scheduler tick can't double-fire), so
+        # a brand-new watchlist already carries a timestamp. Reading it here
+        # made every first hunt look like a refresh and serve from the pool.
+        from sqlalchemy import func, select as sa_select
+
+        prior_hunts = await session.scalar(
+            sa_select(func.count()).select_from(Hunt).where(
+                Hunt.watchlist_id == watchlist_id
+            )
+        )
+    is_first_hunt = not prior_hunts
 
     # 1b. Sufficiency gate (non-pro only): if the pool already holds enough
     # fresh, novel matches, serve the refresh from it — no browser, no
@@ -99,7 +112,7 @@ async def _run_hunt_and_persist(watchlist_id: int) -> dict:
         # Always gather: a thin pool match still rides along as an alert
         # candidate below. Only the SKIP is gated on this being a refresh.
         candidates = await pool_candidates(watchlist_id)
-        if watchlist.last_hunt_at is not None and len(candidates) >= GATE_SUFFICIENCY_K:
+        if not is_first_hunt and len(candidates) >= GATE_SUFFICIENCY_K:
             return await _serve_from_pool(watchlist_id, candidates)
 
     # 2a. Spend guards — the break-glass pause and the daily LLM budget both

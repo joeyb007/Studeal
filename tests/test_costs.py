@@ -172,6 +172,9 @@ async def test_hunt_skips_when_budget_blown(monkeypatch):
 
             return _User() if model is UserModel else _WL()
 
+        async def scalar(self, _stmt):
+            return 1          # prior hunts exist -> treated as a refresh
+
     @asynccontextmanager
     async def _session():
         yield _Session()
@@ -202,6 +205,9 @@ async def test_hunt_skips_when_paused(monkeypatch):
             from dealbot.db.models import User as UserModel
 
             return _User() if model is UserModel else _WL()
+
+        async def scalar(self, _stmt):
+            return 1          # prior hunts exist -> treated as a refresh
 
     @asynccontextmanager
     async def _session():

@@ -281,10 +281,15 @@ async def test_sufficient_pool_serves_a_cached_hunt(rig):
     from dealbot.db.models import Listing as L
     from dealbot.db.models import Watchlist as W
 
-    # The gate only governs REFRESHES — a first hunt always runs live.
+    # The gate only governs REFRESHES, and "has it hunted?" is answered by the
+    # hunts table (last_hunt_at is stamped at creation to claim the cadence
+    # slot, so it can't carry that meaning). Give it a prior hunt.
+    from dealbot.db.models import Hunt as H
+
     async with factory() as s:
         wl = await s.get(W, wl_id)
         wl.last_hunt_at = datetime.now(timezone.utc) - timedelta(days=1)
+        s.add(H(watchlist_id=wl_id, status="succeeded"))
         await s.commit()
 
     async with factory() as s:

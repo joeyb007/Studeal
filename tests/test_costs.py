@@ -33,6 +33,14 @@ def test_estimate_call_cost_arithmetic():
 class _FakeRedis:
     def __init__(self):
         self.store: dict[str, float] = {}
+        self.hashes: dict[str, dict[str, float]] = {}
+
+    async def hincrbyfloat(self, key, field, amount):
+        h = self.hashes.setdefault(key, {})
+        h[field] = h.get(field, 0.0) + amount
+
+    async def hgetall(self, key):
+        return {k: str(v) for k, v in self.hashes.get(key, {}).items()}
 
     async def incrbyfloat(self, key, amount):
         self.store[key] = self.store.get(key, 0.0) + amount
@@ -202,3 +210,24 @@ async def test_hunt_skips_when_paused(monkeypatch):
     monkeypatch.setattr(tasks_mod, "get_async_session", _session)
     result = await tasks_mod._run_hunt_and_persist(1)
     assert result == {"watchlist_id": 1, "skipped": "fleet_paused"}
+
+
+@pytest.mark.asyncio
+async def test_llm_spend_is_attributed_by_stage():
+    """One total tells you the bill, not which stage to cut. Stage comes from
+    the ContextVar so no LLM call site needs a new argument."""
+    from dealbot.costs import stage
+
+    meter = SpendMeter(_FakeRedis())
+    with stage("extract"):
+        await meter.record_llm("haiku", 1_000_000, 0)      # $1.00
+    with stage("rank"):
+        await meter.record_llm("sonnet", 1_000_000, 0)     # $3.00
+    await meter.record_llm("haiku", 1_000_000, 0)          # untagged -> other
+
+    by_stage = await meter.llm_by_stage()
+    assert by_stage["rank:sonnet"] == pytest.approx(3.0)
+    assert by_stage["extract:haiku"] == pytest.approx(1.0)
+    assert by_stage["other:haiku"] == pytest.approx(1.0)
+    # Sorted biggest-first so the readout leads with what to cut.
+    assert list(by_stage)[0] == "rank:sonnet"

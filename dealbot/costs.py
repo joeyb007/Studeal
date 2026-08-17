@@ -21,6 +21,8 @@ pricing; they exist to catch runaways, not to reconcile invoices.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import logging
 import os
 from datetime import datetime, timezone
@@ -77,6 +79,37 @@ def _day_key(prefix: str) -> str:
     return f"{prefix}:{datetime.now(timezone.utc):%Y-%m-%d}"
 
 
+# Which pipeline stage is spending. Set at stage boundaries via stage(); read
+# by record_llm. A ContextVar rather than a parameter because the recording
+# happens deep inside the LLM clients, far from anything that knows the stage,
+# and it propagates correctly across asyncio tasks.
+_stage: contextvars.ContextVar[str] = contextvars.ContextVar("spend_stage", default="other")
+
+
+def current_stage() -> str:
+    return _stage.get()
+
+
+@contextlib.contextmanager
+def stage(name: str):
+    """Attribute every LLM call made inside this block to `name`."""
+    token = _stage.set(name)
+    try:
+        yield
+    finally:
+        _stage.reset(token)
+
+
+def _tier(model_id: str) -> str:
+    """Coarse model tier for the breakdown — the expensive/cheap split is what
+    matters when deciding what to cut."""
+    lowered = (model_id or "").lower()
+    for tier in ("sonnet", "haiku", "titan-embed"):
+        if tier in lowered:
+            return tier
+    return "other"
+
+
 def _month_key(prefix: str) -> str:
     return f"{prefix}:{datetime.now(timezone.utc):%Y-%m}"
 
@@ -99,8 +132,23 @@ class SpendMeter:
             key = _day_key("spend:llm")
             await self._client.incrbyfloat(key, cost)
             await self._client.expire(key, _LEDGER_TTL_S)
+            # Per-stage attribution: one total tells you the bill, not which
+            # part of the pipeline to cut. Stage comes from a ContextVar set
+            # at each stage boundary, so no call signature changes.
+            stage_key = _day_key("spend:llm:by_stage")
+            await self._client.hincrbyfloat(stage_key, f"{current_stage()}:{_tier(model_id)}", cost)
+            await self._client.expire(stage_key, _LEDGER_TTL_S)
         except Exception:
             logger.warning("spend meter: llm record failed", exc_info=True)
+
+    async def llm_by_stage(self) -> dict[str, float]:
+        raw = await self._client.hgetall(_day_key("spend:llm:by_stage"))
+        out: dict[str, float] = {}
+        for k, v in (raw or {}).items():
+            key = k.decode() if isinstance(k, bytes) else k
+            val = v.decode() if isinstance(v, bytes) else v
+            out[key] = round(float(val), 4)
+        return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
     async def record_session(self) -> None:
         try:

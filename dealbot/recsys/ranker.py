@@ -114,8 +114,11 @@ async def _rank_window(
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": f"{spec_text}\n\nListings:\n{listing_block}"},
     ]
+    from dealbot.costs import stage
+
     try:
-        response = await llm.complete(messages, response_format={"type": "json_object"})
+        with stage("rank"):
+            response = await llm.complete(messages, response_format={"type": "json_object"})
         rows = json.loads(response.content or "{}").get("rankings", [])
     except Exception:
         logger.warning("rank: window failed", exc_info=True)

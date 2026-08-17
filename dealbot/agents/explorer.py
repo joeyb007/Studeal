@@ -526,10 +526,13 @@ class Explorer:
             prompt_snapshot = _redact_images(messages)
 
             # LLM emits an action.
+            from dealbot.costs import stage as _spend_stage
+
             try:
-                response = await nav.complete(
-                    messages, response_format={"type": "json_object"},
-                )
+                with _spend_stage("nav"):
+                    response = await nav.complete(
+                        messages, response_format={"type": "json_object"},
+                    )
             except Exception as exc:
                 logger.warning("Explorer: LLM call failed on turn %d: %s", turn, exc)
                 self.trace.record_error(orchestrator_turn=0, worker="explorer", error=str(exc)[:300])

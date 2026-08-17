@@ -151,10 +151,13 @@ class Extractor:
                 chunk_text, snap.url, marketplace, spec,
             )},
         ]
+        from dealbot.costs import stage
+
         try:
-            response = await self.llm.complete(
-                messages, response_format={"type": "json_object"},
-            )
+            with stage("extract"):
+                response = await self.llm.complete(
+                    messages, response_format={"type": "json_object"},
+                )
         except Exception as exc:
             logger.warning("extractor: LLM call failed: %s", exc)
             return []

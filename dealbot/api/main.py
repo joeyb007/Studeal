@@ -103,11 +103,15 @@ async def health_spend() -> dict:
         bb_month = await meter.bb_sessions_month()
         proxy_day = await meter.proxy_sessions_today()
         proxy_month = await meter.proxy_sessions_month()
+        by_stage = await meter.llm_by_stage()
     except Exception:
         llm, sessions, bb_month, proxy_day, proxy_month = None, None, None, None, None
+        by_stage = None
     return {
         "llm_spend_usd": llm,
         "llm_budget_usd": DAILY_LLM_BUDGET_USD,
+        # stage:tier -> $ today, biggest first. Answers "what do we cut?"
+        "llm_by_stage": by_stage,
         "browser_sessions": sessions,
         "browser_session_cap": DAILY_BROWSER_SESSION_CAP,
         "browserbase_sessions_month": bb_month,

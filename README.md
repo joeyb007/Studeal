@@ -6,10 +6,15 @@
 <p align="center"><em>A fleet of browser-driving AI agents that hunt secondhand marketplaces so you never overpay.</em></p>
 
 <p align="center">
+  <strong><a href="https://studeal.site">studeal.site</a></strong> · live in production
+</p>
+
+<p align="center">
   <a href="#how-a-hunt-works">How a hunt works</a> ·
   <a href="#the-shared-pool--recommender">Pool & recommender</a> ·
   <a href="#product-surfaces">Product</a> ·
   <a href="#evaluation">Evaluation</a> ·
+  <a href="#running-in-production">Production</a> ·
   <a href="#stack">Stack</a> ·
   <a href="#running-locally">Running locally</a>
 </p>
@@ -89,6 +94,32 @@ Bedrock-era campaign (2026-08-02, nav: claude-sonnet-4-5, extract: claude-haiku-
 - **Holdout (never-tuned marketplaces, single-shot): eBay Aeron 576 unique offers at 97.7% precision**; eBay headphones 330 at 88.8%.
 - **Headline: held-out mean precision 93.3% vs 72.1% on tuned sites.** The zero-adapter agent generalizes at full precision; the lower tuned-site figure is a marketplace property (FB and Kijiji pad results with related inventory, deliberately retained as pool stock and gated later by the ranker).
 
+## Running in production
+
+Studeal runs on AWS, defined end to end in Terraform (`infra/`): a two-AZ VPC, ECS Fargate (ARM64) running the API, the Celery worker, and exactly one beat scheduler, RDS Postgres 16 with pgvector, ElastiCache Redis, an ALB terminating TLS on an ACM certificate, and Route53 for DNS. Secrets are injected from SSM Parameter Store and Secrets Manager at container start, so no credential lives in the image or the repo.
+
+**The browser fleet is split by what each marketplace actually demands**, decided by probing rather than assumption. Most sites serve a full results page to a bare cloud IP; a few don't, and they fail in two distinguishable ways:
+
+| What the site requires | Backend | Sites |
+|---|---|---|
+| Nothing special | AgentCore browser (AWS-billed) | Kijiji · eBay · Craigslist · Newegg · OpenBox · REFURB.io · Canada Computers |
+| A residential exit IP | AgentCore + prepaid residential proxy | Facebook Marketplace |
+| A stealth browser fingerprint | *parked · no cheap source* | Best Buy · Visions |
+
+That split matters because the two failure modes look identical from the outside but have different fixes. Facebook walls datacenter IPs regardless of fingerprint; Best Buy walls automation fingerprints regardless of IP. Probing each site separately turned one expensive third-party dependency into a mostly AWS-billed fleet.
+
+Media requests (images, video, fonts) are aborted at the browser on every backend. Thumbnails survive because capture reads the `src` attribute out of the DOM rather than the downloaded pixels, which is also why no image bytes cross the metered proxy.
+
+**Spend is metered, not estimated.** Every LLM call records its cost against a Redis day-ledger tagged with the pipeline stage that made it, surfaced at `/health/spend`:
+
+| Stage | Share of LLM spend |
+|---|---|
+| Extraction (Haiku) | ~51% |
+| Navigation (Haiku + Sonnet escalation) | ~41% |
+| Ranking (Haiku) | ~5% |
+
+A hunt costs roughly **$1.30** across ~6 concurrent lanes. Layered caps bound the damage in every direction: a daily LLM budget that stops background hunting at 100% and interactive requests at 150%, per-user daily hunt caps, monthly and daily caps on proxied sessions, and `FLEET_PAUSED` as a break-glass. Every guard fails **open** on a Redis error, because a metering blip must never take the product down, and logs loudly when it does.
+
 ## Stack
 
 | Layer | Technology |
@@ -96,9 +127,10 @@ Bedrock-era campaign (2026-08-02, nav: claude-sonnet-4-5, extract: claude-haiku-
 | Frontend | Next.js 15, TypeScript, CSS Modules, Auth.js |
 | Backend | FastAPI, Python 3.12, Pydantic v2, SQLAlchemy 2 (async) |
 | LLMs | AWS Bedrock: Claude Sonnet 4.5 (navigation, Scout), Claude Haiku 4.5 (extraction) · swappable `LLMClient` backends (Bedrock / OpenAI / Ollama) |
-| Embeddings | Amazon Titan V2 (1024-dim), pgvector |
-| Browser automation | Playwright over CDP · Browserbase (prod) / local Chromium (dev) |
+| Embeddings | Amazon Titan Multimodal G1 (1024-dim, listing photo + text fused into one vector), pgvector |
+| Browser automation | Playwright over CDP · Bedrock AgentCore browser (prod) / local Chromium (dev) · residential proxy on the lanes that need one |
 | Queue & events | Celery + Redis · Redis pub/sub streaming live hunt events to the UI |
+| Infrastructure | Terraform · ECS Fargate (ARM64), RDS Postgres, ElastiCache, ALB + ACM, Route53 |
 | Database | PostgreSQL 16 + pgvector |
 | Email | Resend |
 | Payments | Stripe |
@@ -141,14 +173,18 @@ dealbot/
 ├── llm/             # LLMClient abstraction: Bedrock / OpenAI / Ollama backends
 ├── notifications/   # email (Resend)
 ├── persistence/     # canonical-URL upsert into the shared pool
+├── costs.py         # per-stage spend metering + budget guards
 ├── recsys/          # sufficiency gate, ranking cache
 ├── scrapers/        # browser sessions (Browserbase / local), DOM settlement
 └── worker/          # Celery tasks: hunts, ranking recompute, alerts
 frontend/
 └── src/app/         # Daily Drops, My Agents, Mission Control
 tests/               # unit + integration; tests/evals/ is the live-hunt harness
+infra/               # Terraform: VPC, ECS, RDS, ElastiCache, ALB, DNS, budgets
 ```
 
 ## Status
 
-Pre-launch. The fleet, pool, recommender, and product surfaces above are built and running locally; AWS deployment (Terraform) is next, landing at **studeal.site**.
+Live at **[studeal.site](https://studeal.site)**. The fleet hunts on a daily cadence against the marketplaces above, and the pool, recommender, and product surfaces are all serving from production.
+
+Known gaps, kept here rather than in a drawer: two retailers are parked behind a browser-fingerprint wall with no cheap workaround; one marketplace has no thumbnail capture because its listing URLs carry no distinguishing pattern and its images lazy-load behind a placeholder (an honest missing image beats a wrong one); and picks trail a finished sweep by a minute or two while listings embed, which the UI says out loud instead of rendering an empty shelf.

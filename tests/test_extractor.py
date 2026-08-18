@@ -142,8 +142,12 @@ async def test_fresh_context_across_invocations():
                        "url": "https://kijiji.ca/l/second"}]),
     ])
     extractor = Extractor(llm=llm)
-    first = await extractor.extract_from_snapshot(_snap(), "kijiji", _spec())
-    second = await extractor.extract_from_snapshot(_snap(), "kijiji", _spec())
+    # Distinct pages: an identical snapshot of the same URL is deliberately
+    # skipped by the re-extraction memo, which is a different property.
+    first = await extractor.extract_from_snapshot(
+        _snap(url="https://kijiji.ca/p1", text="page one listings"), "kijiji", _spec())
+    second = await extractor.extract_from_snapshot(
+        _snap(url="https://kijiji.ca/p2", text="page two listings"), "kijiji", _spec())
 
     assert first[0].title == "First Run"
     assert second[0].title == "Second Run"
@@ -467,3 +471,45 @@ async def test_no_filtering_when_the_page_shows_no_recognisable_price():
     snap = _snap(text="listing card without any parseable price " * 900)
     await ex.Extractor(_LLM()).extract_from_snapshot(snap, "kijiji", _spec())
     assert calls["n"] >= 2, "every chunk still extracted when prices are unreadable"
+
+
+@pytest.mark.asyncio
+async def test_same_page_is_not_re_extracted_across_growth_snapshots():
+    """Infinite scroll sinks a new snapshot per growth, each carrying the whole
+    page — so prefix chunks repeat verbatim. Re-extracting them is 51%-of-spend
+    waste (2026-08-17); the memo skips exactly those repeats."""
+    from dealbot.agents.workers import extractor as ex
+
+    calls = {"n": 0}
+
+    class _LLM:
+        async def complete(self, messages, **kw):
+            calls["n"] += 1
+            return type("R", (), {"content": '{"offers": []}'})()
+
+    e = ex.Extractor(_LLM())
+    page = "$10.00 card " * 900
+    await e.extract_from_snapshot(_snap(url="https://kijiji.ca/feed", text=page), "kijiji", _spec())
+    first_round = calls["n"]
+    assert first_round >= 1
+
+    # Same URL, page has grown: complete prefix chunks repeat verbatim (the
+    # final chunk of the smaller page was truncated, so it legitimately differs
+    # and is re-sent). Compare against what a memo-less run would have cost.
+    from dealbot.agents.perception import chunk_snapshot_text
+
+    grown = page + "$20.00 newcard " * 900
+    grown_chunks = len(chunk_snapshot_text(grown))
+    await e.extract_from_snapshot(
+        _snap(url="https://kijiji.ca/feed", text=grown), "kijiji", _spec(),
+    )
+    second_round = calls["n"] - first_round
+    assert second_round < grown_chunks, (
+        "prefix chunks already extracted must not be re-sent "
+        f"(sent {second_round} of {grown_chunks})"
+    )
+
+    # A different URL sharing text is still extracted: relative links resolve
+    # against the page, so identical text can mean different listings.
+    await e.extract_from_snapshot(_snap(url="https://kijiji.ca/other", text=page), "kijiji", _spec())
+    assert calls["n"] > first_round

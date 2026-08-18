@@ -179,7 +179,18 @@ async def pool_feed(
             .outerjoin(Hunt, Hunt.id == HuntListing.hunt_id)
             .where(Listing.last_seen_at >= cutoff)
             .where(Listing.sold_at.is_(None))
-            .order_by(_daily_shuffle_key(Listing.id))
+            # Photos first, then the daily shuffle. Daily Drops is a VISUAL
+            # browse: a card with no image is a grey box, and the marketplace
+            # interleave below deliberately over-samples small sources — so
+            # sites with no capture spec (canada_computers 0%, refurbio 0%)
+            # landed far above their 5% share of the pool and dragged visible
+            # coverage to 58% against a 90% pool average (2026-08-17). This
+            # orders them last rather than dropping them: still findable by
+            # search and filters, just not leading the shelf.
+            .order_by(
+                (Listing.image_url.is_(None)).asc(),
+                _daily_shuffle_key(Listing.id),
+            )
             .limit(_DIVERSIFY_POOL_SIZE)
         )
         stmt = _csv_filter(stmt, Listing.marketplace, marketplace)

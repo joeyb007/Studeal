@@ -40,8 +40,13 @@ locals {
     # password never lands in env. Hard caps below bound the ONLY metered
     # dollar left: 600/month ≈ 15 GB ≈ $15 prepaid, 30/day smooths spikes.
     { name = "AGENTCORE_PROXY_SECRET_ARN", value = data.aws_secretsmanager_secret.proxy.arn },
-    { name = "PROXY_MONTHLY_SESSION_CAP", value = "600" },
-    { name = "PROXY_DAILY_SESSION_CAP", value = "30" },
+    # 2026-08-17: the house fleet alone (16 watchlists x ~2 FB lanes) spent the
+    # whole 30/day allowance, so real users' FB lanes were blocked every day.
+    # At the measured ~25 MB/proxied lane, 750/month is ~19 GB ~= $19 of
+    # prepaid traffic — the monthly cap is what bounds the wallet; the daily
+    # one only stops a single day draining the month.
+    { name = "PROXY_MONTHLY_SESSION_CAP", value = "750" },
+    { name = "PROXY_DAILY_SESSION_CAP", value = "50" },
     # Per-user daily live-hunt cap. Free tier is one: the agent-count limit
     # bounds agents, not hunts, and delete-and-recreate mints a fresh first
     # hunt (which always runs live), so without this one account could loop

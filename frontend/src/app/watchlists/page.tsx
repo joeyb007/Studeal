@@ -33,6 +33,8 @@ interface Watchlist {
   playbook: string | null;
   playbook_updated_at: string | null;
   running_hunt_id: number | null;
+  first_hunt_done: boolean;
+  hunt_queued: boolean;
   last_hunt_at: string | null;
   next_hunt_at: string | null;
 }
@@ -132,6 +134,19 @@ function WatchlistsPageInner() {
     fetchWatchlists();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // While any agent is queued or out sweeping, keep the list fresh so the
+  // card moves starting-up -> live -> done on its own. Without this the page
+  // fetched once and a new agent sat on "first sweep soon" until a manual
+  // reload (2026-08-18). Polling stops as soon as nothing is in flight, so an
+  // idle dashboard makes no requests.
+  const sweepInFlight = watchlists.some(w => w.running_hunt_id || w.hunt_queued);
+  useEffect(() => {
+    if (!token || !sweepInFlight) return;
+    const id = setInterval(fetchWatchlists, 10_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, sweepInFlight]);
 
   // Rotating openers: instant (no LLM round-trip for a greeting), varied,
   // and every line stays hand-written. The header already says "scout" —

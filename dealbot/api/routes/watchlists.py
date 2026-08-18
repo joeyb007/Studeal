@@ -87,6 +87,14 @@ class WatchlistResponse(BaseModel):
     playbook_updated_at: Optional[str] = None
     # Sweep state for the card's top-right pill (list endpoint populates).
     running_hunt_id: Optional[int] = None
+    # Has a sweep ever REPORTED BACK? Picks / playbook / all-matches stay
+    # sealed until it has. last_hunt_at cannot answer this: creation stamps it
+    # to claim the cadence slot, so it is set before anything has run.
+    first_hunt_done: bool = False
+    # Dispatched but not yet browsing (no Hunt row exists until the worker
+    # picks the task up), so the card can say "starting up" instead of
+    # claiming the agent is live while it waits for a free slot.
+    hunt_queued: bool = False
     last_hunt_at: Optional[str] = None
     next_hunt_at: Optional[str] = None
 
@@ -395,6 +403,12 @@ class ListingsResponse(BaseModel):
     total_candidates: int                       # rankings in the cache
     reranked: bool                              # False if ranking degraded
     computed_at: Optional[str] = None           # when the cache was built
+    # A hunt persists listings with NULL vectors; an embed task fills them and
+    # only then can anything be ranked, so picks trail "hunt finished" by
+    # minutes (measured 2026-08-17: hunt done 22:51, rankings written 22:56).
+    # Without this the UI shows a bare empty state in that window and the
+    # agent reads as having found nothing, which is the opposite of true.
+    ranking_pending: bool = False
 
 
 @router.post(
@@ -494,12 +508,25 @@ async def list_watchlist_listings(
                 .order_by(WatchlistRanking.position)
             )).all())
 
-    rows = await _read()
-    if not rows:
+    # Has a sweep reported back? An agent that hasn't hunted has no picks by
+    # definition — ranking the SHARED pool for it invents results it never
+    # found (an agent mid-sweep was handed 150 pool rows, 2026-08-18) and
+    # spends LLM budget doing it. Sealed here, not just in the UI, so every
+    # consumer of this endpoint gets the same honest answer.
+    async with get_async_session() as session:
+        reported_back = await session.scalar(
+            select(func.count()).select_from(Hunt).where(
+                Hunt.watchlist_id == watchlist_id,
+                Hunt.status.in_(("succeeded", "partial", "cached", "failed")),
+            )
+        )
+
+    rows = await _read() if reported_back else []
+    if not rows and reported_back:
         # Never ranked (or cache cleared): compute inline, once.
         await recompute_rankings(watchlist_id)
         rows = await _read()
-    elif rankings_are_stale(rows[0][0].computed_at):
+    elif rows and rankings_are_stale(rows[0][0].computed_at):
         # Serve stale immediately; refresh in the background.
         try:
             from dealbot.worker.tasks import recompute_rankings_task
@@ -529,7 +556,23 @@ async def list_watchlist_listings(
             except (json.JSONDecodeError, AttributeError):
                 continue
 
+    # Empty cache right after a successful hunt = still embedding/ranking, not
+    # "nothing found". Anything older than the window is a genuine empty.
+    ranking_pending = not reported_back
+    if not rows and reported_back:
+        async with get_async_session() as session:
+            recent = await session.scalar(
+                select(func.count()).select_from(Hunt).where(
+                    Hunt.watchlist_id == watchlist_id,
+                    Hunt.status.in_(("succeeded", "partial", "cached")),
+                    Hunt.finished_at.is_not(None),
+                    Hunt.finished_at >= datetime.now(timezone.utc) - timedelta(minutes=20),
+                )
+            )
+        ranking_pending = bool(recent)
+
     return ListingsResponse(
+        ranking_pending=ranking_pending,
         listings=[
             ListingResponse(
                 id=listing.id, marketplace=listing.marketplace,
@@ -584,13 +627,29 @@ async def list_watchlists(
         from dealbot.db.models import Hunt
 
         running: dict[int, int] = {}
+        finished: set[int] = set()
+        any_hunt: set[int] = set()
         if watchlists:
+            ids = [w.id for w in watchlists]
             hunt_rows = (await session.execute(
                 select(Hunt.watchlist_id, Hunt.id)
-                .where(Hunt.watchlist_id.in_([w.id for w in watchlists]))
+                .where(Hunt.watchlist_id.in_(ids))
                 .where(Hunt.status == "running")
             )).all()
             running = {wl_id: hunt_id for wl_id, hunt_id in hunt_rows}
+            finished = {
+                wl_id for (wl_id,) in (await session.execute(
+                    select(Hunt.watchlist_id)
+                    .where(Hunt.watchlist_id.in_(ids))
+                    .where(Hunt.status.in_(("succeeded", "partial", "cached", "failed")))
+                    .distinct()
+                )).all()
+            }
+            any_hunt = {
+                wl_id for (wl_id,) in (await session.execute(
+                    select(Hunt.watchlist_id).where(Hunt.watchlist_id.in_(ids)).distinct()
+                )).all()
+            }
 
         responses = []
         for wl in watchlists:
@@ -608,6 +667,10 @@ async def list_watchlists(
                     if wl.playbook_updated_at else None
                 ),
                 running_hunt_id=running.get(wl.id),
+                first_hunt_done=wl.id in finished,
+                # No Hunt row yet = the task is queued behind the fleet's
+                # concurrency cap and hasn't started browsing.
+                hunt_queued=wl.id not in any_hunt,
                 last_hunt_at=wl.last_hunt_at.isoformat() if wl.last_hunt_at else None,
                 next_hunt_at=next_at.isoformat() if next_at else None,
             ))

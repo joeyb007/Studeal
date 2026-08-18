@@ -219,3 +219,35 @@ async def test_feed_shuffles_daily_but_pages_stably(pool_client):
     titles = [l["title"] for l in first]
     newest_first = sorted(titles, key=lambda t: -int(t.split()[1]))
     assert titles != newest_first, "front page must not be plain recency order"
+
+
+@pytest.mark.asyncio
+async def test_feed_leads_with_listings_that_have_photos(pool_client):
+    """Daily Drops is a visual shelf and the marketplace interleave
+    over-samples small sources, so image-less sites (canada_computers 0%)
+    surfaced far above their share and dragged visible coverage to 58%
+    against a 90% pool (2026-08-17). Photos lead; the rest still appear."""
+    client, factory, _ = pool_client
+    await _seed_pool(factory)
+
+    # Strip images from half the pool, then confirm ordering.
+    from sqlalchemy import select as sa_select
+
+    async with factory() as s:
+        rows = (await s.execute(sa_select(Listing))).scalars().all()
+        for i, listing in enumerate(rows):
+            listing.image_url = None if i % 2 else "https://cdn.test/i.jpg"
+        await s.commit()
+
+    # The marketplace interleave reorders after SQL, so this is a bias, not a
+    # strict sort: what matters is that the FIRST PAGE — the shelf a visitor
+    # actually sees — is dominated by photographed cards even though the pool
+    # is only half photographed.
+    first_page = client.get("/listings/feed", params={"limit": 12}).json()["listings"]
+    if not first_page:
+        pytest.skip("empty pool fixture")
+    with_photo = sum(1 for r in first_page if r.get("image_url"))
+    assert with_photo / len(first_page) >= 0.7, (
+        "first page is %d/%d photographed against a 50%% pool"
+        % (with_photo, len(first_page))
+    )

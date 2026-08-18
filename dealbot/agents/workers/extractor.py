@@ -19,6 +19,7 @@ context per invocation, trivial to test.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -91,6 +92,16 @@ class Extractor:
 
     def __init__(self, llm: LLMClient) -> None:
         self.llm = llm
+        # Chunks already extracted, keyed (url, chunk-hash). Infinite-scroll
+        # pages never change URL: the Explorer sinks a fresh snapshot each time
+        # the page grows, and every snapshot carries the WHOLE page so far, so
+        # a 5-scroll page re-extracts its first cards five times (extraction is
+        # 51% of LLM spend, 2026-08-17). Chunking is a deterministic slice from
+        # offset 0, so the prefix chunks are byte-identical between snapshots
+        # and hash-matching skips exactly the repeats. Keyed BY URL because the
+        # same text under a different page URL can resolve relative listing
+        # links differently — only same-page repeats are safe to skip.
+        self._extracted: set[tuple[str, str]] = set()
 
     async def extract_from_snapshot(
         self,
@@ -133,8 +144,20 @@ class Extractor:
                         skipped, len(chunks), marketplace,
                     )
                 chunks = priced
+        fresh = []
+        for chunk in chunks:
+            key = (snap.url, hashlib.sha1(chunk.encode()).hexdigest())
+            if key in self._extracted:
+                continue
+            self._extracted.add(key)
+            fresh.append(chunk)
+        if len(fresh) < len(chunks):
+            logger.info(
+                "extractor: skipped %d/%d chunk(s) already extracted from %s",
+                len(chunks) - len(fresh), len(chunks), snap.url[:70],
+            )
         results = await asyncio.gather(
-            *(self._extract_chunk(chunk, snap, marketplace, spec) for chunk in chunks),
+            *(self._extract_chunk(chunk, snap, marketplace, spec) for chunk in fresh),
             return_exceptions=True,
         )
 

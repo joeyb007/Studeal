@@ -48,6 +48,12 @@ async def _seed(factory, *, prices: list[float], context: WatchlistContext) -> i
         )
         s.add(watchlist)
         await s.flush()
+        # The read path seals picks until a sweep has reported back, so these
+        # fixtures model an agent that has already hunted once.
+        from dealbot.db.models import Hunt as _H
+
+        s.add(_H(watchlist_id=watchlist.id, status="succeeded"))
+        await s.flush()
         for i, price in enumerate(prices):
             s.add(Listing(
                 canonical_url=f"c{i}", raw_url=f"https://m.test/{i}",

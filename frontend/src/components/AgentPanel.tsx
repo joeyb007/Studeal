@@ -28,6 +28,8 @@ export interface Agent {
   context: AgentContext | null;
   playbook: string | null;
   running_hunt_id: number | null;
+  first_hunt_done: boolean;
+  hunt_queued: boolean;
   last_hunt_at: string | null;
   next_hunt_at: string | null;
 }
@@ -349,6 +351,11 @@ export default function AgentPanel({
 }) {
   const [tab, setTab] = useState<Tab>("picks");
   const [listings, setListings] = useState<RankedListing[] | null>(null);
+  // Hunt done but rankings not written yet: listings persist with NULL
+  // vectors and an embed pass fills them before anything can be ranked, so
+  // picks trail the sweep by minutes. Without this the empty state claims
+  // the agent found nothing (measured 2026-08-17: 5 min gap).
+  const [rankingPending, setRankingPending] = useState(false);
   const [market, setMarket] = useState<Market | null>(null);
   const [sweep, setSweep] = useState<SweepListing[] | null>(null);
   const [pool, setPool] = useState<PoolItem[] | null>(null);
@@ -433,6 +440,7 @@ export default function AgentPanel({
       if (!res.ok) return;
       const data = await res.json();
       setListings(data.listings ?? []);
+      setRankingPending(Boolean(data.ranking_pending));
     } catch {
       setListings([]);
     }
@@ -500,9 +508,11 @@ export default function AgentPanel({
   // so it alone flips false the moment a sweep dispatches — the agent would
   // advertise picks before it had found anything. Stay pending until a sweep
   // has actually produced rankings.
-  const firstHuntPending =
-    agent.last_hunt_at === null ||
-    (Boolean(agent.running_hunt_id) && (listings?.length ?? 0) === 0);
+  // Sealed until a sweep has actually REPORTED BACK. Neither last_hunt_at
+  // (stamped at creation to claim the cadence slot) nor "listings is empty"
+  // can answer this: the read path lazily ranks the SHARED pool, so an agent
+  // still out hunting was handed five picks it had not found (2026-08-18).
+  const firstHuntPending = !agent.first_hunt_done;
   const ranked = (listings ?? []).filter(l => l.relevance_score >= WEAK);
   const weak = (listings ?? []).filter(l => l.relevance_score < WEAK);
   const picks = ranked.slice(0, 5);
@@ -533,9 +543,14 @@ export default function AgentPanel({
     <button className={[styles.sweepPill, styles.live].join(" ")} onClick={() => setShowSweepModal(true)}>
       <span className={styles.liveDot} />Agent is live · watch <span className={styles.up}>↗</span>
     </button>
+  ) : agent.hunt_queued ? (
+    // Dispatched but no Hunt row yet: it is waiting on a free fleet slot.
+    <span className={[styles.sweepPill, styles.quiet].join(" ")}>
+      <span className={styles.liveDot} />Agent starting up…
+    </span>
   ) : (
     <span className={[styles.sweepPill, styles.quiet].join(" ")}>
-      {agent.last_hunt_at ? `last sweep ${hoursAgo(agent.last_hunt_at)}` : "first sweep soon"}
+      {agent.first_hunt_done ? `last sweep ${hoursAgo(agent.last_hunt_at)}` : "first sweep soon"}
       {hoursUntil(agent.next_hunt_at) ? ` · next in ${hoursUntil(agent.next_hunt_at)}` : ""}
     </span>
   );
@@ -596,7 +611,9 @@ export default function AgentPanel({
       </div>
 
       {/* ================= TOP PICKS ================= */}
-      {tab === "picks" && firstHuntPending && ranked.length === 0 && (
+      {/* Exactly one branch renders: gating on ranked.length too left the
+          tab blank whenever the shared-pool read spilled picks in. */}
+      {tab === "picks" && firstHuntPending && (
         <div className={styles.view}>
           <SayLine
             lead="Your agent is out on its first sweep. "
@@ -626,7 +643,13 @@ export default function AgentPanel({
             </div>
           )}
           {listings === null && <p className={styles.loading}>Loading Scout's picks…</p>}
-          {listings !== null && picks.length === 0 && (
+          {listings !== null && picks.length === 0 && rankingPending && (
+            <SayLine
+              lead="Sweep's in — I'm reading everything I found. "
+              dim="Your picks land in a couple of minutes."
+            />
+          )}
+          {listings !== null && picks.length === 0 && !rankingPending && (
             <SayLine
               lead="Nothing has cleared your bar yet. "
               dim={agent.running_hunt_id ? "I'm out looking right now." : "My next sweep will restock this."}
